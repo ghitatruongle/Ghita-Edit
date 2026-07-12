@@ -12,7 +12,7 @@ ThumbnailExtractor::~ThumbnailExtractor()
 {
 }
 
-void ThumbnailExtractor::extractThumbnail(const QString &videoPath, const QString &outputPath, int timeMs)
+void ThumbnailExtractor::extractThumbnail(const QString &videoPath, const QString &outputPath, int timeMs, int index)
 {
     QImage frame = decodeFrame(videoPath, timeMs);
     if (!frame.isNull()) {
@@ -21,7 +21,7 @@ void ThumbnailExtractor::extractThumbnail(const QString &videoPath, const QStrin
             dir.mkpath(".");
         }
         if (frame.save(outputPath, "PNG")) {
-            emit thumbnailExtracted(0, outputPath);
+            emit thumbnailExtracted(index, outputPath);
         }
     }
 }
@@ -32,7 +32,8 @@ QImage ThumbnailExtractor::decodeFrame(const QString &videoPath, int timeMs)
     if (!formatContext)
         return QImage();
 
-    if (avformat_open_input(&formatContext, videoPath.toStdString().c_str(), nullptr, nullptr) < 0) {
+    std::string videoPathStr = videoPath.toStdString();
+    if (avformat_open_input(&formatContext, videoPathStr.c_str(), nullptr, nullptr) < 0) {
         avformat_free_context(formatContext);
         return QImage();
     }
@@ -110,6 +111,7 @@ QImage ThumbnailExtractor::decodeFrame(const QString &videoPath, int timeMs)
                         av_free(buffer);
                         sws_freeContext(swsContext);
                         av_frame_unref(frame);
+                        av_packet_unref(packet);
                         continue;
                     }
 

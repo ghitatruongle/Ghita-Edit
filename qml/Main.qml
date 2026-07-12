@@ -1,3 +1,4 @@
+// Main.qml — CapCut-style three-column layout with timeline
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -10,19 +11,22 @@ ApplicationWindow {
     width: 1280
     height: 800
     title: "Ghita Edit"
-    color: Theme.primaryBg
+    color: Theme.bg
 
     property bool playing: mediaEngine ? mediaEngine.playing : false
     property int exportProgress: 0
     property string exportStatus: ""
-    property string effectsTab: "adjust"
+    property string rightTab: "adjust"
 
-    // Helper to format ms -> MM:SS
+    // Helper to format ms -> HH:MM:SS
     function fmtTime(ms) {
         var totalSec = Math.floor(ms / 1000)
-        var m = Math.floor(totalSec / 60)
+        var h = Math.floor(totalSec / 3600)
+        var m = Math.floor((totalSec % 3600) / 60)
         var s = totalSec % 60
-        return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s
+        return (h < 10 ? "0" : "") + h + ":" +
+               (m < 10 ? "0" : "") + m + ":" +
+               (s < 10 ? "0" : "") + s
     }
 
     function startExport(path) {
@@ -30,6 +34,19 @@ ApplicationWindow {
         exportProgress = 0
         exportStatus = "Exporting…"
         exporter.exportAsync(timeline, path)
+    }
+
+    function clipIdAtPlayhead() {
+        if (!timeline || !mediaEngine) return -1
+        var pos = mediaEngine.positionMs
+        for (var i = 0; i < timeline.rowCount(); i++) {
+            var start = timeline.clipStartMs(i)
+            var end = timeline.clipEndMs(i)
+            if (pos >= start && pos < end) {
+                return timeline.clipId(i)
+            }
+        }
+        return -1
     }
 
     ColumnLayout {
@@ -42,18 +59,22 @@ ApplicationWindow {
             onOpenFile: fileDialog.open()
             onTogglePlay: playing ? mediaEngine.pause() : mediaEngine.play()
             onStop: mediaEngine.stop()
+            onSplitRequested: {
+                var id = clipIdAtPlayhead()
+                if (id >= 0) timeline.splitClipAtPlayhead(id)
+            }
             onExportRequested: outputDialog.open()
         }
 
-        // ---- Main content area ----
+        // ---- Main Content Area ----
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
 
-            // Media Bin (left)
+            // === Left Panel: Source / Media Bin ===
             MediaBin {
-                Layout.preferredWidth: 250
+                Layout.preferredWidth: 240
                 Layout.fillHeight: true
                 visible: mediaEngine && mediaEngine.mediaPath !== ""
 
@@ -63,53 +84,48 @@ ApplicationWindow {
                 onMediaImportRequested: fileDialog.open()
             }
 
-            // Preview (center)
-            Preview {
+            // === Center: Preview Area ===
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                color: "#000000"
+
+                Preview {
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingSm
+                }
             }
 
-            // ---- Effects / Properties panel (right) ----
+            // === Right Panel: Properties / Adjust ===
             Rectangle {
                 Layout.preferredWidth: 280
                 Layout.fillHeight: true
                 color: Theme.panelBg
                 border.color: Theme.border
                 border.width: 1
-                radius: Theme.radiusLarge
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 12
+                    spacing: 0
 
                     // Tab bar
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
-
-                        TabButton {
-                            text: "Adjust"
-                            isActive: effectsTab === "adjust"
-                            onClicked: effectsTab = "adjust"
-                        }
-                        TabButton {
-                            text: "Filters"
-                            isActive: effectsTab === "filters"
-                            onClicked: effectsTab = "filters"
-                        }
-                        TabButton {
-                            text: "Animations"
-                            isActive: effectsTab === "animations"
-                            onClicked: effectsTab = "animations"
-                        }
-                    }
-
-                    // Divider
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 1
-                        color: Theme.border
+                        Layout.preferredHeight: 36
+                        color: Theme.toolbarBg
+                        border.color: Theme.borderDark
+                        border.width: 1
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: Theme.spacingXs
+                            anchors.rightMargin: Theme.spacingXs
+                            spacing: 2
+
+                            RightTab { text: "Adjust"; tabId: "adjust"; activeTab: root.rightTab; onClicked: root.rightTab = tabId }
+                            RightTab { text: "Audio"; tabId: "audio"; activeTab: root.rightTab; onClicked: root.rightTab = tabId }
+                            RightTab { text: "Effects"; tabId: "effects"; activeTab: root.rightTab; onClicked: root.rightTab = tabId }
+                        }
                     }
 
                     // Tab content
@@ -117,121 +133,185 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         contentWidth: availableWidth
+                        clip: true
+
+                        ScrollBar.vertical: ScrollBar {
+                            width: 6
+                            policy: ScrollBar.AsNeeded
+                            background: Rectangle { color: "transparent" }
+                            contentItem: Rectangle {
+                                radius: 3
+                                color: Theme.border
+                            }
+                        }
 
                         ColumnLayout {
                             width: parent.width
-                            spacing: 12
+                            spacing: Theme.spacingSm
 
-                            // Adjust tab
+                            // === Adjust Tab ===
                             ColumnLayout {
-                                visible: effectsTab === "adjust"
-                                spacing: 12
+                                visible: root.rightTab === "adjust"
+                                spacing: Theme.spacingSm
+                                Layout.fillWidth: true
+                                Layout.margins: Theme.spacingSm
 
+                                // Basic section
                                 CollapsibleSection {
                                     title: "Basic"
                                     Layout.fillWidth: true
+                                    isExpanded: true
 
-                                    FxSlider { label: "Brightness"; from: -1; to: 1; step: 0.01; value: fx.brightness; onChanged: fx.brightness = v }
-                                    FxSlider { label: "Contrast"; from: 0; to: 2; step: 0.01; value: fx.contrast; onChanged: fx.contrast = v }
-                                    FxSlider { label: "Saturation"; from: 0; to: 2; step: 0.01; value: fx.saturation; onChanged: fx.saturation = v }
+                                    CapFxSlider { label: "Brightness"; from: -1; to: 1; step: 0.01; value: fx.brightness; onChanged: fx.brightness = v }
+                                    CapFxSlider { label: "Contrast"; from: 0; to: 2; step: 0.01; value: fx.contrast; onChanged: fx.contrast = v }
+                                    CapFxSlider { label: "Saturation"; from: 0; to: 2; step: 0.01; value: fx.saturation; onChanged: fx.saturation = v }
                                 }
 
+                                // Color section
                                 CollapsibleSection {
                                     title: "Color"
                                     Layout.fillWidth: true
+                                    isExpanded: true
 
-                                    FxSlider { label: "Temperature"; from: -100; to: 100; step: 1; value: fx.temperature || 0; onChanged: fx.temperature = v }
-                                    FxSlider { label: "Tint"; from: -100; to: 100; step: 1; value: fx.tint || 0; onChanged: fx.tint = v }
+                                    CapFxSlider { label: "Temperature"; from: -100; to: 100; step: 1; value: fx.temperature || 0; onChanged: fx.temperature = v }
+                                    CapFxSlider { label: "Tint"; from: -100; to: 100; step: 1; value: fx.tint || 0; onChanged: fx.tint = v }
                                 }
 
+                                // Light section
                                 CollapsibleSection {
-                                    title: "Audio"
+                                    title: "Light"
                                     Layout.fillWidth: true
+                                    isExpanded: false
 
-                                    FxSlider { label: "Gain (dB)"; from: -24; to: 24; step: 0.5; value: fx.gainDb; onChanged: fx.gainDb = v }
+                                    CapFxSlider { label: "Highlight"; from: -100; to: 100; step: 1; value: 0 }
+                                    CapFxSlider { label: "Shadow"; from: -100; to: 100; step: 1; value: 0 }
+                                }
+                            }
+
+                            // === Audio Tab ===
+                            ColumnLayout {
+                                visible: root.rightTab === "audio"
+                                spacing: Theme.spacingSm
+                                Layout.fillWidth: true
+                                Layout.margins: Theme.spacingSm
+
+                                CollapsibleSection {
+                                    title: "Volume"
+                                    Layout.fillWidth: true
+                                    isExpanded: true
+
+                                    CapFxSlider { label: "Gain (dB)"; from: -24; to: 24; step: 0.5; value: fx.gainDb; onChanged: fx.gainDb = v }
+
                                     RowLayout {
-                                        Label { text: "Normalize"; color: Theme.textSecondary; Layout.fillWidth: true }
-                                        CheckBox {
-                                            checked: fx.normalize
-                                            onCheckedChanged: fx.normalize = checked
-                                            indicator: Rectangle {
-                                                implicitWidth: 16
-                                                implicitHeight: 16
-                                                radius: 3
-                                                border.color: Theme.border
-                                                border.width: 1
-                                                color: parent.checked ? Theme.accent : "transparent"
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingSm
 
-                                                Label {
-                                                    anchors.centerIn: parent
-                                                    text: "✓"
-                                                    color: Theme.textPrimary
-                                                    font.pixelSize: 10
-                                                    visible: parent.parent.checked
-                                                }
+                                        Label {
+                                            text: "Normalize"
+                                            color: Theme.textPrimary
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeSm
+                                        }
+                                        Item { Layout.fillWidth: true }
+                                        Rectangle {
+                                            Layout.preferredWidth: 16
+                                            Layout.preferredHeight: 16
+                                            radius: 2
+                                            border.color: fx.normalize ? Theme.accent : Theme.border
+                                            border.width: 1
+                                            color: fx.normalize ? Theme.accent : "transparent"
+
+                                            Label {
+                                                anchors.centerIn: parent
+                                                text: "✓"
+                                                color: Theme.textPrimary
+                                                font.pixelSize: 10
+                                                visible: fx.normalize
+                                            }
+
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: fx.normalize = !fx.normalize
                                             }
                                         }
                                     }
-                                    FxSlider { label: "Fade in (ms)"; from: 0; to: 5000; step: 100; value: fx.fadeInMs; onChanged: fx.fadeInMs = v }
-                                    FxSlider { label: "Fade out (ms)"; from: 0; to: 5000; step: 100; value: fx.fadeOutMs; onChanged: fx.fadeOutMs = v }
                                 }
 
-                                // Reset button
-                                Button {
-                                    text: "Reset effects"
+                                CollapsibleSection {
+                                    title: "Fade"
                                     Layout.fillWidth: true
-                                    Layout.topMargin: 8
-                                    onClicked: fx.reset()
+                                    isExpanded: true
 
-                                    background: Rectangle {
-                                        radius: Theme.radiusMedium
-                                        color: parent.pressed ? Theme.error : Theme.border
-                                    }
+                                    CapFxSlider { label: "Fade In (ms)"; from: 0; to: 5000; step: 100; value: fx.fadeInMs; onChanged: fx.fadeInMs = v }
+                                    CapFxSlider { label: "Fade Out (ms)"; from: 0; to: 5000; step: 100; value: fx.fadeOutMs; onChanged: fx.fadeOutMs = v }
+                                }
+                            }
 
-                                    contentItem: Label {
-                                        text: parent.text
-                                        color: Theme.textPrimary
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
+                            // === Effects Tab ===
+                            ColumnLayout {
+                                visible: root.rightTab === "effects"
+                                spacing: Theme.spacingSm
+                                Layout.fillWidth: true
+                                Layout.margins: Theme.spacingSm
+
+                                Label {
+                                    text: "Effects Library"
+                                    color: Theme.textPrimary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeMd
+                                    font.weight: Font.Medium
+                                    Layout.topMargin: Theme.spacingSm
+                                }
+
+                                Label {
+                                    text: "Browse video & audio effects"
+                                    color: Theme.textMuted
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeSm
+                                    Layout.bottomMargin: Theme.spacingMd
+                                }
+
+                                // Placeholder effect grids
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 80
+                                    color: Theme.surfaceBg
+                                    radius: Theme.radiusSmall
+                                    border.color: Theme.borderDark
+                                    border.width: 1
+
+                                    ColumnLayout {
+                                        anchors.centerIn: parent
+                                        spacing: 4
+                                        Label { text: "✨"; font.pixelSize: 24; Layout.alignment: Qt.AlignHCenter }
+                                        Label { text: "Coming soon..."; color: Theme.textMuted; font.pixelSize: Theme.fontSizeXs; Layout.alignment: Qt.AlignHCenter }
                                     }
                                 }
                             }
 
-                            // Filters tab placeholder
-                            ColumnLayout {
-                                visible: effectsTab === "filters"
-                                spacing: 12
+                            // Reset button (shows at bottom of all tabs)
+                            Button {
+                                text: "↺ Reset All"
+                                Layout.fillWidth: true
+                                Layout.margins: Theme.spacingSm
+                                Layout.topMargin: Theme.spacingMd
+                                onClicked: fx.reset()
 
-                                Label {
-                                    text: "Filters"
-                                    color: Theme.textPrimary
-                                    font.bold: true
-                                    font.pixelSize: 14
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: parent.pressed ? Theme.borderLight : "transparent"
+                                    border.color: Theme.border
+                                    border.width: 1
                                 }
 
-                                Label {
-                                    text: "Coming soon..."
+                                contentItem: Label {
+                                    text: parent.text
                                     color: Theme.textSecondary
-                                    font.pixelSize: 12
-                                }
-                            }
-
-                            // Animations tab placeholder
-                            ColumnLayout {
-                                visible: effectsTab === "animations"
-                                spacing: 12
-
-                                Label {
-                                    text: "Animations"
-                                    color: Theme.textPrimary
-                                    font.bold: true
-                                    font.pixelSize: 14
-                                }
-
-                                Label {
-                                    text: "Coming soon..."
-                                    color: Theme.textSecondary
-                                    font.pixelSize: 12
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeSm
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
                                 }
                             }
                         }
@@ -240,116 +320,203 @@ ApplicationWindow {
             }
         }
 
+        // ---- Timeline ----
         Timeline {
             Layout.fillWidth: true
-            Layout.preferredHeight: 220
+            Layout.preferredHeight: root.height * 0.38  // ~38% of window height
         }
 
-        // ---- Status bar ----
+        // ---- Status Bar ----
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            color: Theme.panelBg
+            Layout.preferredHeight: 24
+            color: Theme.statusBarBg
+
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 8
-                anchors.rightMargin: 8
-                spacing: 10
+                anchors.leftMargin: Theme.spacingMd
+                anchors.rightMargin: Theme.spacingMd
+                spacing: Theme.spacingMd
 
+                // Left: File info + position
                 Label {
-                    color: Theme.textPrimary
-                    font.pixelSize: 11
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
                     text: {
                         if (!mediaEngine || mediaEngine.mediaPath === "")
-                            return "Ghita Edit 0.0.1"
+                            return "Ghita Edit v0.1.0"
                         var dur = mediaEngine.durationMs || 0
                         var pos = mediaEngine.positionMs || 0
-                        return mediaEngine.mediaPath.split("/").pop() + "  |  "
-                             + fmtTime(pos) + " / " + fmtTime(dur)
+                        return mediaEngine.mediaPath.split("/").pop().split("\\").pop()
+                             + "  ·  " + fmtTime(pos) + " / " + fmtTime(dur)
                     }
-                }
-
-                // Export progress (only visible while exporting).
-                ProgressBar {
-                    visible: exportProgress > 0 && exportProgress < 100
-                    value: exportProgress / 100
-                    from: 0
-                    to: 1
-                    Layout.preferredWidth: 160
-                    height: 14
-                }
-                Label {
-                    color: Theme.textPrimary
-                    font.pixelSize: 11
-                    visible: exportProgress > 0
-                    text: exportProgress + "%"
-                }
-                Label {
-                    color: Theme.textPrimary
-                    font.pixelSize: 11
-                    text: exportStatus
                 }
 
                 Item { Layout.fillWidth: true }
 
+                // Export progress
+                ProgressBar {
+                    visible: exportProgress > 0 && exportProgress < 100
+                    value: exportProgress / 100
+                    from: 0; to: 1
+                    Layout.preferredWidth: 120
+                    height: 12
+
+                    background: Rectangle {
+                        radius: 2
+                        color: Theme.borderDark
+                    }
+
+                    contentItem: Rectangle {
+                        radius: 2
+                        color: Theme.accent
+                        width: parent.visualPosition * parent.width
+                    }
+                }
                 Label {
-                    color: Theme.textPrimary
-                    font.pixelSize: 11
-                    text: playing ? "▶ Playing" : "■ Stopped"
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    visible: exportProgress > 0
+                    text: exportProgress + "%"
+                }
+                Label {
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    text: exportStatus
+                }
+
+                // Status indicator
+                Rectangle {
+                    Layout.preferredWidth: 6
+                    Layout.preferredHeight: 6
+                    radius: 3
+                    color: playing ? Theme.accentGreen : Theme.textMuted
+                }
+                Label {
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    text: playing ? "Playing" : "Ready"
                 }
             }
         }
     }
 
-    // Reusable labeled slider for the effects panel.
-    component FxSlider : ColumnLayout {
-        id: fxRoot
+    // ---- CapCut-style Slider Component ----
+    component CapFxSlider : ColumnLayout {
+        id: fxSlider
         property string label
-        property real from
-        property real to
+        property real from: 0
+        property real to: 1
         property real step: 0.01
-        property real value
+        property real value: 0
         signal changed(real v)
 
-        Label { text: fxRoot.label + ": " + fxRoot.value.toFixed(2); color: Theme.textSecondary; font.pixelSize: 11 }
+        spacing: 2
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacingXs
+
+            Label {
+                text: fxSlider.label
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeSm
+                Layout.fillWidth: true
+            }
+
+            Label {
+                text: fxSlider.value.toFixed(fxSlider.step < 0.1 ? 0 : 2)
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeXs
+            }
+        }
+
         Slider {
             id: slider
             Layout.fillWidth: true
-            from: fxRoot.from; to: fxRoot.to; stepSize: fxRoot.step; value: fxRoot.value
-            onMoved: fxRoot.changed(value)
+            Layout.preferredHeight: 20
+            from: fxSlider.from; to: fxSlider.to; stepSize: fxSlider.step; value: fxSlider.value
+            onMoved: fxSlider.changed(value)
 
-            // Custom track
+            // Track
             background: Rectangle {
                 x: slider.leftPadding
-                y: slider.topPadding + slider.availableHeight / 2 - 2
+                y: slider.topPadding + slider.availableHeight / 2 - height / 2
                 width: slider.availableWidth
-                height: 4
-                radius: 2
+                height: 3
+                radius: 1.5
                 color: Theme.border
 
-                // Filled portion
                 Rectangle {
                     width: slider.visualPosition * parent.width
                     height: parent.height
-                    radius: 2
+                    radius: 1.5
                     color: Theme.accent
                 }
             }
 
-            // Custom handle
+            // Handle
             handle: Rectangle {
                 x: slider.leftPadding + slider.visualPosition * (slider.availableWidth - width)
-                y: slider.topPadding + slider.availableHeight / 2 - width / 2
-                width: 16
-                height: 16
-                radius: 8
+                y: slider.topPadding + slider.availableHeight / 2 - height / 2
+                width: 14
+                height: 14
+                radius: 7
                 color: Theme.textPrimary
-                border.color: Theme.accent
-                border.width: 2
+                border.color: Qt.darker(Theme.textPrimary, 1.2)
+                border.width: 1
             }
         }
     }
 
+    // ---- Right Panel Tab Component ----
+    component RightTab : Rectangle {
+        id: rightTabBtn
+        property string text: ""
+        property string tabId: ""
+        property string activeTab: ""
+        signal clicked()
+
+        Layout.preferredHeight: 28
+        Layout.preferredWidth: tabLabel.width + 24
+        color: activeTab === tabId ? Theme.surfaceBg : "transparent"
+        radius: Theme.radiusSmall
+
+        Label {
+            id: tabLabel
+            anchors.centerIn: parent
+            text: rightTabBtn.text
+            color: activeTab === tabId ? Theme.textPrimary : Theme.textSecondary
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeXs
+            font.weight: activeTab === tabId ? Font.Medium : Font.Normal
+        }
+
+        // Active indicator line
+        Rectangle {
+            visible: activeTab === tabId
+            anchors.bottom: parent.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width - 16
+            height: 2
+            radius: 1
+            color: Theme.accent
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: rightTabBtn.clicked()
+        }
+    }
+
+    // ---- File Dialogs ----
     FileDialog {
         id: fileDialog
         title: "Open media"
@@ -358,10 +525,7 @@ ApplicationWindow {
             var path = exporter.urlToLocalPath(fileDialog.selectedFile)
             console.log("Opening:", path)
             mediaEngine.open(path)
-
-            // Add to media bin
             mediaBinModel.addMedia(path)
-
             if (mediaEngine.durationMs > 0) {
                 timeline.addClip(path, 0, mediaEngine.durationMs, 0, 0)
                 timeline.addClip(path, 0, mediaEngine.durationMs, 0, 1)
@@ -386,53 +550,14 @@ ApplicationWindow {
         target: exporter
         function onProgressChanged(p) { exportProgress = p }
         function onExportFinished(ok) {
-            exportStatus = ok ? "Export finished ✓" : "Export failed"
+            exportStatus = ok ? "✓ Export finished" : "✗ Export failed"
         }
     }
 
     // ---- Keyboard shortcuts ----
-    Shortcut {
-        sequence: "Space"
-        onActivated: playing ? mediaEngine.pause() : mediaEngine.play()
-    }
-    Shortcut {
-        sequence: "Ctrl+Z"
-        onActivated: timeline.undo()
-    }
-    Shortcut {
-        sequence: "Ctrl+Y"
-        onActivated: timeline.redo()
-    }
-    Shortcut {
-        sequence: "S"
-        onActivated: {
-            if (!timeline || !mediaEngine) return
-            var pos = mediaEngine.positionMs
-            for (var i = 0; i < timeline.rowCount(); i++) {
-                var start = timeline.clipStartMs(i)
-                var end = timeline.clipEndMs(i)
-                var id = timeline.clipId(i)
-                if (pos > start && pos < end) {
-                    timeline.splitClipAtPlayhead(id)
-                    break
-                }
-            }
-        }
-    }
-    Shortcut {
-        sequence: "Delete"
-        onActivated: {
-            if (!timeline || !mediaEngine) return
-            var pos = mediaEngine.positionMs
-            for (var i = 0; i < timeline.rowCount(); i++) {
-                var start = timeline.clipStartMs(i)
-                var end = timeline.clipEndMs(i)
-                var id = timeline.clipId(i)
-                if (pos >= start && pos < end) {
-                    timeline.deleteClip(id)
-                    break
-                }
-            }
-        }
-    }
+    Shortcut { sequence: "Space"; onActivated: playing ? mediaEngine.pause() : mediaEngine.play() }
+    Shortcut { sequence: "Ctrl+Z"; onActivated: timeline.undo() }
+    Shortcut { sequence: "Ctrl+Y"; onActivated: timeline.redo() }
+    Shortcut { sequence: "S"; onActivated: { var id = clipIdAtPlayhead(); if (id >= 0) timeline.splitClipAtPlayhead(id) } }
+    Shortcut { sequence: "Delete"; onActivated: { var id = clipIdAtPlayhead(); if (id >= 0) timeline.deleteClip(id) } }
 }

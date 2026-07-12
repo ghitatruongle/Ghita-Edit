@@ -1,9 +1,9 @@
+// TrackRow.qml — CapCut-style track lane with header controls
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import GhitaTheme 1.0
 
-// TrackRow: a single track (V1 or A1) containing clip items.
 Rectangle {
     id: root
 
@@ -18,105 +18,137 @@ Rectangle {
     signal clipTrimmedLeft(int clipId, real newStartMs)
     signal clipTrimmedRight(int clipId, real newEndMs)
 
-    color: Theme.primaryBg
-    border.color: Theme.border
-    border.width: 1
+    color: Theme.trackBg
+    border.color: "transparent"
     Layout.fillWidth: true
-    Layout.fillHeight: true
+    Layout.preferredHeight: 48
 
-    // Track label with controls
-    ColumnLayout {
-        id: trackLabelColumn
-        width: 48
+    property bool trackVisible: true
+    property bool locked: false
+
+    // ---- Track Header (left label area) ----
+    Rectangle {
+        id: trackHeader
+        width: 80
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        spacing: 2
+        color: Theme.surfaceBg
+        border.color: Theme.borderDark
+        border.width: 1
 
-        // Track name
-        Label {
-            Layout.fillWidth: true
-            Layout.topMargin: 4
-            Layout.leftMargin: 4
-            color: Theme.textPrimary
-            font.pixelSize: 11
-            font.weight: Font.DemiBold
-            text: trackName
-            z: 10
-        }
-
-        // Control buttons
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.leftMargin: 2
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 4
             spacing: 2
 
-            // Visibility toggle
-            Rectangle {
-                Layout.preferredWidth: 18
-                Layout.preferredHeight: 18
-                radius: 3
-                color: visibilityMouse.pressed ? Theme.border : "transparent"
+            // Track number + type
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
 
-                property bool visible: true
+                Rectangle {
+                    Layout.preferredWidth: 16
+                    Layout.preferredHeight: 16
+                    radius: 3
+                    color: root.trackColor
+
+                    Label {
+                        anchors.centerIn: parent
+                        text: root.trackIndex === 0 ? "🎬" : "🎵"
+                        font.pixelSize: 10
+                    }
+                }
 
                 Label {
-                    anchors.centerIn: parent
-                    text: parent.visible ? "\uD83D\uDC41" : "\u2014"
-                    font.pixelSize: 10
-                    color: Theme.textSecondary
+                    text: root.trackName
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeSm
+                    font.weight: Font.Medium
                 }
 
-                MouseArea {
-                    id: visibilityMouse
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: parent.visible = !parent.visible
-                }
+                Item { Layout.fillWidth: true }
             }
 
-            // Lock toggle
-            Rectangle {
-                Layout.preferredWidth: 18
-                Layout.preferredHeight: 18
-                radius: 3
-                color: lockMouse.pressed ? Theme.border : "transparent"
+            // Control buttons: Visibility + Lock
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
 
-                property bool locked: false
+                // Visibility
+                Rectangle {
+                    id: visBtn
+                    Layout.preferredWidth: 20
+                    Layout.preferredHeight: 20
+                    radius: 3
+                    color: visMouse.pressed ? Theme.border : (root.trackVisible ? "#33ffffff" : "transparent")
 
-                Label {
-                    anchors.centerIn: parent
-                    text: parent.locked ? "\uD83D\uDD12" : "\uD83D\uDD13"
-                    font.pixelSize: 10
-                    color: Theme.textSecondary
+                    Label {
+                        anchors.centerIn: parent
+                        text: root.trackVisible ? "👁" : "—"
+                        font.pixelSize: 10
+                        color: root.trackVisible ? Theme.textPrimary : Theme.textMuted
+                    }
+
+                    MouseArea {
+                        id: visMouse
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.trackVisible = !root.trackVisible
+                    }
                 }
 
-                MouseArea {
-                    id: lockMouse
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: parent.locked = !parent.locked
+                // Lock
+                Rectangle {
+                    id: lockBtn
+                    Layout.preferredWidth: 20
+                    Layout.preferredHeight: 20
+                    radius: 3
+                    color: lockMouse.pressed ? Theme.border : (root.locked ? "#33ffffff" : "transparent")
+
+                    Label {
+                        anchors.centerIn: parent
+                        text: root.locked ? "🔒" : "🔓"
+                        font.pixelSize: 10
+                    }
+
+                    MouseArea {
+                        id: lockMouse
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.locked = !root.locked
+                    }
                 }
             }
         }
-
-        Item { Layout.fillHeight: true }
     }
 
-    // Clip area (right of track label)
+    // ---- Clip Area ----
     Item {
         id: clipArea
-        anchors.left: trackLabelColumn.right
+        anchors.left: trackHeader.right
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
+        clip: true
 
-        // Clips from the model
+        // Horizontal grid lines
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: Theme.borderDark
+            opacity: 0.5
+        }
+
+        // Clips
         Repeater {
             model: timeline ? timeline : null
 
             ClipItem {
-                visible: model.trackIndex === root.trackIndex
+                visible: model.trackIndex === root.trackIndex && root.trackVisible
                 clipId: model.clipId
                 sourceName: model.sourcePath.split("/").pop().split("\\").pop()
                 clipX: model.timelineStart * root.pixelsPerMs
@@ -139,12 +171,11 @@ Rectangle {
             }
         }
 
-        // Playhead line on this track
+        // Playhead on this track
         Rectangle {
-            id: trackPlayhead
-            width: 1
+            width: 1.5
             height: parent.height
-            color: Theme.accent
+            color: Theme.playhead
             x: mediaEngine ? mediaEngine.positionMs * root.pixelsPerMs : 0
             z: 5
         }

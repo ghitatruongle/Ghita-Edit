@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(GhitaEdit
-    VERSION 0.0.1
+    VERSION 0.1.0
     DESCRIPTION "Ghita Edit - high-performance video/audio editor (C++20 + Qt6 QML + FFmpeg)"
     LANGUAGES CXX)
 
@@ -90,6 +90,7 @@ target_include_directories(GhitaEdit PRIVATE
 
 target_link_libraries(GhitaEdit PRIVATE
     Qt6::Quick
+    Qt6::QuickControls2
     Qt6::OpenGL
     Qt6::Concurrent
     ${GHITA_FFMPEG_LIBS}
@@ -124,9 +125,9 @@ endif()
 file(APPEND ${GHITA_QML_QRC} "  </qresource>\n</RCC>\n")
 target_sources(GhitaEdit PRIVATE ${GHITA_QML_QRC})
 
-if(WIN32)
-    set_target_properties(GhitaEdit PROPERTIES
-        WIN32_EXECUTABLE TRUE)
+	if(WIN32)
+	    set_target_properties(GhitaEdit PROPERTIES
+	        WIN32_EXECUTABLE TRUE)
 
     # Deploy Qt + QML modules next to the executable so the app is runnable
     # standalone. --qmldir points windeployqt at the QML sources (they are

@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build + test matrix: Windows (MSVC + vcpkg) and Linux (GCC/Clang + system pkgs)
+  # ---------------------------------------------------------------------------
+  build-and-test:
+    name: Build & test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            triplet: x64-windows
+          - os: ubuntu-latest
+            triplet: x64-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 6 (Windows)
+        if: runner.os == 'Windows'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.3'
+          arch: win64_msvc2019_64
+          modules: qtmultimedia
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qt6-base-dev qt6-declarative-dev qt6-quickcontrols2-dev \
+            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev \
+            portaudio19-dev ninja-build
+
+      - name: Set up vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "${{ runner.temp }}/vcpkg"
+          "${{ runner.temp }}/vcpkg/bootstrap-vcpkg.bat"
+          echo "VCPKG_ROOT=${{ runner.temp }}/vcpkg" >> "$GITHUB_ENV"
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake" \
+            -DCMAKE_PREFIX_PATH="$Qt6_DIR" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
+            -DGHITA_BUILD_TESTS=ON
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHITA_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure
+
+  # ---------------------------------------------------------------------------
+  # Lint: clang-tidy on Linux (informational — does not block the merge).
+  # The round-trip export test needs an H.264 encoder; CI's FFmpeg build does
+  # not ship libx264, so that test is skipped automatically here.
+  # ---------------------------------------------------------------------------
+  clang-tidy:
+    name: clang-tidy (Linux)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qt6-base-dev qt6-declarative-dev qt6-quickcontrols2-dev \
+            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev \
+            portaudio19-dev ninja-build clang-tidy
+      - name: Configure (export compile commands)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DGHITA_BUILD_TESTS=ON
+      - name: Run clang-tidy
+        run: |
+          run-clang-tidy -p build \
+            $(git ls-files 'src/*.cpp' 'src/*.h') \
+            || true

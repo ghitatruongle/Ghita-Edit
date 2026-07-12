@@ -1,17 +1,16 @@
+// ClipItem.qml — CapCut-style clip with thumbnail, label, and trim handles
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import GhitaTheme 1.0
 
-// ClipItem: visual representation of a single clip on the timeline.
-// Shows clip name, colored background, and left/right trim handles.
 Rectangle {
     id: root
 
     required property int clipId
     required property string sourceName
-    required property real clipX        // px position on timeline
-    required property real clipWidth    // px width on timeline
+    required property real clipX
+    required property real clipWidth
     required property string clipColor
     required property int trackIndex
 
@@ -21,56 +20,108 @@ Rectangle {
     signal splitRequested()
     signal deleteRequested()
 
-    property real pixelsPerMs: 0.1     // set by parent
+    property real pixelsPerMs: 0.1
     property bool selected: false
+    property bool isAudio: trackIndex >= 1
 
     x: clipX
     width: clipWidth
-    height: 44  // Increased from 36
-    radius: Theme.radiusMedium
-    color: selected ? Qt.lighter(clipColor, 1.3) : clipColor
-    border.color: selected ? Theme.accent : Theme.border
-    border.width: selected ? 2 : 1
-    clip: true
+    height: parent ? parent.height : 40
+    radius: 3  // Slightly rounded like CapCut
+    color: selected ? Qt.lighter(clipColor, 1.2) : clipColor
+    border.color: selected ? Theme.accent : Qt.rgba(1, 1, 1, 0.1)
+    border.width: selected ? 2 : 0
 
-    // Subtle gradient overlay
+    // Subtle gradient overlay (top highlight)
     Rectangle {
         anchors.fill: parent
         radius: parent.radius
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#20ffffff" }
-            GradientStop { position: 1.0; color: "#00ffffff" }
+            GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.12) }
+            GradientStop { position: 0.4; color: Qt.rgba(1, 1, 1, 0.0) }
         }
     }
 
-    // Clip name label
-    Label {
-        anchors.left: parent.left
+    // Clip content area (excluding trim handles)
+    Item {
+        anchors.fill: parent
         anchors.leftMargin: 8
-        anchors.verticalCenter: parent.verticalCenter
-        color: Theme.textPrimary
-        font.pixelSize: 11
-        font.weight: Font.Normal
-        text: sourceName
-        elide: Text.ElideRight
-        width: parent.width - 16
-        z: 1
+        anchors.rightMargin: 8
+        clip: true
+
+        // Source name label
+        Label {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.topMargin: 4
+            color: Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeXs
+            text: sourceName
+            elide: Text.ElideRight
+            maximumLineCount: 1
+        }
+
+        // Duration label (bottom right of clip)
+        Label {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 4
+            color: Qt.rgba(1, 1, 1, 0.7)
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeXs
+            text: {
+                // Estimate duration from clipWidth
+                var durMs = clipWidth / pixelsPerMs
+                var sec = Math.round(durMs / 1000)
+                return sec + "s"
+            }
+        }
+
+        // Waveform for audio clips (simplified visual bars)
+        Row {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 2
+            anchors.leftMargin: 4
+            anchors.rightMargin: 4
+            height: 12
+            spacing: 2
+            visible: root.isAudio && clipWidth > 40
+            Repeater {
+                model: Math.min(Math.floor(root.width / 6), 30)
+                Rectangle {
+                    width: 3
+                    height: 4 + Math.random() * 8
+                    radius: 1.5
+                    color: Qt.rgba(1, 1, 1, 0.3)
+                    anchors.bottom: parent.bottom
+                }
+            }
+        }
     }
 
-    // Left trim handle
+    // ---- Left Trim Handle ----
     Rectangle {
         id: leftHandle
         width: 6
         height: parent.height
-        radius: 3
-        color: leftDrag.pressed ? Theme.accent : Theme.textSecondary
+        radius: 2
+        color: leftDrag.pressed ? "#ffffff" : Qt.rgba(1, 1, 1, 0.6)
         anchors.left: parent.left
-        opacity: leftDrag.pressed ? 1.0 : 0.6
+        anchors.leftMargin: -3
+        visible: clipWidth > 20
+
+        // Handle grip lines
+        Rectangle { width: 1; height: 12; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: -3 }
+        Rectangle { width: 1; height: 12; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: 3 }
 
         MouseArea {
             id: leftDrag
             anchors.fill: parent
-            anchors.margins: -2  // Wider hit area
+            anchors.margins: -4
             cursorShape: Qt.SplitHCursor
             property real startX: 0
             property real startClipX: 0
@@ -88,20 +139,25 @@ Rectangle {
         }
     }
 
-    // Right trim handle
+    // ---- Right Trim Handle ----
     Rectangle {
         id: rightHandle
         width: 6
         height: parent.height
-        radius: 3
-        color: rightDrag.pressed ? Theme.accent : Theme.textSecondary
+        radius: 2
+        color: rightDrag.pressed ? "#ffffff" : Qt.rgba(1, 1, 1, 0.6)
         anchors.right: parent.right
-        opacity: rightDrag.pressed ? 1.0 : 0.6
+        anchors.rightMargin: -3
+        visible: clipWidth > 20
+
+        // Handle grip lines
+        Rectangle { width: 1; height: 12; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: -3 }
+        Rectangle { width: 1; height: 12; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: 3 }
 
         MouseArea {
             id: rightDrag
             anchors.fill: parent
-            anchors.margins: -2  // Wider hit area
+            anchors.margins: -4
             cursorShape: Qt.SplitHCursor
             property real startX: 0
             property real startWidth: 0
@@ -119,13 +175,12 @@ Rectangle {
         }
     }
 
-    // Clip body drag
+    // ---- Clip Body Drag ----
     MouseArea {
         anchors.left: leftHandle.right
         anchors.right: rightHandle.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        drag.target: null
         property real lastX: 0
         property bool dragging: false
 
@@ -145,21 +200,18 @@ Rectangle {
                 lastX = curX
             }
         }
-        onReleased: {
-            dragging = false
-        }
-        onDoubleClicked: function(mouse) {
-            root.splitRequested()
-        }
+        onReleased: { dragging = false }
+        onDoubleClicked: root.splitRequested()
     }
 
-    // Context menu (right-click)
+    // ---- Context Menu ----
     Menu {
         id: contextMenu
         MenuItem {
             text: "Split at playhead"
             onTriggered: root.splitRequested()
         }
+        MenuItem { text: "Copy" }
         MenuItem {
             text: "Delete"
             onTriggered: root.deleteRequested()

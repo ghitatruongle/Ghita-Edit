@@ -22,7 +22,7 @@ public:
     ~ThumbnailExtractor();
 
 public slots:
-    void extractThumbnail(const QString &videoPath, const QString &outputPath, int timeMs);
+    void extractThumbnail(const QString &videoPath, const QString &outputPath, int timeMs, int index);
 
 signals:
     void thumbnailExtracted(int index, const QString &path);

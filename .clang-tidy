@@ -1,0 +1,27 @@
+# clang-tidy configuration for Ghita Edit.
+#
+# Scope: only project sources under src/ (third-party / generated code ignored).
+# The C-API interop with FFmpeg/PortAudio uses C-style casts and raw pointers, so
+# the noisiest checks (cpp-style-cast, pointer-arithmetic, magic numbers) are
+# disabled to keep signal high and avoid false positives in media glue code.
+Checks: >
+  -*,
+  bugprone-*,
+  modernize-*,
+  performance-*,
+  readability-uniqueptr-declaration,
+  readability-redundant-*,
+  -modernize-use-cpp-style-cast,
+  -modernize-use-trailing-return-type,
+  -modernize-return-braced-init-list,
+  -modernize-use-nodiscard,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -readability-convert-member-functions-to-static
+
+# Keep diagnostics informative; do not fail the build (no WarningsAsErrors).
+WarningsAsErrors: ''
+HeaderFilterRegex: 'src/.*'
+FormatStyle: file

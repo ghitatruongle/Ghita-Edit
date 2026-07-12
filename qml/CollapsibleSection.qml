@@ -1,9 +1,9 @@
+// CollapsibleSection.qml — CapCut-style expandable section
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import GhitaTheme 1.0
 
-// CollapsibleSection: expandable/collapsible section
 ColumnLayout {
     id: root
 
@@ -16,28 +16,31 @@ ColumnLayout {
     // Header
     Rectangle {
         Layout.fillWidth: true
-        Layout.preferredHeight: 32
-        color: "transparent"
+        Layout.preferredHeight: 28
+        color: root.hovered ? "#2a2a2a" : "transparent"
         radius: Theme.radiusSmall
+
+        property bool hovered: false
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 4
-            spacing: 4
+            anchors.leftMargin: Theme.spacingXs
+            spacing: Theme.spacingXs
 
             // Expand/collapse arrow
             Label {
-                text: root.isExpanded ? "▼" : "▶"
+                text: root.isExpanded ? "▾" : "▸"
                 color: Theme.textSecondary
-                font.pixelSize: 10
+                font.pixelSize: Theme.fontSizeSm
                 Layout.preferredWidth: 16
             }
 
             Label {
                 text: root.title
                 color: Theme.textPrimary
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeSm
+                font.weight: Font.Medium
                 Layout.fillWidth: true
             }
         }
@@ -45,6 +48,9 @@ ColumnLayout {
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
+            hoverEnabled: true
+            onEntered: parent.hovered = true
+            onExited: parent.hovered = false
             onClicked: root.isExpanded = !root.isExpanded
         }
     }
@@ -53,8 +59,9 @@ ColumnLayout {
     ColumnLayout {
         id: contentContainer
         Layout.fillWidth: true
-        Layout.leftMargin: 12
-        spacing: 8
+        Layout.leftMargin: Theme.spacingMd
+        Layout.topMargin: Theme.spacingXs
+        spacing: Theme.spacingSm
         visible: root.isExpanded
     }
 }

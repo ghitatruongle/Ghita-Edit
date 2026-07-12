@@ -29,8 +29,11 @@ public:
     audio::AudioEngine& audioEngine() { return audioEngine_; }
 
 private:
-    engine::MediaEngine mediaEngine_;
+    // Declaration order matters: C++ initializes members in declaration order.
+    // audioEngine_ must be declared before mediaEngine_ because
+    // MediaEngine's constructor takes an AudioEngine pointer.
     audio::AudioEngine audioEngine_;
+    engine::MediaEngine mediaEngine_;
     timeline::TimelineModel timelineModel_;
     timeline::SnapEngine snapEngine_;
     export_::Exporter exporter_;

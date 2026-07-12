@@ -1,148 +1,232 @@
+// Timeline.qml — CapCut-style multi-track timeline
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import GhitaTheme 1.0
 
-// Timeline: multi-track editor surface with ruler, playhead, and clip editing.
-//
-// M1: interactive timeline with cut/trim/snap, undo/redo.
 ColumnLayout {
     id: root
     spacing: 0
 
-    property real pixelsPerMs: 0.1  // zoom level
-
-    // ---- Toolbar row (zoom + undo/redo) ----
-    Rectangle {
-        Layout.fillWidth: true
-        Layout.preferredHeight: 28
-        color: Theme.secondaryBg
-
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 48  // match track label width
-            anchors.rightMargin: 8
-            spacing: 8
-
-            Label {
-                color: Theme.textSecondary
-                font.pixelSize: 10
-                text: "Zoom:"
-            }
-            Slider {
-                id: zoomSlider
-                Layout.preferredWidth: 120
-                from: 0.01
-                to: 5.0
-                value: root.pixelsPerMs
-                onMoved: root.pixelsPerMs = value
-            }
-
-            Item { Layout.fillWidth: true }
-
-            Button {
-                text: "Undo"
-                enabled: timeline ? timeline.canUndo : false
-                onClicked: timeline.undo()
-                flat: true
-            }
-            Button {
-                text: "Redo"
-                enabled: timeline ? timeline.canRedo : false
-                onClicked: timeline.redo()
-                flat: true
-            }
-        }
-    }
+    property real pixelsPerMs: 0.1
+    property real contentWidth: (mediaEngine ? mediaEngine.durationMs || 30000 : 30000) * pixelsPerMs
 
     // ---- Ruler ----
     Ruler {
         id: ruler
         Layout.fillWidth: true
-        Layout.preferredHeight: 28
+        Layout.preferredHeight: 24
         pixelsPerMs: root.pixelsPerMs
         positionMs: mediaEngine ? mediaEngine.positionMs : 0
         durationMs: mediaEngine ? mediaEngine.durationMs : 0
 
         onScrubbed: function(ms) {
-            mediaEngine.seek(ms)
+            if (mediaEngine) mediaEngine.seek(ms)
         }
     }
 
-    // ---- Tracks ----
-    TrackRow {
+    // ---- Tracks Scroll Area ----
+    ScrollView {
         Layout.fillWidth: true
         Layout.fillHeight: true
-        trackName: "V1"
-        trackIndex: 0
-        trackColor: Theme.clipVideo
-        pixelsPerMs: root.pixelsPerMs
+        clip: true
+        contentWidth: Math.max(root.contentWidth, width)
 
-        onClipSplit: function(clipId) {
-            timeline.splitClipAtPlayhead(clipId)
+        ScrollBar.horizontal: ScrollBar {
+            height: 8
+            policy: ScrollBar.AsNeeded
+            background: Rectangle { color: Theme.borderDark }
+            contentItem: Rectangle {
+                radius: 4
+                color: Theme.border
+            }
         }
-        onClipDeleted: function(clipId) {
-            timeline.deleteClip(clipId)
+
+        ScrollBar.vertical: ScrollBar {
+            width: 8
+            policy: ScrollBar.AsNeeded
+            background: Rectangle { color: Theme.borderDark }
+            contentItem: Rectangle {
+                radius: 4
+                color: Theme.border
+            }
         }
-        onClipMoved: function(clipId, deltaMs) {
-            var clip = findClipData(clipId)
-            if (!clip) return
-            var newStart = clip.timelineStart + deltaMs
-            var targets = timeline.snapTargets()
-            newStart = snapEngine.snap(newStart, targets)
-            timeline.moveClip(clipId, newStart, 0)
-        }
-        onClipTrimmedLeft: function(clipId, deltaMs) {
-            var clip = findClipData(clipId)
-            if (!clip) return
-            var newStart = clip.timelineStart + deltaMs
-            timeline.trimClipLeft(clipId, newStart)
-        }
-        onClipTrimmedRight: function(clipId, deltaMs) {
-            var clip = findClipData(clipId)
-            if (!clip) return
-            var newEnd = clip.timelineEnd + deltaMs
-            timeline.trimClipRight(clipId, newEnd)
+
+        // Tracks container
+        ColumnLayout {
+            id: tracksColumn
+            spacing: 1
+            width: Math.max(root.contentWidth, parent.width)
+
+            // Video tracks
+            TrackRow {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 48
+                trackName: "V1"
+                trackIndex: 0
+                trackColor: Theme.trackVideo
+                pixelsPerMs: root.pixelsPerMs
+
+                onClipSplit: function(clipId) { timeline.splitClipAtPlayhead(clipId) }
+                onClipDeleted: function(clipId) { timeline.deleteClip(clipId) }
+                onClipMoved: function(clipId, deltaMs) {
+                    var clip = findClipData(clipId)
+                    if (!clip) return
+                    var newStart = clip.timelineStart + deltaMs
+                    var targets = timeline.snapTargets()
+                    newStart = snapEngine.snap(newStart, targets)
+                    timeline.moveClip(clipId, newStart, 0)
+                }
+                onClipTrimmedLeft: function(clipId, deltaMs) {
+                    var clip = findClipData(clipId)
+                    if (!clip) return
+                    timeline.trimClipLeft(clipId, clip.timelineStart + deltaMs)
+                }
+                onClipTrimmedRight: function(clipId, deltaMs) {
+                    var clip = findClipData(clipId)
+                    if (!clip) return
+                    timeline.trimClipRight(clipId, clip.timelineEnd + deltaMs)
+                }
+            }
+
+            // Audio tracks
+            TrackRow {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 48
+                trackName: "A1"
+                trackIndex: 1
+                trackColor: Theme.trackAudio
+                pixelsPerMs: root.pixelsPerMs
+
+                onClipSplit: function(clipId) { timeline.splitClipAtPlayhead(clipId) }
+                onClipDeleted: function(clipId) { timeline.deleteClip(clipId) }
+                onClipMoved: function(clipId, deltaMs) {
+                    var clip = findClipData(clipId)
+                    if (!clip) return
+                    var newStart = clip.timelineStart + deltaMs
+                    var targets = timeline.snapTargets()
+                    newStart = snapEngine.snap(newStart, targets)
+                    timeline.moveClip(clipId, newStart, 1)
+                }
+                onClipTrimmedLeft: function(clipId, deltaMs) {
+                    var clip = findClipData(clipId)
+                    if (!clip) return
+                    timeline.trimClipLeft(clipId, clip.timelineStart + deltaMs)
+                }
+                onClipTrimmedRight: function(clipId, deltaMs) {
+                    var clip = findClipData(clipId)
+                    if (!clip) return
+                    timeline.trimClipRight(clipId, clip.timelineEnd + deltaMs)
+                }
+            }
+
+            // Add track button
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 32
+                color: Theme.trackBg
+
+                Label {
+                    anchors.centerIn: parent
+                    text: "+ Add Track"
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeSm
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    hoverEnabled: true
+                    onEntered: parent.color = Theme.surfaceBg
+                    onExited: parent.color = Theme.trackBg
+                    onClicked: {
+                        // Future: add track functionality
+                        console.log("Add track requested")
+                    }
+                }
+            }
         }
     }
 
-    TrackRow {
+    // ---- Bottom Controls ----
+    Rectangle {
         Layout.fillWidth: true
-        Layout.fillHeight: true
-        trackName: "A1"
-        trackIndex: 1
-        trackColor: Theme.clipAudio
-        pixelsPerMs: root.pixelsPerMs
+        Layout.preferredHeight: 32
+        color: Theme.trackBg
+        border.color: Theme.borderDark
+        border.width: 1
 
-        onClipSplit: function(clipId) {
-            timeline.splitClipAtPlayhead(clipId)
-        }
-        onClipDeleted: function(clipId) {
-            timeline.deleteClip(clipId)
-        }
-        onClipMoved: function(clipId, deltaMs) {
-            var clip = findClipData(clipId)
-            if (!clip) return
-            var newStart = clip.timelineStart + deltaMs
-            var targets = timeline.snapTargets()
-            newStart = snapEngine.snap(newStart, targets)
-            timeline.moveClip(clipId, newStart, 1)
-        }
-        onClipTrimmedLeft: function(clipId, deltaMs) {
-            var clip = findClipData(clipId)
-            if (!clip) return
-            var newStart = clip.timelineStart + deltaMs
-            timeline.trimClipLeft(clipId, newStart)
-        }
-        onClipTrimmedRight: function(clipId, deltaMs) {
-            var clip = findClipData(clipId)
-            if (!clip) return
-            var newEnd = clip.timelineEnd + deltaMs
-            timeline.trimClipRight(clipId, newEnd)
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: Theme.spacingMd
+            anchors.rightMargin: Theme.spacingMd
+            spacing: Theme.spacingSm
+
+            // Frame indicator
+            Label {
+                text: "0:00 / 0:00"
+                color: Theme.textMuted
+                font.family: "Consolas, Courier New, monospace"
+                font.pixelSize: Theme.fontSizeXs
+            }
+
+            Item { Layout.fillWidth: true }
+
+            // Zoom controls (CapCut-style: [-] [slider] [+])
+            Label {
+                text: "−"
+                color: Theme.textSecondary
+                font.pixelSize: 16
+                font.weight: Font.Bold
+            }
+
+            Slider {
+                id: zoomSlider
+                Layout.preferredWidth: 100
+                from: 0.01
+                to: 3.0
+                value: root.pixelsPerMs
+                onMoved: root.pixelsPerMs = value
+
+                background: Rectangle {
+                    x: zoomSlider.leftPadding
+                    y: zoomSlider.topPadding + zoomSlider.availableHeight / 2 - height / 2
+                    implicitWidth: 100
+                    implicitHeight: 3
+                    width: zoomSlider.availableWidth
+                    height: implicitHeight
+                    radius: 1.5
+                    color: Theme.border
+
+                    Rectangle {
+                        width: zoomSlider.visualPosition * parent.width
+                        height: parent.height
+                        radius: 1.5
+                        color: Theme.accent
+                    }
+                }
+
+                handle: Rectangle {
+                    x: zoomSlider.leftPadding + zoomSlider.visualPosition * (zoomSlider.availableWidth - width)
+                    y: zoomSlider.topPadding + zoomSlider.availableHeight / 2 - height / 2
+                    implicitWidth: 10
+                    implicitHeight: 10
+                    radius: 5
+                    color: Theme.textPrimary
+                }
+            }
+
+            Label {
+                text: "+"
+                color: Theme.textSecondary
+                font.pixelSize: 16
+                font.weight: Font.Bold
+            }
         }
     }
 
-    // Helper: find clip data from model by id (uses typed accessors, no magic roles)
+    // Helper: find clip data from model
     function findClipData(clipId) {
         if (!timeline) return null
         for (var i = 0; i < timeline.rowCount(); i++) {

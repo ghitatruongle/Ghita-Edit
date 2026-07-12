@@ -33,6 +33,10 @@ bool Application::initialize() {
     // Register the OpenGL preview surface as a QML type.
     qmlRegisterType<ghita::render::PreviewSurface>("Ghita.Render", 1, 0, "PreviewSurface");
 
+    // Register GhitaTheme singletons directly (avoid QRC qmldir resolution issues).
+    qmlRegisterSingletonType(QUrl("qrc:/Theme.qml"), "GhitaTheme", 1, 0, "Theme");
+    qmlRegisterSingletonType(QUrl("qrc:/Icons.qml"), "GhitaTheme", 1, 0, "Icons");
+
     // Surface QML load/parse errors (the engine's default handler routes
     // them to qWarning, but make sure they are explicit).
     QObject::connect(&qmlEngine_, &QQmlApplicationEngine::warnings,

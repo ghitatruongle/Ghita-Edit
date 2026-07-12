@@ -83,13 +83,15 @@ void MediaBinModel::addMedia(const QString &filePath)
     emit countChanged();
 
     // Extract thumbnail asynchronously
+    int itemIndex = m_items.count() - 1;
     QString thumbPath = QDir::tempPath() + "/ghita-edit/thumbnails/" +
-                       QString::number(m_items.count() - 1) + ".png";
+                       QString::number(itemIndex) + ".png";
     QMetaObject::invokeMethod(m_extractor, "extractThumbnail",
                               Qt::QueuedConnection,
                               Q_ARG(QString, filePath),
                               Q_ARG(QString, thumbPath),
-                              Q_ARG(int, 0));
+                              Q_ARG(int, 0),
+                              Q_ARG(int, itemIndex));
 }
 
 void MediaBinModel::removeMedia(int index)

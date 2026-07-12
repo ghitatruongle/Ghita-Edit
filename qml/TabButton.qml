@@ -1,28 +1,29 @@
+// TabButton.qml — CapCut-style flat tab button
 import QtQuick
 import QtQuick.Controls
 import GhitaTheme 1.0
 
-// TabButton: custom tab button for effects panel
 Button {
     id: root
 
     property bool isActive: false
 
     implicitHeight: 32
-    implicitWidth: 80
+    implicitWidth: 72
 
     contentItem: Label {
         text: root.text
-        color: root.isActive ? Theme.accent : Theme.textSecondary
-        font.pixelSize: 12
-        font.weight: root.isActive ? Font.Bold : Font.Normal
+        color: root.isActive ? Theme.textPrimary : Theme.textSecondary
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontSizeSm
+        font.weight: root.isActive ? Font.Medium : Font.Normal
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }
 
     background: Rectangle {
-        radius: Theme.radiusMedium
-        color: root.isActive ? Theme.selection : (root.hovered ? Theme.border : "transparent")
+        color: root.isActive ? Theme.surfaceBg : "transparent"
+        radius: Theme.radiusSmall
 
         // Bottom accent line when active
         Rectangle {

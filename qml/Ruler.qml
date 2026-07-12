@@ -1,8 +1,8 @@
+// Ruler.qml — CapCut-style time ruler with red playhead
 import QtQuick
 import QtQuick.Controls
+import GhitaTheme 1.0
 
-// Ruler: time ruler at the top of the timeline.
-// Shows time markings and a draggable playhead indicator.
 Rectangle {
     id: root
 
@@ -12,8 +12,17 @@ Rectangle {
 
     signal scrubbed(double positionMs)
 
-    color: "#2a2a2b"
-    height: 28
+    color: Theme.rulerBg
+    height: 24
+
+    // Border at bottom
+    Rectangle {
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: 1
+        color: Theme.borderDark
+    }
 
     // Time markings + playhead drawn on Canvas
     Canvas {
@@ -23,66 +32,77 @@ Rectangle {
         onPaint: {
             var ctx = getContext("2d")
             ctx.reset()
-            ctx.fillStyle = "#2a2a2b"
+            ctx.fillStyle = Theme.rulerBg
             ctx.fillRect(0, 0, width, height)
-
-            // Draw time markings
-            ctx.strokeStyle = "#555"
-            ctx.fillStyle = "#888"
-            ctx.font = "10px sans-serif"
-            ctx.textAlign = "center"
 
             // Calculate tick interval based on zoom
             var tickIntervalMs = 1000  // default: 1 second
-            if (pixelsPerMs > 0.5) tickIntervalMs = 100
-            if (pixelsPerMs > 2.0) tickIntervalMs = 50
+            if (pixelsPerMs > 0.3) tickIntervalMs = 500
+            if (pixelsPerMs > 0.5) tickIntervalMs = 200
+            if (pixelsPerMs > 1.0) tickIntervalMs = 100
+            if (pixelsPerMs > 2.5) tickIntervalMs = 50
 
             var viewStartMs = 0
             var viewEndMs = width / pixelsPerMs
 
             var firstTick = Math.floor(viewStartMs / tickIntervalMs) * tickIntervalMs
+
+            // Draw time markings
             for (var t = firstTick; t <= viewEndMs; t += tickIntervalMs) {
                 var x = t * pixelsPerMs
+
+                // Major tick or minor tick
+                var isMajor = (t % 1000 === 0) || (tickIntervalMs >= 500)
+                ctx.strokeStyle = isMajor ? "#555555" : "#3a3a3a"
+                ctx.lineWidth = isMajor ? 1 : 1
                 ctx.beginPath()
-                ctx.moveTo(x, height - 8)
+                ctx.moveTo(x, isMajor ? 8 : 14)
                 ctx.lineTo(x, height)
                 ctx.stroke()
 
-                // Label every N ticks
-                var sec = Math.floor(t / 1000)
-                var min = Math.floor(sec / 60)
-                sec = sec % 60
-                var label = (min < 10 ? "0" : "") + min + ":" + (sec < 10 ? "0" : "") + sec
-                ctx.fillText(label, x, height - 12)
+                // Label for major ticks
+                if (isMajor || tickIntervalMs >= 500) {
+                    var sec = Math.floor(t / 1000)
+                    var min = Math.floor(sec / 60)
+                    sec = sec % 60
+                    var label = (min < 10 ? "0" : "") + min + ":" + (sec < 10 ? "0" : "") + sec
+
+                    ctx.fillStyle = "#999999"
+                    ctx.font = "9px " + Theme.fontFamily
+                    ctx.textAlign = "center"
+                    ctx.fillText(label, x, 7)
+                }
             }
 
             // Draw playhead (red line)
             var phX = root.positionMs * root.pixelsPerMs
-            ctx.strokeStyle = "#e00"
-            ctx.lineWidth = 2
-            ctx.beginPath()
-            ctx.moveTo(phX, 0)
-            ctx.lineTo(phX, height)
-            ctx.stroke()
-            ctx.lineWidth = 1
+            if (phX >= 0 && phX <= width) {
+                ctx.strokeStyle = Theme.playhead
+                ctx.lineWidth = 1.5
+                ctx.beginPath()
+                ctx.moveTo(phX, 0)
+                ctx.lineTo(phX, height)
+                ctx.stroke()
+                ctx.lineWidth = 1
 
-            // Playhead triangle
-            ctx.fillStyle = "#e00"
-            ctx.beginPath()
-            ctx.moveTo(phX - 5, 0)
-            ctx.lineTo(phX + 5, 0)
-            ctx.lineTo(phX, 6)
-            ctx.closePath()
-            ctx.fill()
+                // Playhead triangle handle (white triangle at top)
+                ctx.fillStyle = Theme.playheadHandle
+                ctx.beginPath()
+                ctx.moveTo(phX - 5, 0)
+                ctx.lineTo(phX + 5, 0)
+                ctx.lineTo(phX, 7)
+                ctx.closePath()
+                ctx.fill()
+            }
         }
     }
 
-    // Repaint when position or duration changes
+    // Repaint on changes
     onPositionMsChanged: canvas.requestPaint()
     onDurationMsChanged: canvas.requestPaint()
     onPixelsPerMsChanged: canvas.requestPaint()
 
-    // Mouse interaction for scrubbing
+    // Mouse scrubbing
     MouseArea {
         anchors.fill: parent
         property bool scrubbing: false
