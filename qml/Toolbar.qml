@@ -24,6 +24,8 @@ ToolBar {
     signal stop()
     signal splitRequested()
     signal exportRequested()
+    signal addText()
+    signal addSticker()
 
     RowLayout {
         anchors.fill: parent
@@ -73,11 +75,32 @@ ToolBar {
         IconButton {
             iconSvg: Icons.deleteIcon
             tooltip: "Delete clip (Del)"
-            enabled: false
+            enabled: timeline && timeline.rowCount() > 0
             onClicked: {
                 var id = root.clipIdAtPlayhead()
                 if (id >= 0) timeline.deleteClip(id)
             }
+        }
+
+        // Separator
+        ToolSeparator { }
+
+        // ---- Text / Sticker ----
+        IconButton {
+            iconSvg: Icons.text
+            tooltip: "Add text (T)"
+            enabled: timeline && timeline.rowCount() > 0
+            onClicked: {
+                // Add text clip at playhead position on V2 track
+                var startMs = mediaEngine ? mediaEngine.positionMs : 0
+                timeline.addTextClip("Your text here", startMs, 3000)
+            }
+        }
+        IconButton {
+            iconSvg: Icons.sticker
+            tooltip: "Add sticker"
+            enabled: timeline && timeline.rowCount() > 0
+            onClicked: root.addSticker()
         }
 
         // Separator

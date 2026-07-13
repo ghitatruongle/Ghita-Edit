@@ -40,14 +40,17 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     // Custom methods
-    Q_INVOKABLE void addMedia(const QString &filePath);
+    Q_INVOKABLE bool addMedia(const QString &filePath);
     Q_INVOKABLE void removeMedia(int index);
     Q_INVOKABLE void clear();
     int count() const;
 
 signals:
     void countChanged();
+    void mediaAdded(int index);
+
     void thumbnailReady(int index, const QString &path);
+    void mediaError(const QString &message);
 
 private slots:
     void onThumbnailExtracted(int index, const QString &path);

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(GhitaEdit
-    VERSION 0.1.0
+    VERSION 0.1.5
     DESCRIPTION "Ghita Edit - high-performance video/audio editor (C++20 + Qt6 QML + FFmpeg)"
     LANGUAGES CXX)
 
@@ -48,7 +48,10 @@ set(GHITA_SOURCES
     src/timeline/TimelineModel.cpp
     src/timeline/TimelineCommands.cpp
     src/timeline/SnapEngine.cpp
+    src/timeline/TextOverlayClip.cpp
+    src/timeline/FadeTransition.cpp
     src/export/Exporter.cpp
+    src/export/Compositor.cpp
     src/export/VideoEncoder.cpp
     src/export/AudioEncoder.cpp
     src/export/PacketMuxer.cpp
@@ -61,6 +64,7 @@ set(GHITA_SOURCES
 
 set(GHITA_HEADERS
     src/app/Application.h
+    src/app/AppState.h
     src/engine/MediaEngine.h
     src/engine/Decoder.h
     src/engine/DecodeWorker.h
@@ -68,16 +72,22 @@ set(GHITA_HEADERS
     src/engine/HWAccel.h
     src/audio/AudioEngine.h
     src/audio/AudioClock.h
+    src/audio/AudioClip.h
     src/render/PreviewSurface.h
     src/timeline/Clip.h
     src/timeline/TimelineModel.h
     src/timeline/TimelineCommands.h
     src/timeline/UndoStack.h
     src/timeline/SnapEngine.h
+    src/timeline/TextOverlayClip.h
+    src/timeline/Transition.h
+    src/timeline/FadeTransition.h
+    src/timeline/Keyframe.h
     src/fx/VideoFX.h
     src/fx/AudioDSP.h
     src/fx/FxController.h
     src/export/Exporter.h
+    src/export/Compositor.h
     src/MediaBinModel.h
     src/ThumbnailExtractor.h
 )
@@ -106,6 +116,34 @@ endif()
 if(GHITA_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# Standalone, GoogleTest-free verification of the export pipeline. Used to
+# confirm the av_seek_frame time_base fix offline (GoogleTest FetchContent is
+# unavailable in some environments). Enabled only when explicitly requested.
+option(GHITA_BUILD_SELFTEST "Build the standalone export self-test" OFF)
+if(GHITA_BUILD_SELFTEST)
+    # GhitaSelftest provides its own main(); exclude src/main.cpp which also
+    # defines main().
+    set(GHITA_SELFTEST_SOURCES ${GHITA_SOURCES})
+    list(REMOVE_ITEM GHITA_SELFTEST_SOURCES src/main.cpp)
+    add_executable(GhitaSelftest
+        tools/selftest_main.cpp
+        ${GHITA_SELFTEST_SOURCES}
+        ${GHITA_HEADERS}
+    )
+    target_include_directories(GhitaSelftest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(GhitaSelftest PRIVATE
+        TEST_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sample.mp4")
+    target_link_libraries(GhitaSelftest PRIVATE
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::OpenGL
+        Qt6::Concurrent
+        ${GHITA_FFMPEG_LIBS}
+        ${GHITA_PORTAUDIO_LIB}
+    )
 endif()
 
 # QML resources: embed qml/ as Qt resource so the binary is self-contained.

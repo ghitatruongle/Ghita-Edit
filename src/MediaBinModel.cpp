@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QDir>
+#include <QDebug>
 
 MediaBinModel::MediaBinModel(QObject *parent)
     : QAbstractListModel(parent)
@@ -63,35 +64,52 @@ QHash<int, QByteArray> MediaBinModel::roleNames() const
     };
 }
 
-void MediaBinModel::addMedia(const QString &filePath)
+bool MediaBinModel::addMedia(const QString &filePath)
 {
     QFileInfo info(filePath);
-    if (!info.exists())
-        return;
+    if (!info.exists()) {
+        qWarning() << "MediaBinModel: File not found:" << filePath;
+        emit mediaError("File not found: " + filePath);
+        return false;
+    }
+
+    // Check if already added
+    for (const auto &item : m_items) {
+        if (item.filePath == filePath) {
+            qWarning() << "MediaBinModel: File already in bin:" << filePath;
+            emit mediaError("File already imported: " + info.fileName());
+            return false;
+        }
+    }
+
+    int itemIndex = m_items.size();
+    beginInsertRows(QModelIndex(), itemIndex, itemIndex);
 
     MediaItem item;
     item.filePath = filePath;
     item.fileName = info.fileName();
-    item.durationMs = 0; // Will be filled by engine
+    item.durationMs = 0;  // Will be filled by engine
     item.thumbnailPath = "";
     item.thumbnailReady = false;
-
-    beginInsertRows(QModelIndex(), m_items.count(), m_items.count());
     m_items.append(item);
-    endInsertRows();
 
+    endInsertRows();
     emit countChanged();
+    emit mediaAdded(itemIndex);
 
     // Extract thumbnail asynchronously
-    int itemIndex = m_items.count() - 1;
     QString thumbPath = QDir::tempPath() + "/ghita-edit/thumbnails/" +
                        QString::number(itemIndex) + ".png";
+    QDir().mkpath(QDir::tempPath() + "/ghita-edit/thumbnails/");
+
     QMetaObject::invokeMethod(m_extractor, "extractThumbnail",
                               Qt::QueuedConnection,
                               Q_ARG(QString, filePath),
                               Q_ARG(QString, thumbPath),
                               Q_ARG(int, 0),
                               Q_ARG(int, itemIndex));
+
+    return true;
 }
 
 void MediaBinModel::removeMedia(int index)

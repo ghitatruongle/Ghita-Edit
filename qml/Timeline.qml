@@ -10,6 +10,7 @@ ColumnLayout {
 
     property real pixelsPerMs: 0.1
     property real contentWidth: (mediaEngine ? mediaEngine.durationMs || 30000 : 30000) * pixelsPerMs
+    property int selectedClipId: -1
 
     // ---- Ruler ----
     Ruler {
@@ -69,6 +70,10 @@ ColumnLayout {
 
                 onClipSplit: function(clipId) { timeline.splitClipAtPlayhead(clipId) }
                 onClipDeleted: function(clipId) { timeline.deleteClip(clipId) }
+                onClipClicked: function(id) {
+                    root.selectedClipId = id
+                    if (appState) { appState.selectedClipId = id; appState.selectedClipKind = timeline.kindOfClip(id) }
+                }
                 onClipMoved: function(clipId, deltaMs) {
                     var clip = findClipData(clipId)
                     if (!clip) return
@@ -77,6 +82,7 @@ ColumnLayout {
                     newStart = snapEngine.snap(newStart, targets)
                     timeline.moveClip(clipId, newStart, 0)
                 }
+
                 onClipTrimmedLeft: function(clipId, deltaMs) {
                     var clip = findClipData(clipId)
                     if (!clip) return
@@ -100,6 +106,10 @@ ColumnLayout {
 
                 onClipSplit: function(clipId) { timeline.splitClipAtPlayhead(clipId) }
                 onClipDeleted: function(clipId) { timeline.deleteClip(clipId) }
+                onClipClicked: function(id) {
+                    root.selectedClipId = id
+                    if (appState) { appState.selectedClipId = id; appState.selectedClipKind = timeline.kindOfClip(id) }
+                }
                 onClipMoved: function(clipId, deltaMs) {
                     var clip = findClipData(clipId)
                     if (!clip) return
@@ -107,6 +117,41 @@ ColumnLayout {
                     var targets = timeline.snapTargets()
                     newStart = snapEngine.snap(newStart, targets)
                     timeline.moveClip(clipId, newStart, 1)
+                }
+                onClipTrimmedLeft: function(clipId, deltaMs) {
+                    var clip = findClipData(clipId)
+                    if (!clip) return
+                    timeline.trimClipLeft(clipId, clip.timelineStart + deltaMs)
+                }
+                onClipTrimmedRight: function(clipId, deltaMs) {
+                    var clip = findClipData(clipId)
+                    if (!clip) return
+                    timeline.trimClipRight(clipId, clip.timelineEnd + deltaMs)
+                }
+            }
+
+            // Overlay track (Text / Sticker)
+            TrackRow {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 48
+                trackName: "V2"
+                trackIndex: 2
+                trackColor: Theme.clipText
+                pixelsPerMs: root.pixelsPerMs
+
+                onClipSplit: function(clipId) { timeline.splitClipAtPlayhead(clipId) }
+                onClipDeleted: function(clipId) { timeline.deleteClip(clipId) }
+                onClipClicked: function(id) {
+                    root.selectedClipId = id
+                    if (appState) { appState.selectedClipId = id; appState.selectedClipKind = timeline.kindOfClip(id) }
+                }
+                onClipMoved: function(clipId, deltaMs) {
+                    var clip = findClipData(clipId)
+                    if (!clip) return
+                    var newStart = clip.timelineStart + deltaMs
+                    var targets = timeline.snapTargets()
+                    newStart = snapEngine.snap(newStart, targets)
+                    timeline.moveClip(clipId, newStart, 2)
                 }
                 onClipTrimmedLeft: function(clipId, deltaMs) {
                     var clip = findClipData(clipId)
@@ -149,6 +194,14 @@ ColumnLayout {
         }
     }
 
+    // ---- Keyframe Lane (visible when an overlay clip is selected) ----
+    KeyframeLane {
+        Layout.fillWidth: true
+        Layout.preferredHeight: 96
+        visible: appState && appState.selectedClipKind >= 2 && appState.selectedClipId >= 0
+        clipId: appState ? appState.selectedClipId : -1
+    }
+
     // ---- Bottom Controls ----
     Rectangle {
         Layout.fillWidth: true
@@ -165,7 +218,16 @@ ColumnLayout {
 
             // Frame indicator
             Label {
-                text: "0:00 / 0:00"
+                text: {
+                    if (!mediaEngine) return "0:00 / 0:00"
+                    function fmt(ms) {
+                        var totalSec = Math.floor(ms / 1000)
+                        var m = Math.floor(totalSec / 60)
+                        var s = totalSec % 60
+                        return m + ":" + (s < 10 ? "0" : "") + s
+                    }
+                    return fmt(mediaEngine.positionMs || 0) + " / " + fmt(mediaEngine.durationMs || 0)
+                }
                 color: Theme.textMuted
                 font.family: "Consolas, Courier New, monospace"
                 font.pixelSize: Theme.fontSizeXs
@@ -188,6 +250,12 @@ ColumnLayout {
                 to: 3.0
                 value: root.pixelsPerMs
                 onMoved: root.pixelsPerMs = value
+
+                // Sync value when pixelsPerMs changes externally (avoids binding loop).
+                Connections {
+                    target: root
+                    function onPixelsPerMsChanged() { zoomSlider.value = root.pixelsPerMs }
+                }
 
                 background: Rectangle {
                     x: zoomSlider.leftPadding

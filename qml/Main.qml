@@ -49,6 +49,56 @@ ApplicationWindow {
         return -1
     }
 
+    // Apply a color-grading filter preset (sets FxController properties).
+    function applyFilter(name) {
+        if (name === "None") { fx.reset(); return }
+        if (name === "Vivid")    { fx.saturation = 1.3; fx.contrast = 1.1; fx.temperature = 10; fx.tint = 0 }
+        if (name === "Cinematic"){ fx.contrast = 1.15; fx.saturation = 0.9; fx.temperature = -10; fx.tint = 5; fx.brightness = -0.02 }
+        if (name === "B&W")      { fx.saturation = 0.0; fx.contrast = 1.2; fx.temperature = 0; fx.tint = 0 }
+        if (name === "Warm")     { fx.temperature = 45; fx.tint = 12; fx.saturation = 1.05 }
+        if (name === "Cool")     { fx.temperature = -45; fx.tint = -12; fx.saturation = 1.05 }
+        if (name === "Fade")     { fx.brightness = 0.05; fx.contrast = 0.95; fx.saturation = 0.95 }
+        if (name === "Vintage")  { fx.temperature = 20; fx.tint = -10; fx.saturation = 0.85; fx.contrast = 1.1 }
+        if (name === "Clean")    { fx.saturation = 1.1; fx.contrast = 1.05; fx.temperature = 0; fx.tint = 0 }
+    }
+
+    // Add a text clip at the playhead and select it.
+    function addTextClipAtPlayhead(text) {
+        var start = mediaEngine ? mediaEngine.positionMs : 0
+        timeline.addTextClip(text, start, 3000)
+        var pick = -1
+        for (var i = 0; i < timeline.rowCount(); i++) {
+            if (timeline.clipKind(i) >= 2 && timeline.clipStartMs(i) === start) pick = timeline.clipId(i)
+        }
+        if (pick >= 0 && appState) { appState.selectedClipId = pick; appState.selectedClipKind = 2 }
+        root.rightTab = "text"
+    }
+
+    // Add a sticker clip at the playhead and select it.
+    function addStickerAtPlayhead(path) {
+        var start = mediaEngine ? mediaEngine.positionMs : 0
+        timeline.addStickerClip(path, start, 3000)
+        var pick = -1
+        for (var i = 0; i < timeline.rowCount(); i++) {
+            if (timeline.clipKind(i) === 3 && timeline.clipStartMs(i) === start) pick = timeline.clipId(i)
+        }
+        if (pick >= 0 && appState) { appState.selectedClipId = pick; appState.selectedClipKind = 3 }
+        root.rightTab = "text"
+    }
+
+    // Add an audio clip at the playhead.
+    // NOTE: We temporarily open the audio file in mediaEngine to read its
+    // duration, then reopen the previous video. This is a workaround because
+    // there is no standalone duration-reading API for audio files.
+    function requestAudio(path) {
+        var start = mediaEngine ? mediaEngine.positionMs : 0
+        var savedPath = mediaEngine.mediaPath
+        mediaEngine.open(path)
+        var dur = mediaEngine.durationMs > 0 ? mediaEngine.durationMs : 8000
+        if (savedPath) mediaEngine.open(savedPath)
+        timeline.addClip(path, 0, dur, start, 1)
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -63,7 +113,9 @@ ApplicationWindow {
                 var id = clipIdAtPlayhead()
                 if (id >= 0) timeline.splitClipAtPlayhead(id)
             }
-            onExportRequested: outputDialog.open()
+            onAddText: root.addTextClipAtPlayhead("Text")
+            onAddSticker: stickerFileDialog.open()
+            onExportRequested: exportDialog.open()
         }
 
         // ---- Main Content Area ----
@@ -76,12 +128,16 @@ ApplicationWindow {
             MediaBin {
                 Layout.preferredWidth: 240
                 Layout.fillHeight: true
-                visible: mediaEngine && mediaEngine.mediaPath !== ""
+                visible: true
 
                 onMediaSelected: function(path) {
                     mediaEngine.open(path)
                 }
                 onMediaImportRequested: fileDialog.open()
+                onStickerImportRequested: stickerFileDialog.open()
+                onRequestText: function(text) { root.addTextClipAtPlayhead(text) }
+                onRequestStickerImage: function(path) { root.addStickerAtPlayhead(path) }
+                onRequestAudio: function(path) { root.requestAudio(path) }
             }
 
             // === Center: Preview Area ===
@@ -124,7 +180,9 @@ ApplicationWindow {
 
                             RightTab { text: "Adjust"; tabId: "adjust"; activeTab: root.rightTab; onClicked: root.rightTab = tabId }
                             RightTab { text: "Audio"; tabId: "audio"; activeTab: root.rightTab; onClicked: root.rightTab = tabId }
-                            RightTab { text: "Effects"; tabId: "effects"; activeTab: root.rightTab; onClicked: root.rightTab = tabId }
+                            RightTab { text: "Filters"; tabId: "filters"; activeTab: root.rightTab; onClicked: root.rightTab = tabId }
+                            RightTab { text: "Text"; tabId: "text"; activeTab: root.rightTab; onClicked: root.rightTab = tabId }
+                            RightTab { text: "Transitions"; tabId: "transitions"; activeTab: root.rightTab; onClicked: root.rightTab = tabId }
                         }
                     }
 
@@ -246,17 +304,37 @@ ApplicationWindow {
                                     CapFxSlider { label: "Fade In (ms)"; from: 0; to: 5000; step: 100; value: fx.fadeInMs; onChanged: fx.fadeInMs = v }
                                     CapFxSlider { label: "Fade Out (ms)"; from: 0; to: 5000; step: 100; value: fx.fadeOutMs; onChanged: fx.fadeOutMs = v }
                                 }
+
+                                // Multi-track mixer
+                                AudioMixer {
+                                    id: audioMixer
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 200
+                                    visible: root.rightTab === "audio"
+
+                                    tracks: [
+                                        { name: "A1", volume: 1.0, muted: false },
+                                        { name: "A2", volume: 1.0, muted: false }
+                                    ]
+
+                                    onVolumeChanged: function(trackIndex, volume) {
+                                        console.log("Track", trackIndex, "volume:", volume)
+                                    }
+                                    onTrackMuted: function(trackIndex, muted) {
+                                        console.log("Track", trackIndex, "muted:", muted)
+                                    }
+                                }
                             }
 
-                            // === Effects Tab ===
+                            // === Filters Tab ===
                             ColumnLayout {
-                                visible: root.rightTab === "effects"
+                                visible: root.rightTab === "filters"
                                 spacing: Theme.spacingSm
                                 Layout.fillWidth: true
                                 Layout.margins: Theme.spacingSm
 
                                 Label {
-                                    text: "Effects Library"
+                                    text: "Filter Presets"
                                     color: Theme.textPrimary
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSizeMd
@@ -264,29 +342,247 @@ ApplicationWindow {
                                     Layout.topMargin: Theme.spacingSm
                                 }
 
+                                GridView {
+                                    id: filterGrid
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 180
+                                    cellWidth: (filterGrid.width) / 3
+                                    cellHeight: 56
+                                    clip: true
+                                    model: [
+                                        { name: "None", c: "#888888" },
+                                        { name: "Vivid", c: "#ff6b6b" },
+                                        { name: "Cinematic", c: "#5b8def" },
+                                        { name: "B&W", c: "#cccccc" },
+                                        { name: "Warm", c: "#ffa94d" },
+                                        { name: "Cool", c: "#74c0fc" },
+                                        { name: "Fade", c: "#e8d5b7" },
+                                        { name: "Vintage", c: "#d8b48c" },
+                                        { name: "Clean", c: "#69db7c" }
+                                    ]
+
+                                    delegate: Rectangle {
+                                        width: filterGrid.cellWidth - 4
+                                        height: filterGrid.cellHeight - 4
+                                        radius: Theme.radiusSmall
+                                        color: fMouse.pressed ? Theme.borderLight : Theme.surfaceBg
+                                        border.color: Theme.border
+                                        border.width: 1
+
+                                        Rectangle {
+                                            width: 18; height: 18; radius: 9
+                                            anchors.top: parent.top; anchors.topMargin: 6
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            color: modelData.c
+                                        }
+                                        Label {
+                                            anchors.bottom: parent.bottom
+                                            anchors.bottomMargin: 6
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            text: modelData.name
+                                            color: Theme.textPrimary
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeXs
+                                        }
+
+                                        MouseArea {
+                                            id: fMouse
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.applyFilter(modelData.name)
+                                        }
+                                    }
+                                }
+
                                 Label {
-                                    text: "Browse video & audio effects"
+                                    text: "Filters adjust color grading applied on export."
+                                    color: Theme.textMuted
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeXs
+                                    wrapMode: Text.Wrap
+                                    Layout.topMargin: Theme.spacingSm
+                                }
+                            }
+
+                            // === Text / Sticker Tab ===
+                            ColumnLayout {
+                                visible: root.rightTab === "text"
+                                spacing: Theme.spacingSm
+                                Layout.fillWidth: true
+                                Layout.margins: Theme.spacingSm
+
+                                Label {
+                                    text: "Text & Sticker"
+                                    color: Theme.textPrimary
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeMd
+                                    font.weight: Font.Medium
+                                    Layout.topMargin: Theme.spacingSm
+                                }
+
+                                // Hint when nothing selected
+                                Label {
+                                    visible: !(appState && appState.selectedClipKind >= 2)
+                                    text: "Select a text or sticker clip on the timeline (or V2 track) to edit it."
                                     color: Theme.textMuted
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSizeSm
-                                    Layout.bottomMargin: Theme.spacingMd
+                                    wrapMode: Text.Wrap
                                 }
 
-                                // Placeholder effect grids
-                                Rectangle {
+                                // Editor (shown when an overlay clip is selected)
+                                ColumnLayout {
+                                    visible: appState && appState.selectedClipKind >= 2
+                                    spacing: Theme.spacingSm
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 80
-                                    color: Theme.surfaceBg
-                                    radius: Theme.radiusSmall
-                                    border.color: Theme.borderDark
-                                    border.width: 1
 
+                                    // Text content (Text clips only)
                                     ColumnLayout {
-                                        anchors.centerIn: parent
-                                        spacing: 4
-                                        Label { text: "✨"; font.pixelSize: 24; Layout.alignment: Qt.AlignHCenter }
-                                        Label { text: "Coming soon..."; color: Theme.textMuted; font.pixelSize: Theme.fontSizeXs; Layout.alignment: Qt.AlignHCenter }
+                                        visible: appState && appState.selectedClipKind === 2
+                                        spacing: Theme.spacingXs
+                                        Layout.fillWidth: true
+
+                                        Label { text: "Text"; color: Theme.textPrimary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeXs }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 30
+                                            font.pixelSize: Theme.fontSizeSm
+                                            color: Theme.textPrimary
+                                            text: appState ? timeline.overlayText(appState.selectedClipId) : ""
+                                            background: Rectangle { color: Theme.surfaceBg; radius: 3; border.color: Theme.border; border.width: 1 }
+                                            onEditingFinished: if (appState) timeline.setOverlayText(appState.selectedClipId, text)
+                                        }
                                     }
+
+                                    // Font size
+                                    CapFxSlider {
+                                        visible: appState && appState.selectedClipKind === 2
+                                        label: "Font Size"
+                                        from: 12; to: 240; step: 1
+                                        value: appState ? timeline.overlayFontSize(appState.selectedClipId) : 48
+                                        onChanged: if (appState) timeline.setOverlayFontSize(appState.selectedClipId, v)
+                                    }
+
+                                    // Bold + color row
+                                    RowLayout {
+                                        visible: appState && appState.selectedClipKind === 2
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingSm
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 60
+                                            Layout.preferredHeight: 26
+                                            radius: 3
+                                            color: bMouse.pressed ? Theme.borderLight : Theme.surfaceBg
+                                            border.color: Theme.border; border.width: 1
+                                            Label { anchors.centerIn: parent; text: "Bold"; color: Theme.textPrimary; font.pixelSize: Theme.fontSizeXs; font.bold: true }
+                                            MouseArea {
+                                                id: bMouse
+                                                anchors.fill: parent
+                                                onClicked: if (appState) timeline.setOverlayBold(appState.selectedClipId, !timeline.overlayBold(appState.selectedClipId))
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 26; Layout.preferredHeight: 26
+                                            radius: 3
+                                            border.color: Theme.border; border.width: 1
+                                            color: appState ? timeline.overlayColor(appState.selectedClipId) : "#ffffff"
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: { colorDialog.target = "text"; colorDialog.open() }
+                                            }
+                                        }
+                                        Label { text: "Color"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeXs }
+
+                                        Item { Layout.fillWidth: true }
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 26; Layout.preferredHeight: 26
+                                            radius: 3
+                                            border.color: Theme.border; border.width: 1
+                                            color: appState ? timeline.overlayBg(appState.selectedClipId) : "transparent"
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: { colorDialog.target = "bg"; colorDialog.open() }
+                                            }
+                                        }
+                                        Label { text: "BG"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeXs }
+                                    }
+
+                                    // Alignment (Text clips)
+                                    RowLayout {
+                                        visible: appState && appState.selectedClipKind === 2
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingXs
+                                        Label { text: "Align"; color: Theme.textMuted; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeXs }
+                                        Item { Layout.fillWidth: true }
+                                        Repeater {
+                                            model: [ {a:0,t:"L"}, {a:1,t:"C"}, {a:2,t:"R"} ]
+                                            Rectangle {
+                                                Layout.preferredWidth: 26; Layout.preferredHeight: 24
+                                                radius: 3
+                                                color: alMouse.pressed ? Theme.borderLight : (appState && timeline.overlayAlign(appState.selectedClipId) === modelData.a ? Theme.accent : Theme.surfaceBg)
+                                                border.color: Theme.border; border.width: 1
+                                                Label { anchors.centerIn: parent; text: modelData.t; color: Theme.textPrimary; font.pixelSize: Theme.fontSizeXs }
+                                                MouseArea {
+                                                    id: alMouse
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: if (appState) timeline.setOverlayAlign(appState.selectedClipId, modelData.a)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Transform (all overlay clips)
+                                    CapFxSlider {
+                                        label: "Position X"
+                                        from: 0; to: 1; step: 0.01
+                                        value: appState ? timeline.overlayPos(appState.selectedClipId).x : 0.5
+                                        onChanged: if (appState) { var p = timeline.overlayPos(appState.selectedClipId); timeline.setOverlayPos(appState.selectedClipId, v, p.y) }
+                                    }
+                                    CapFxSlider {
+                                        label: "Position Y"
+                                        from: 0; to: 1; step: 0.01
+                                        value: appState ? timeline.overlayPos(appState.selectedClipId).y : 0.5
+                                        onChanged: if (appState) { var p = timeline.overlayPos(appState.selectedClipId); timeline.setOverlayPos(appState.selectedClipId, p.x, v) }
+                                    }
+                                    CapFxSlider {
+                                        label: "Scale"
+                                        from: 0.1; to: 5; step: 0.01
+                                        value: appState ? timeline.overlayScale(appState.selectedClipId) : 1.0
+                                        onChanged: if (appState) timeline.setOverlayScale(appState.selectedClipId, v)
+                                    }
+                                    CapFxSlider {
+                                        label: "Rotation"
+                                        from: -180; to: 180; step: 1
+                                        value: appState ? timeline.overlayRotation(appState.selectedClipId) : 0
+                                        onChanged: if (appState) timeline.setOverlayRotation(appState.selectedClipId, v)
+                                    }
+                                    CapFxSlider {
+                                        label: "Opacity"
+                                        from: 0; to: 1; step: 0.01
+                                        value: appState ? timeline.overlayOpacity(appState.selectedClipId) : 1.0
+                                        onChanged: if (appState) timeline.setOverlayOpacity(appState.selectedClipId, v)
+                                    }
+                                }
+                            }
+
+                            // === Transitions Tab ===
+                            // TransitionEditor hidden until backend is wired up
+                            TransitionEditor {
+                                id: transitionEditor
+                                visible: false  // TODO: Enable when transition apply is implemented
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 250
+                                Layout.margins: Theme.spacingSm
+
+                                onApplyRequested: function(transition, duration) {
+                                    console.log("Apply transition:", transition, "duration:", duration)
+                                    // TODO: Apply transition to selected clips
                                 }
                             }
 
@@ -314,6 +610,8 @@ ApplicationWindow {
                                     verticalAlignment: Text.AlignVCenter
                                 }
                             }
+
+                            // Text Overlay editor panel (removed — inline editor above handles this)
                         }
                     }
                 }
@@ -345,7 +643,7 @@ ApplicationWindow {
                     font.pixelSize: Theme.fontSizeXs
                     text: {
                         if (!mediaEngine || mediaEngine.mediaPath === "")
-                            return "Ghita Edit v0.1.0"
+                            return "Ghita Edit v0.1.5"
                         var dur = mediaEngine.durationMs || 0
                         var pos = mediaEngine.positionMs || 0
                         return mediaEngine.mediaPath.split("/").pop().split("\\").pop()
@@ -430,7 +728,7 @@ ApplicationWindow {
             }
 
             Label {
-                text: fxSlider.value.toFixed(fxSlider.step < 0.1 ? 0 : 2)
+                text: fxSlider.value.toFixed(fxSlider.step < 0.1 ? 2 : 0)
                 color: Theme.textSecondary
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
@@ -519,29 +817,60 @@ ApplicationWindow {
     // ---- File Dialogs ----
     FileDialog {
         id: fileDialog
-        title: "Open media"
-        nameFilters: ["Video files (*.mp4 *.mkv *.mov *.avi)", "All files (*)"]
+        title: "Import Media"
+        nameFilters: [
+            "Media files (*.mp4 *.mkv *.mov *.avi *.mp3 *.wav *.flac *.m4a)",
+            "Video files (*.mp4 *.mkv *.mov *.avi)",
+            "Audio files (*.mp3 *.wav *.flac *.m4a)",
+            "All files (*)"
+        ]
+        fileMode: FileDialog.OpenFiles
+
         onAccepted: {
-            var path = exporter.urlToLocalPath(fileDialog.selectedFile)
-            console.log("Opening:", path)
-            mediaEngine.open(path)
-            mediaBinModel.addMedia(path)
-            if (mediaEngine.durationMs > 0) {
-                timeline.addClip(path, 0, mediaEngine.durationMs, 0, 0)
-                timeline.addClip(path, 0, mediaEngine.durationMs, 0, 1)
+            var files = fileDialog.selectedFiles
+            for (var i = 0; i < files.length; i++) {
+                var path = exporter.urlToLocalPath(files[i])
+                if (path === "" || path === undefined || path === null) {
+                    console.error("Failed to convert URL to path:", files[i])
+                    continue
+                }
+                console.log("Importing:", path)
+                mediaBinModel.addMedia(path)
             }
         }
     }
 
     FileDialog {
-        id: outputDialog
-        title: "Export project"
-        fileMode: FileDialog.SaveFile
-        nameFilters: ["MP4 files (*.mp4)", "All files (*)"]
-        defaultSuffix: "mp4"
+        id: stickerFileDialog
+        title: "Import sticker image"
+        nameFilters: ["Images (*.png *.jpg *.jpeg *.svg *.webp)", "All files (*)"]
         onAccepted: {
-            var path = exporter.urlToLocalPath(outputDialog.selectedFile)
-            console.log("Exporting to:", path)
+            var p = exporter.urlToLocalPath(stickerFileDialog.selectedFile)
+            if (p === "" || p === undefined || p === null) {
+                console.error("Failed to convert URL to path:", stickerFileDialog.selectedFile)
+                return
+            }
+            root.addStickerAtPlayhead(p)
+        }
+    }
+
+    ColorDialog {
+        id: colorDialog
+        property string target: "text"
+        onAccepted: {
+            if (!appState) return
+            var id = appState.selectedClipId
+            var c = colorDialog.selectedColor.toString()
+            if (target === "text") timeline.setOverlayColor(id, c)
+            else timeline.setOverlayBg(id, c)
+        }
+    }
+
+    ExportDialog {
+        id: exportDialog
+        onBeginExport: function(path, w, h, crf) {
+            exporter.setTargetSize(w, h)
+            exporter.setCrf(crf)
             startExport(path)
         }
     }
@@ -555,9 +884,57 @@ ApplicationWindow {
     }
 
     // ---- Keyboard shortcuts ----
-    Shortcut { sequence: "Space"; onActivated: playing ? mediaEngine.pause() : mediaEngine.play() }
-    Shortcut { sequence: "Ctrl+Z"; onActivated: timeline.undo() }
-    Shortcut { sequence: "Ctrl+Y"; onActivated: timeline.redo() }
-    Shortcut { sequence: "S"; onActivated: { var id = clipIdAtPlayhead(); if (id >= 0) timeline.splitClipAtPlayhead(id) } }
-    Shortcut { sequence: "Delete"; onActivated: { var id = clipIdAtPlayhead(); if (id >= 0) timeline.deleteClip(id) } }
+    focus: true
+    Keys.onPressed: function(event) {
+        // Skip shortcuts when typing in text fields
+        if (event.target instanceof TextInput || event.target instanceof TextField) return
+
+        // Space: Play/Pause
+        if (event.key === Qt.Key_Space && !event.modifiers) {
+            mediaEngine.playing ? mediaEngine.pause() : mediaEngine.play()
+            event.accepted = true
+        }
+        // Delete: Remove selected clip
+        else if (event.key === Qt.Key_Delete) {
+            if (appState.selectedClipId !== -1) {
+                timeline.deleteClip(appState.selectedClipId)
+            }
+            event.accepted = true
+        }
+        // Ctrl+Z: Undo
+        else if (event.key === Qt.Key_Z && event.modifiers & Qt.ControlModifier) {
+            timeline.undo()
+            event.accepted = true
+        }
+        // Ctrl+Y: Redo
+        else if (event.key === Qt.Key_Y && event.modifiers & Qt.ControlModifier) {
+            timeline.redo()
+            event.accepted = true
+        }
+        // S: Split at playhead
+        else if (event.key === Qt.Key_S && !event.modifiers) {
+            if (appState.selectedClipId !== -1) {
+                timeline.splitClip(appState.selectedClipId, timeline.positionMs)
+            }
+            event.accepted = true
+        }
+    }
+
+    // ---- Toast Notification ----
+    ToastNotification {
+        id: toast
+        anchors.fill: parent
+        z: 1000
+    }
+
+    // Connect to MediaBinModel signals for import feedback
+    Connections {
+        target: mediaBinModel
+        function onMediaError(msg) {
+            toast.show(msg, "error")
+        }
+        function onMediaAdded(index) {
+            toast.show("Media imported successfully", "success")
+        }
+    }
 }

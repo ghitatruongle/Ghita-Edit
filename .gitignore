@@ -5,7 +5,9 @@ CMakeFiles/
 .ninja_log
 .qt/
 GhitaEdit.exe
+GhitaSelftest.exe
 GhitaEdit_autogen/
+GhitaSelftest_autogen/
 
 # ---- Deploy / staging dirs ----
 build-win/
