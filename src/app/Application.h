@@ -7,6 +7,7 @@
 #include "export/Exporter.h"
 #include "fx/FxController.h"
 #include "MediaBinModel.h"
+#include "AppState.h"
 
 #include <QObject>
 #include <QQmlApplicationEngine>
@@ -39,6 +40,7 @@ private:
     export_::Exporter exporter_;
     fx::FxController fxController_;
     MediaBinModel mediaBinModel_;
+    AppState appState_;
     QQmlApplicationEngine qmlEngine_;
 };
 

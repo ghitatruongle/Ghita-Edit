@@ -98,6 +98,21 @@ Rectangle {
         }
     }
 
+    // Overlay editing layer (text/sticker) — sits above the preview surface
+    // but below the playback controls and hover detection.
+    OverlayLayer {
+        id: overlayLayer
+        anchors.fill: parent
+        anchors.margins: 1
+        z: 1
+        onOverlaySelected: function(id) {
+            if (appState) {
+                appState.selectedClipId = id
+                appState.selectedClipKind = timeline.kindOfClip(id)
+            }
+        }
+    }
+
     // Playback controls overlay (bottom)
     Rectangle {
         id: controlsOverlay
@@ -107,6 +122,7 @@ Rectangle {
         height: 40
         color: "#bb000000"
         visible: root.hasFrame && controlsOverlay.visible_
+        z: 2
 
         property bool visible_: false
 
@@ -192,6 +208,7 @@ Rectangle {
     Rectangle {
         anchors.fill: parent
         color: "transparent"
+        z: 3
 
         MouseArea {
             anchors.fill: parent

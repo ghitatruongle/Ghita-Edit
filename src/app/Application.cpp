@@ -1,9 +1,12 @@
 #include "Application.h"
 #include "render/PreviewSurface.h"
+#include "audio/AudioMixerController.h"
 
 #include <QGuiApplication>
 #include <QQmlContext>
 #include <QDebug>
+#include <QFile>
+#include <QTextStream>
 
 namespace ghita::app {
 
@@ -26,6 +29,11 @@ bool Application::initialize() {
     qmlEngine_.rootContext()->setContextProperty("exporter", &exporter_);
     qmlEngine_.rootContext()->setContextProperty("fx", &fxController_);
     qmlEngine_.rootContext()->setContextProperty("mediaBinModel", &mediaBinModel_);
+    qmlEngine_.rootContext()->setContextProperty("appState", &appState_);
+
+    // Per-track / master audio mixer bridge.
+    auto* audioMixer = new ghita::audio::AudioMixerController(&audioEngine_, this);
+    qmlEngine_.rootContext()->setContextProperty("audioMixer", audioMixer);
 
     // The exporter reads effect parameters from the shared FxController.
     exporter_.setFxController(&fxController_);
@@ -38,20 +46,37 @@ bool Application::initialize() {
     qmlRegisterSingletonType(QUrl("qrc:/Icons.qml"), "GhitaTheme", 1, 0, "Icons");
 
     // Surface QML load/parse errors (the engine's default handler routes
-    // them to qWarning, but make sure they are explicit).
+    // them to qWarning, but make sure they are explicit). Also mirror them to
+    // a log file since a Windows-subsystem build discards stderr.
     QObject::connect(&qmlEngine_, &QQmlApplicationEngine::warnings,
                      this, [](const QList<QQmlError>& warnings) {
-                         for (const auto& w : warnings)
+                         for (const auto& w : warnings) {
                              qWarning() << "[QML]" << w.toString();
+                             QFile f("ghita_qml.log");
+                             if (f.open(QIODevice::Append | QIODevice::Text)) {
+                                 QTextStream ts(&f);
+                                 ts << "[QML] " << w.toString() << "\n";
+                             }
+                         }
                      });
 
     // QML is embedded via Qt resource (see ghita_qml.qrc generated in CMake).
     qmlEngine_.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (qmlEngine_.rootObjects().isEmpty()) {
         qCritical() << "[Application] Failed to load Main.qml (see QML warnings above)";
+        QFile f("ghita_qml.log");
+        if (f.open(QIODevice::Append | QIODevice::Text)) {
+            QTextStream ts(&f);
+            ts << "[Application] Failed to load Main.qml\n";
+        }
         return false;
     }
     qInfo() << "[Application] Ghita Edit started (stub build)";
+    QFile f("ghita_qml.log");
+    if (f.open(QIODevice::Append | QIODevice::Text)) {
+        QTextStream ts(&f);
+        ts << "[Application] Ghita Edit started OK\n";
+    }
     return true;
 }
 

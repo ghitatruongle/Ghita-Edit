@@ -17,6 +17,7 @@ Rectangle {
     signal clipMoved(int clipId, real deltaMs)
     signal clipTrimmedLeft(int clipId, real newStartMs)
     signal clipTrimmedRight(int clipId, real newEndMs)
+    signal clipClicked(int clipId)
 
     color: Theme.trackBg
     border.color: "transparent"
@@ -155,10 +156,13 @@ Rectangle {
                 clipWidth: Math.max(2, model.clipDuration * root.pixelsPerMs)
                 clipColor: model.clipColor
                 trackIndex: model.trackIndex
+                clipKind: model.clipKind
+                overlayLabel: model.overlayLabel
                 pixelsPerMs: root.pixelsPerMs
 
                 onSplitRequested: root.clipSplit(model.clipId)
                 onDeleteRequested: root.clipDeleted(model.clipId)
+                onClipSelected: root.clipClicked(model.clipId)
                 onMoved: function(deltaMs) {
                     root.clipMoved(model.clipId, deltaMs)
                 }
@@ -179,5 +183,15 @@ Rectangle {
             x: mediaEngine ? mediaEngine.positionMs * root.pixelsPerMs : 0
             z: 5
         }
+    }
+
+    // Transition badges between adjacent V1 video clips.
+    TransitionBadge {
+        anchors.left: clipArea.left
+        anchors.right: clipArea.right
+        anchors.top: clipArea.top
+        anchors.bottom: clipArea.bottom
+        pixelsPerMs: root.pixelsPerMs
+        visible: root.trackIndex === 0
     }
 }

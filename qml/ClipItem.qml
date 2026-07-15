@@ -13,24 +13,33 @@ Rectangle {
     required property real clipWidth
     required property string clipColor
     required property int trackIndex
+    required property int clipKind
+    property string overlayLabel: ""
 
     signal trimmedLeft(real newStartMs)
     signal trimmedRight(real newEndMs)
     signal moved(real deltaMs)
     signal splitRequested()
     signal deleteRequested()
+    signal clipSelected(int clipId)
 
     property real pixelsPerMs: 0.1
-    property bool selected: false
-    property bool isAudio: trackIndex >= 1
+    property bool isSelected: false
+    property bool isOverlay: clipKind >= 2
+    property bool isAudio: trackIndex >= 1 && !isOverlay
+
+    // Color by kind (overlay clips get dedicated CapCut-style colors).
+    property string effectiveColor: isOverlay
+        ? (clipKind === 3 ? Theme.clipSticker : Theme.clipText)
+        : clipColor
 
     x: clipX
     width: clipWidth
     height: parent ? parent.height : 40
     radius: 3  // Slightly rounded like CapCut
-    color: selected ? Qt.lighter(clipColor, 1.2) : clipColor
-    border.color: selected ? Theme.accent : Qt.rgba(1, 1, 1, 0.1)
-    border.width: selected ? 2 : 0
+    color: isSelected ? Qt.lighter(effectiveColor, 1.2) : effectiveColor
+    border.color: isSelected ? Theme.accent : Qt.rgba(1, 1, 1, 0.1)
+    border.width: isSelected ? 2 : 0
 
     // Subtle gradient overlay (top highlight)
     Rectangle {
@@ -49,7 +58,7 @@ Rectangle {
         anchors.rightMargin: 8
         clip: true
 
-        // Source name label
+        // Source name label (overlay clips show their text / "Sticker")
         Label {
             anchors.left: parent.left
             anchors.right: parent.right
@@ -58,7 +67,7 @@ Rectangle {
             color: Theme.textPrimary
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
-            text: sourceName
+            text: isOverlay ? overlayLabel : sourceName
             elide: Text.ElideRight
             maximumLineCount: 1
         }
@@ -187,7 +196,8 @@ Rectangle {
         onPressed: function(mouse) {
             lastX = mapToItem(root.parent, mouse.x, mouse.y).x
             dragging = false
-            root.selected = true
+            root.isSelected = true
+            root.clipSelected(clipId)
         }
         onPositionChanged: function(mouse) {
             if (!pressed) return

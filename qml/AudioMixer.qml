@@ -11,12 +11,6 @@ Rectangle {
     border.width: 1
     radius: Theme.radiusSmall
 
-    property var tracks: []
-
-    signal volumeChanged(int trackIndex, real volume)
-    signal trackMuted(int trackIndex, bool muted)
-    signal masterVolumeChanged(real volume)
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.spacingMd
@@ -50,8 +44,8 @@ Rectangle {
                 Layout.preferredHeight: 20
                 from: 0.0
                 to: 2.0
-                value: 1.0
-                onMoved: root.masterVolumeChanged(value)
+                value: audioMixer.masterVolume
+                onMoved: audioMixer.setMasterVolume(value)
 
                 background: Rectangle {
                     x: masterSlider.leftPadding
@@ -100,14 +94,14 @@ Rectangle {
 
         // Track volumes
         Repeater {
-            model: root.tracks
+            model: timeline.trackCount
 
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Theme.spacingSm
 
                 Label {
-                    text: modelData.name || "Track " + (index + 1)
+                    text: "A" + (index + 1)
                     color: Theme.textSecondary
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeMd
@@ -120,8 +114,8 @@ Rectangle {
                     Layout.preferredHeight: 20
                     from: 0.0
                     to: 2.0
-                    value: modelData.volume || 1.0
-                    onMoved: root.volumeChanged(index, value)
+                    value: audioMixer.trackStates[index].volume
+                    onMoved: audioMixer.setTrackVolume(index, value)
 
                     background: Rectangle {
                         x: trackSlider.leftPadding
@@ -135,7 +129,7 @@ Rectangle {
                             width: trackSlider.visualPosition * parent.width
                             height: parent.height
                             radius: 1.5
-                            color: modelData.muted ? Theme.textMuted : Theme.accent
+                            color: audioMixer.trackStates[index].muted ? Theme.textMuted : Theme.accent
                         }
                     }
 
@@ -145,7 +139,7 @@ Rectangle {
                         width: 14
                         height: 14
                         radius: 7
-                        color: modelData.muted ? Theme.textMuted : Theme.textPrimary
+                        color: audioMixer.trackStates[index].muted ? Theme.textMuted : Theme.textPrimary
                         border.color: Qt.darker(color, 1.2)
                         border.width: 1
                     }
@@ -160,12 +154,61 @@ Rectangle {
                     horizontalAlignment: Text.AlignRight
                 }
 
+                // Pan control
+                Slider {
+                    id: panSlider
+                    Layout.preferredWidth: 80
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 20
+                    from: -1.0
+                    to: 1.0
+                    stepSize: 0.05
+                    value: audioMixer.trackStates[index].pan
+                    onMoved: audioMixer.setTrackPan(index, value)
+
+                    background: Rectangle {
+                        x: panSlider.leftPadding
+                        y: panSlider.topPadding + panSlider.availableHeight / 2 - height / 2
+                        width: panSlider.availableWidth
+                        height: 3
+                        radius: 1.5
+                        color: Theme.border
+
+                        Rectangle {
+                            width: panSlider.visualPosition * parent.width
+                            height: parent.height
+                            radius: 1.5
+                            color: Theme.accent
+                        }
+                    }
+
+                    handle: Rectangle {
+                        x: panSlider.leftPadding + panSlider.visualPosition * (panSlider.availableWidth - width)
+                        y: panSlider.topPadding + panSlider.availableHeight / 2 - height / 2
+                        width: 14
+                        height: 14
+                        radius: 7
+                        color: Theme.textPrimary
+                        border.color: Qt.darker(Theme.textPrimary, 1.2)
+                        border.width: 1
+                    }
+                }
+
+                Label {
+                    text: panSlider.value.toFixed(2)
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    Layout.preferredWidth: 36
+                    horizontalAlignment: Text.AlignRight
+                }
+
                 // Mute button
                 Rectangle {
                     Layout.preferredWidth: Theme.iconSizeLg
                     Layout.preferredHeight: Theme.iconSizeLg
                     radius: Theme.radiusSmall
-                    color: modelData.muted ? Theme.error : Theme.surfaceBg
+                    color: audioMixer.trackStates[index].muted ? "#ff4757" : Theme.surfaceBg
                     border.color: Theme.border
                     border.width: 1
 
@@ -181,7 +224,7 @@ Rectangle {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.trackMuted(index, !modelData.muted)
+                        onClicked: audioMixer.setTrackMute(index, !audioMixer.trackStates[index].muted)
                     }
                 }
             }

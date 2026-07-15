@@ -17,7 +17,7 @@ ColumnLayout {
     Rectangle {
         Layout.fillWidth: true
         Layout.preferredHeight: 28
-        color: root.hovered ? "#2a2a2a" : "transparent"
+        color: hovered ? "#2a2a2a" : "transparent"
         radius: Theme.radiusSmall
 
         property bool hovered: false

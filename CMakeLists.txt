@@ -45,6 +45,7 @@ set(GHITA_SOURCES
     src/engine/Decoder.cpp
     src/render/PreviewSurface.cpp
     src/audio/AudioEngine.cpp
+    src/audio/AudioMixerController.cpp
     src/timeline/TimelineModel.cpp
     src/timeline/TimelineCommands.cpp
     src/timeline/SnapEngine.cpp
@@ -71,6 +72,7 @@ set(GHITA_HEADERS
     src/engine/FramePool.h
     src/engine/HWAccel.h
     src/audio/AudioEngine.h
+    src/audio/AudioMixerController.h
     src/audio/AudioClock.h
     src/audio/AudioClip.h
     src/render/PreviewSurface.h

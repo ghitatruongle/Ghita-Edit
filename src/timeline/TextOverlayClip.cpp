@@ -3,8 +3,32 @@
 #include <QStringList>
 #include <QFontDatabase>
 #include <QFont>
+#include <QFontMetrics>
+#include <QDir>
+#include <QFileInfo>
 
 namespace ghita::timeline {
+
+// Resolve a font family name to an actual font file path. Qt 6.7's
+// QFontDatabase has no fontFilePath(); on Windows fonts live in
+// C:/Windows/Fonts, so we match by family name prefix.
+static QString resolveFontPath(const QString& family) {
+    const QString fontsDir = "C:/Windows/Fonts";
+    QDir dir(fontsDir);
+    if (!dir.exists()) return {};
+
+    const QString fam = family.toLower();
+    const QStringList entries =
+        dir.entryList(QStringList() << "*.ttf" << "*.otf" << "*.ttc", QDir::Files);
+    for (const QString& entry : entries) {
+        const QString base = QFileInfo(entry).baseName().toLower();
+        // Match e.g. "arial" against "arial" / "arialbd" (bold) / "ariali" (italic)
+        if (base == fam || base.startsWith(fam)) {
+            return fontsDir + "/" + entry;
+        }
+    }
+    return {};
+}
 
 QString TextOverlayClip::buildFilterString(int frameWidth, int frameHeight) const {
     // Approximate text width using font metrics for alignment calculations
@@ -28,21 +52,11 @@ QString TextOverlayClip::buildFilterString(int frameWidth, int frameHeight) cons
 
     int y = static_cast<int>(frameHeight / 2 + posY);
 
-    // Resolve font file path using QFontDatabase
-    QString fontPath;
-    QFontDatabase fontDb;
-    QStringList families = fontDb.families();
-    if (families.contains(fontFamily)) {
-        QString resolvedFamily = fontFamily;
-        QStringList styles = fontDb.styles(resolvedFamily);
-        if (!styles.isEmpty()) {
-            fontPath = fontDb.fontFilePath(resolvedFamily, styles.first());
-        }
-    }
-    // Fallback to a default system font if the requested font is not found
+    // Resolve font file path (Qt 6.7 has no QFontDatabase::fontFilePath).
+    QString fontPath = resolveFontPath(fontFamily);
+    // Fallback to a default system font if the requested font is not found.
     if (fontPath.isEmpty()) {
-        QFont defaultFont("Arial", fontSize);
-        fontPath = QFontDatabase().fontFilePath(defaultFont.family(), "Regular");
+        fontPath = resolveFontPath("Arial");
     }
 
     // Escape special characters for FFmpeg
