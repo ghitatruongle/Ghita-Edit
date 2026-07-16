@@ -6,6 +6,7 @@
 #include "timeline/SnapEngine.h"
 #include "export/Exporter.h"
 #include "fx/FxController.h"
+#include "engine/ScrubEngine.h"
 #include "MediaBinModel.h"
 #include "AppState.h"
 
@@ -41,6 +42,7 @@ private:
     fx::FxController fxController_;
     MediaBinModel mediaBinModel_;
     AppState appState_;
+    engine::ScrubEngine scrubEngine_;
     QQmlApplicationEngine qmlEngine_;
 };
 

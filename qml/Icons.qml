@@ -73,4 +73,10 @@ QtObject {
 
     // Sticker (star burst)
     property string sticker:  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%color%" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 5.4L20 8l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-.6z"/></svg>'
+
+    // PIP Video (picture-in-picture icon)
+    property string pipVideo: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%color%" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><rect x="12" y="9" width="8" height="6" rx="1" fill="%color%" opacity="0.3"/><line x1="12" y1="9" x2="18" y2="15" stroke-width="1"/></svg>'
+
+    // PIP Image (picture-in-picture with image icon)
+    property string pipImage: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%color%" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><rect x="12" y="9" width="8" height="6" rx="1" fill="%color%" opacity="0.3"/><circle cx="15" cy="11.5" r="1"/><polyline points="13,14 14.5,12.5 16,14 17.5,12.5 19,14"/></svg>'
 }

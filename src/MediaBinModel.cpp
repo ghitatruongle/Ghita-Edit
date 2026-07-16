@@ -1,10 +1,55 @@
 // MediaBinModel.cpp
 #include "MediaBinModel.h"
 #include "ThumbnailExtractor.h"
+#include "engine/Decoder.h"
+
 #include <QFileInfo>
 #include <QFile>
 #include <QDir>
 #include <QDebug>
+
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
+namespace {
+
+// Probe a file to determine if it contains video, audio, or both.
+int probeMediaType(const QString &path) {
+    avformat_network_init();
+    AVFormatContext *fmtCtx = nullptr;
+    int ret = avformat_open_input(&fmtCtx, path.toUtf8().constData(), nullptr, nullptr);
+    if (ret < 0 || !fmtCtx) {
+        avformat_close_input(&fmtCtx);
+        avformat_network_deinit();
+        // Fall back to extension-based heuristic.
+        QString ext = QFileInfo(path).suffix().toLower();
+        QSet<QString> videoExts = {"mp4","mkv","avi","mov","wmv","flv","webm","m4v","mpg","mpeg","3gp"};
+        QSet<QString> audioExts = {"mp3","wav","aac","m4a","flac","ogg","wma","opus"};
+        if (videoExts.contains(ext)) return 1;       // video
+        if (audioExts.contains(ext)) return 2;       // audio
+        return 0; // unknown
+    }
+    if (avformat_find_stream_info(fmtCtx, nullptr) < 0) {
+        avformat_close_input(&fmtCtx);
+        avformat_network_deinit();
+        return 0;
+    }
+    bool hasVideo = false, hasAudio = false;
+    for (unsigned i = 0; i < fmtCtx->nb_streams; ++i) {
+        auto type = fmtCtx->streams[i]->codecpar->codec_type;
+        if (type == AVMEDIA_TYPE_VIDEO) hasVideo = true;
+        if (type == AVMEDIA_TYPE_AUDIO) hasAudio = true;
+    }
+    avformat_close_input(&fmtCtx);
+    avformat_network_deinit();
+    if (hasVideo && hasAudio) return 3;  // both
+    if (hasVideo) return 1;              // video
+    if (hasAudio) return 2;              // audio
+    return 0;                            // unknown
+}
+
+} // namespace
 
 MediaBinModel::MediaBinModel(QObject *parent)
     : QAbstractListModel(parent)
@@ -48,6 +93,8 @@ QVariant MediaBinModel::data(const QModelIndex &index, int role) const
         return item.thumbnailPath;
     case ThumbnailReadyRole:
         return item.thumbnailReady;
+    case MediaTypeRole:
+        return item.mediaType;
     default:
         return QVariant();
     }
@@ -60,7 +107,8 @@ QHash<int, QByteArray> MediaBinModel::roleNames() const
         {FileNameRole, "fileName"},
         {DurationMsRole, "durationMs"},
         {ThumbnailPathRole, "thumbnailPath"},
-        {ThumbnailReadyRole, "thumbnailReady"}
+        {ThumbnailReadyRole, "thumbnailReady"},
+        {MediaTypeRole, "mediaType"}
     };
 }
 
@@ -91,6 +139,7 @@ bool MediaBinModel::addMedia(const QString &filePath)
     item.durationMs = 0;  // Will be filled by engine
     item.thumbnailPath = "";
     item.thumbnailReady = false;
+    item.mediaType = probeMediaType(filePath);
     m_items.append(item);
 
     endInsertRows();

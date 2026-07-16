@@ -9,6 +9,8 @@
 #include <QDebug>
 #include <cstring>
 
+#include "fx/FxController.h"
+
 namespace ghita::render {
 
 // Internal QSG node that owns a texture and a textured quad.
@@ -84,15 +86,18 @@ QSGNode* PreviewSurface::updatePaintNode(QSGNode* oldNode,
     }
 
     if (!pixels.empty() && w > 0 && h > 0) {
-        // Upload pixels as a QImage-backed QSG texture. This runs on the QSG
-        // render thread, which is the correct place for GL work. For M0 this
-        // keeps the code correct across Qt versions; a later optimization can
-        // use a persistent QOpenGLTexture / PBO for zero-copy upload.
         QImage img(w, h, QImage::Format_RGBA8888);
         std::memcpy(img.bits(), pixels.data(), pixels.size());
+
+        // Apply real-time effects if FxController is connected.
+        if (fxController_) {
+            fxController_->applyEffectsToImage(img);
+        }
+
+        // Upload the (possibly effect-processed) image as a QSG texture.
         QSGTexture* qsgTex = window()->createTextureFromImage(img);
         if (qsgTex) {
-            node->setTexture(qsgTex); // Qt manages the texture with the node
+            node->setTexture(qsgTex);
             texW_ = w;
             texH_ = h;
         }

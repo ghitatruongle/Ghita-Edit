@@ -18,6 +18,9 @@ namespace ghita::engine {
 // M0.5: frame throttle — yields 1 ms between iterations so the decode loop
 // doesn't burn 100 % CPU. When the video ring-buffer is full (backpressure),
 // sleeps 5 ms to let the renderer consume frames.
+//
+// Speed support: when playbackSpeed > 1.0, the worker skips frames proportionally
+// so the clip plays faster. When speed < 1.0, frames are duplicated to slow down.
 class DecodeWorker : public QObject {
     Q_OBJECT
 public:
@@ -25,7 +28,15 @@ public:
                           VideoFrameQueue* videoQ,
                           AudioFrameQueue* audioQ,
                           QObject* parent = nullptr)
-        : QObject(parent), decoder_(decoder), videoQ_(videoQ), audioQ_(audioQ) {}
+        : QObject(parent), decoder_(decoder), videoQ_(videoQ), audioQ_(audioQ),
+          playbackSpeed_(1.0), frameSkipCount_(0) {}
+
+    void setPlaybackSpeed(double speed) {
+        playbackSpeed_ = speed;
+        frameSkipCount_ = 0;
+    }
+
+    double playbackSpeed() const { return playbackSpeed_; }
 
 signals:
     void frameReady(int width, int height, const QByteArray& rgba);
@@ -33,10 +44,17 @@ signals:
 
 public slots:
     void run() {
+        // Determine frame skip interval based on speed.
+        // speed=1.0 -> emit every frame; speed=2.0 -> emit every 2nd frame; etc.
+        const int skipInterval = (playbackSpeed_ <= 1.0) ? 1 : static_cast<int>(playbackSpeed_);
+        int frameCounter = 0;
+
         while (!stop_.load() && decoder_->decodeStep(*videoQ_, *audioQ_)) {
-            // Emit all ready video frames.
+            // Emit all ready video frames, skipping based on speed.
             Frame f;
             while (videoQ_->try_pop(f)) {
+                frameCounter++;
+                if (skipInterval > 1 && (frameCounter % skipInterval) != 0) continue;
                 QByteArray ba(reinterpret_cast<const char*>(f.rgba.data()),
                               static_cast<int>(f.rgba.size()));
                 emit frameReady(f.width, f.height, ba);
@@ -59,6 +77,8 @@ private:
     VideoFrameQueue* videoQ_;
     AudioFrameQueue* audioQ_;
     std::atomic<bool> stop_{false};
+    double playbackSpeed_;
+    int frameSkipCount_;
 };
 
 } // namespace ghita::engine

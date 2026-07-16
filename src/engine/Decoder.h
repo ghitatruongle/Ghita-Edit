@@ -45,6 +45,9 @@ public:
     int audioSampleRate() const { return audioSampleRate_; }
     int audioChannels() const { return audioChannels_; }
 
+    bool hasVideo() const { return videoStreamIndex_ >= 0; }
+    bool hasAudio() const { return audioStreamIndex_ >= 0; }
+
     // Total duration in milliseconds (from container format).
     int64_t durationMs() const;
 

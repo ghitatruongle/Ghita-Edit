@@ -15,6 +15,12 @@ Item {
     property int selectedClipId: appState ? appState.selectedClipId : -1
     signal overlaySelected(int clipId)
 
+    // Crop overlay rectangle — shown when a clip is selected and the crop tab is active.
+    property real cropLeft: 0
+    property real cropTop: 0
+    property real cropRight: 0
+    property real cropBottom: 0
+
     Repeater {
         model: timeline
 
@@ -58,6 +64,198 @@ Item {
                 border.color: Theme.accent
                 border.width: ov.cid === root.selectedClipId ? 1.5 : 0
                 visible: ov.cid === root.selectedClipId
+            }
+
+            // ---- Crop handles (visible for selected clip) ----
+            Rectangle {
+                visible: ov.cid === root.selectedClipId && root.width > 0
+                anchors.top: parent.top
+                anchors.left: parent.left
+                width: parent.width * (timeline.overlayCropLeft(ov.cid) || 0)
+                height: parent.height
+                color: "#00000088"
+                z: 9
+            }
+            Rectangle {
+                visible: ov.cid === root.selectedClipId && root.width > 0
+                anchors.top: parent.top
+                anchors.right: parent.right
+                width: parent.width * (timeline.overlayCropRight(ov.cid) || 0)
+                height: parent.height
+                color: "#00000088"
+                z: 9
+            }
+            Rectangle {
+                visible: ov.cid === root.selectedClipId && root.width > 0
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: parent.height * (timeline.overlayCropTop(ov.cid) || 0)
+                color: "#00000088"
+                z: 9
+            }
+            Rectangle {
+                visible: ov.cid === root.selectedClipId && root.width > 0
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: parent.height * (timeline.overlayCropBottom(ov.cid) || 0)
+                color: "#00000088"
+                z: 9
+            }
+
+            // Crop adjustment handles (small draggable squares on the edges)
+            // Left edge handle
+            Rectangle {
+                visible: ov.cid === root.selectedClipId && root.width > 0
+                width: 8; height: 30
+                x: parent.width * (timeline.overlayCropLeft(ov.cid) || 0) - 4
+                y: parent.height / 2 - 15
+                color: Theme.accent
+                radius: 2
+                z: 11
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.SizeHorCursor
+                    drag.axis: Drag.XAxis
+                    drag.target: parent
+                    onPositionChanged: {
+                        if (!pressed) return
+                        var newCrop = Math.max(0, Math.min(0.5, (parent.x + 4) / parent.parent.width))
+                        if (timeline.overlayCropLockAspect(ov.cid)) {
+                            var avg = (newCrop + timeline.overlayCropTop(ov.cid)) / 2
+                            timeline.setOverlayCropLeft(ov.cid, avg)
+                            timeline.setOverlayCropRight(ov.cid, avg)
+                            timeline.setOverlayCropTop(ov.cid, avg)
+                            timeline.setOverlayCropBottom(ov.cid, avg)
+                        } else {
+                            timeline.setOverlayCropLeft(ov.cid, newCrop)
+                        }
+                    }
+                    onReleased: {
+                        if (timeline.overlayCropSnapCenter(ov.cid)) {
+                            var left = timeline.overlayCropLeft(ov.cid)
+                            var right = timeline.overlayCropRight(ov.cid)
+                            var avg = (left + right) / 2
+                            timeline.setOverlayCropLeft(ov.cid, avg)
+                            timeline.setOverlayCropRight(ov.cid, avg)
+                        }
+                    }
+                }
+            }
+            // Right edge handle
+            Rectangle {
+                visible: ov.cid === root.selectedClipId && root.width > 0
+                width: 8; height: 30
+                x: parent.width * (1 - (timeline.overlayCropRight(ov.cid) || 0)) - 4
+                y: parent.height / 2 - 15
+                color: Theme.accent
+                radius: 2
+                z: 11
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.SizeHorCursor
+                    drag.axis: Drag.XAxis
+                    drag.target: parent
+                    onPositionChanged: {
+                        if (!pressed) return
+                        var newCrop = Math.max(0, Math.min(0.5, 1 - (parent.x + 4) / parent.parent.width))
+                        if (timeline.overlayCropLockAspect(ov.cid)) {
+                            var avg = (newCrop + timeline.overlayCropTop(ov.cid)) / 2
+                            timeline.setOverlayCropLeft(ov.cid, avg)
+                            timeline.setOverlayCropRight(ov.cid, avg)
+                            timeline.setOverlayCropTop(ov.cid, avg)
+                            timeline.setOverlayCropBottom(ov.cid, avg)
+                        } else {
+                            timeline.setOverlayCropRight(ov.cid, newCrop)
+                        }
+                    }
+                    onReleased: {
+                        if (timeline.overlayCropSnapCenter(ov.cid)) {
+                            var left = timeline.overlayCropLeft(ov.cid)
+                            var right = timeline.overlayCropRight(ov.cid)
+                            var avg = (left + right) / 2
+                            timeline.setOverlayCropLeft(ov.cid, avg)
+                            timeline.setOverlayCropRight(ov.cid, avg)
+                        }
+                    }
+                }
+            }
+            // Top edge handle
+            Rectangle {
+                visible: ov.cid === root.selectedClipId && root.width > 0
+                width: 30; height: 8
+                x: parent.width / 2 - 15
+                y: parent.height * (timeline.overlayCropTop(ov.cid) || 0) - 4
+                color: Theme.accent
+                radius: 2
+                z: 11
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.SizeVerCursor
+                    drag.axis: Drag.YAxis
+                    drag.target: parent
+                    onPositionChanged: {
+                        if (!pressed) return
+                        var newCrop = Math.max(0, Math.min(0.5, (parent.y + 4) / parent.parent.height))
+                        if (timeline.overlayCropLockAspect(ov.cid)) {
+                            var avg = (newCrop + timeline.overlayCropLeft(ov.cid)) / 2
+                            timeline.setOverlayCropLeft(ov.cid, avg)
+                            timeline.setOverlayCropRight(ov.cid, avg)
+                            timeline.setOverlayCropTop(ov.cid, avg)
+                            timeline.setOverlayCropBottom(ov.cid, avg)
+                        } else {
+                            timeline.setOverlayCropTop(ov.cid, newCrop)
+                        }
+                    }
+                    onReleased: {
+                        if (timeline.overlayCropSnapCenter(ov.cid)) {
+                            var top = timeline.overlayCropTop(ov.cid)
+                            var bottom = timeline.overlayCropBottom(ov.cid)
+                            var avg = (top + bottom) / 2
+                            timeline.setOverlayCropTop(ov.cid, avg)
+                            timeline.setOverlayCropBottom(ov.cid, avg)
+                        }
+                    }
+                }
+            }
+            // Bottom edge handle
+            Rectangle {
+                visible: ov.cid === root.selectedClipId && root.width > 0
+                width: 30; height: 8
+                x: parent.width / 2 - 15
+                y: parent.height * (1 - (timeline.overlayCropBottom(ov.cid) || 0)) - 4
+                color: Theme.accent
+                radius: 2
+                z: 11
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.SizeVerCursor
+                    drag.axis: Drag.YAxis
+                    drag.target: parent
+                    onPositionChanged: {
+                        if (!pressed) return
+                        var newCrop = Math.max(0, Math.min(0.5, 1 - (parent.y + 4) / parent.parent.height))
+                        if (timeline.overlayCropLockAspect(ov.cid)) {
+                            var avg = (newCrop + timeline.overlayCropLeft(ov.cid)) / 2
+                            timeline.setOverlayCropLeft(ov.cid, avg)
+                            timeline.setOverlayCropRight(ov.cid, avg)
+                            timeline.setOverlayCropTop(ov.cid, avg)
+                            timeline.setOverlayCropBottom(ov.cid, avg)
+                        } else {
+                            timeline.setOverlayCropBottom(ov.cid, newCrop)
+                        }
+                    }
+                    onReleased: {
+                        if (timeline.overlayCropSnapCenter(ov.cid)) {
+                            var top = timeline.overlayCropTop(ov.cid)
+                            var bottom = timeline.overlayCropBottom(ov.cid)
+                            var avg = (top + bottom) / 2
+                            timeline.setOverlayCropTop(ov.cid, avg)
+                            timeline.setOverlayCropBottom(ov.cid, avg)
+                        }
+                    }
+                }
             }
 
             // ---- Text content ----

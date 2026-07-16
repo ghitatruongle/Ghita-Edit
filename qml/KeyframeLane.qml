@@ -47,6 +47,8 @@ Rectangle {
     function range() {
         if (root.prop === "scale") return [0.1, 5.0]
         if (root.prop === "rotation") return [-180, 180]
+        if (root.prop === "cropLeft" || root.prop === "cropTop" ||
+            root.prop === "cropRight" || root.prop === "cropBottom") return [0.0, 1.0]
         return [0.0, 1.0]
     }
 
@@ -96,7 +98,7 @@ Rectangle {
                 font.pixelSize: Theme.fontSizeXs
                 background: Rectangle { color: Theme.surfaceBg; radius: 3; border.color: Theme.border; border.width: 1 }
                 contentItem: Label { text: propCombo.displayText; color: Theme.textPrimary; font.pixelSize: Theme.fontSizeXs; verticalAlignment: Qt.AlignVCenter; leftPadding: 6 }
-                model: ["posX", "posY", "scale", "rotation", "opacity"]
+                model: ["posX", "posY", "scale", "rotation", "opacity", "cropLeft", "cropTop", "cropRight", "cropBottom"]
                 currentIndex: 0
                 onActivated: root.prop = model[index]
             }

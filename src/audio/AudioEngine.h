@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioClock.h"
+#include "TimelineAudioMixer.h"
 #include "../engine/FramePool.h"
 
 #include <QObject>
@@ -33,6 +34,10 @@ public:
     // Bind the queue the callback will pull PCM from. Call before start().
     void setSourceQueue(ghita::engine::AudioFrameQueue* queue) { queue_ = queue; }
 
+    // When set, the callback delegates mixing to this timeline mixer instead
+    // of pulling from the file audio queue. Pass nullptr to restore file mode.
+    void setMixerSource(TimelineAudioMixer* m) { mixer_ = m; }
+
     AudioClock& clock() { return clock_; }
 
     // ---- Per-track mixing (linear gain 0..2, pan -1..1, mute) ----
@@ -46,7 +51,7 @@ public:
     float masterVolume() const;
 
 public slots:
-    void start();
+    void start(qint64 startUs = 0);
     void stop();
 
 signals:
@@ -62,6 +67,7 @@ private:
     PaStream* stream_ = nullptr;
     AudioClock clock_;
     ghita::engine::AudioFrameQueue* queue_ = nullptr;
+    TimelineAudioMixer* mixer_ = nullptr;
     bool active_ = false;
     // Reusable staging buffer for the current frame being consumed.
     std::vector<float> staging_;

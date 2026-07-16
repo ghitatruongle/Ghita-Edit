@@ -55,7 +55,7 @@ bool AudioEngine::init() {
     return true;
 }
 
-void AudioEngine::start() {
+void AudioEngine::start(qint64 startUs) {
     if (!stream_ || active_) return;
     staging_.clear();
     stagingPos_ = 0;
@@ -64,7 +64,7 @@ void AudioEngine::start() {
         qWarning() << "[AudioEngine] Pa_StartStream failed:" << Pa_GetErrorText(err);
         return;
     }
-    clock_.start();
+    clock_.start(startUs);
     active_ = true;
     emit activeChanged(active_);
     qInfo() << "[AudioEngine] stream started";
@@ -87,6 +87,13 @@ int AudioEngine::paCallback(const void* /*input*/, void* output,
     auto* self = static_cast<AudioEngine*>(userData);
     auto* out = static_cast<float*>(output);
     const unsigned long total = frameCount * 2;
+
+    // Timeline mixer path: delegate the whole buffer to the mixer, which
+    // reads live per-track state and mixes directly into `out`.
+    if (self->mixer_) {
+        self->mixer_->mix(out, frameCount, self->clock_.positionUs() / 1000, self);
+        return paContinue;
+    }
 
     unsigned long written = 0;
     while (written < total) {

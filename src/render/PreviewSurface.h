@@ -7,6 +7,10 @@
 #include <mutex>
 #include <vector>
 
+namespace ghita::fx {
+class FxController;
+}
+
 namespace ghita::render {
 
 // PreviewSurface: a QQuickItem that renders the latest decoded video frame
@@ -15,6 +19,9 @@ namespace ghita::render {
 //
 // M0: texture upload happens on the GUI render thread (QSG), which is the
 // correct place for GL work. Decoding itself runs on a worker thread.
+//
+// M4.5: Real-time effect preview -- effects from FxController are applied to
+// the RGBA frame before texture upload, so the user sees live feedback.
 class PreviewSurface : public QQuickItem, protected QOpenGLFunctions {
     Q_OBJECT
     Q_PROPERTY(bool hasFrame READ hasFrame NOTIFY hasFrameChanged)
@@ -28,6 +35,10 @@ public:
     // Thread-safe: store the latest RGBA frame to be uploaded on next paint.
     Q_INVOKABLE void setFrame(int width, int height,
                               const QByteArray& rgba);
+
+    // Set a pointer to the FxController so effects can be applied during paint.
+    // Call this from QML or Application before the first frame arrives.
+    Q_INVOKABLE void setFxController(ghita::fx::FxController* fx) { fxController_ = fx; }
 
 signals:
     void hasFrameChanged(bool);
@@ -45,6 +56,9 @@ private:
     std::mutex mutex_;
     bool hasFrame_ = false;
     int texW_ = 0, texH_ = 0;
+
+    // Pointer to the FxController for real-time effect application.
+    ghita::fx::FxController* fxController_ = nullptr;
 };
 
 } // namespace ghita::render

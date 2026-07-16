@@ -2,6 +2,7 @@
 
 #include "timeline/TimelineModel.h"
 #include "timeline/Clip.h"
+#include "fx/VideoFX.h"
 
 #include <QPainter>
 #include <QFont>
@@ -60,6 +61,12 @@ void Compositor::drawOverlay(QImage& img, const timeline::Clip& clip, qint64 t,
     const double rotation = timeline->overlayValueAt(clip.id, "rotation", t);
     const double opacity = timeline->overlayValueAt(clip.id, "opacity", t);
 
+    // Crop values (non-keyframed for now; base overlay data).
+    const double cropLeft = o.cropLeft;
+    const double cropTop = o.cropTop;
+    const double cropRight = o.cropRight;
+    const double cropBottom = o.cropBottom;
+
     const qreal cx = posX * img.width();
     const qreal cy = posY * img.height();
 
@@ -72,6 +79,22 @@ void Compositor::drawOverlay(QImage& img, const timeline::Clip& clip, qint64 t,
     p.setOpacity(qBound(0.0, opacity, 1.0));
 
     if (clip.kind == timeline::ClipKind::Text) {
+        // Apply crop by adjusting the text box to simulate a cropped canvas.
+        // The crop offsets define how much of the surrounding area is hidden.
+        // We map the visible region into a smaller drawing area.
+        if (cropLeft > 0 || cropTop > 0 || cropRight > 0 || cropBottom > 0) {
+            const int cw = qRound(img.width() * (1.0 - cropLeft - cropRight));
+            const int ch = qRound(img.height() * (1.0 - cropTop - cropBottom));
+            if (cw > 0 && ch > 0) {
+                p.save();
+                p.setClipping(true);
+                p.fillRect(QRect(0, 0, img.width(), img.height()), Qt::black);
+                p.translate(-cx + (cx * (cropLeft - cropRight) / 2.0),
+                            -cy + (cy * (cropTop - cropBottom) / 2.0));
+                p.scale(double(cw) / img.width(), double(ch) / img.height());
+            }
+        }
+
         const int fontPx = qMax(8, qRound(o.fontSize * img.height() / 720.0));
         QFont font(o.fontFamily.isEmpty() ? "Segoe UI" : o.fontFamily, fontPx);
         font.setBold(o.bold);
@@ -98,8 +121,18 @@ void Compositor::drawOverlay(QImage& img, const timeline::Clip& clip, qint64 t,
     } else { // Sticker
         QImage sticker = loadSticker(o.stickerPath);
         if (sticker.isNull()) return;
+
+        // Apply crop to the sticker image.
+        QImage cropped;
+        if (cropLeft > 0 || cropTop > 0 || cropRight > 0 || cropBottom > 0) {
+            VideoFX::applyCrop(sticker, cropped, cropLeft, cropTop, cropRight, cropBottom);
+            if (cropped.isNull()) return;
+        } else {
+            cropped = sticker;
+        }
+
         const int base = qRound(qMin(img.width(), img.height()) * 0.3);
-        QImage sized = sticker.scaled(base, base, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        QImage sized = cropped.scaled(base, base, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         p.drawImage(QPointF(-sized.width() / 2.0, -sized.height() / 2.0), sized);
     }
 }

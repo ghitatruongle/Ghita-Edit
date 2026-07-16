@@ -42,6 +42,7 @@ QtObject {
     property color clipEffect:      "#ffd43b"  // Effect clip (yellow)
     property color clipText:        "#ff6b6b"  // Text clip (red)
     property color clipSticker:     "#cc5de8"  // Sticker clip (purple)
+    property color clipPip:         "#e06cff"  // PIP clip (magenta)
 
     // ===== Track Label Colors =====
     property color trackVideo:      "#5b8def"  // Video track accent

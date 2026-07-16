@@ -13,6 +13,7 @@ struct MediaItem {
     qint64 durationMs;
     QString thumbnailPath;
     bool thumbnailReady;
+    int mediaType = 0; // 0=unknown, 1=video, 2=audio, 3=both
 };
 
 class ThumbnailExtractor;
@@ -28,7 +29,8 @@ public:
         FileNameRole,
         DurationMsRole,
         ThumbnailPathRole,
-        ThumbnailReadyRole
+        ThumbnailReadyRole,
+        MediaTypeRole,
     };
 
     explicit MediaBinModel(QObject *parent = nullptr);

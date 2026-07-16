@@ -1,4 +1,4 @@
-// Ruler.qml — CapCut-style time ruler with red playhead
+// Ruler.qml — CapCut-style time ruler with red playhead, smooth scrubbing, snap, and frame preview
 import QtQuick
 import QtQuick.Controls
 import GhitaTheme 1.0
@@ -10,7 +10,19 @@ Rectangle {
     property double positionMs: 0
     property double durationMs: 0
 
+    // Scrubbing state
+    property bool isScrubbing: false
+    property bool snapEnabled: true
+    property bool showFramePreview: true
+
+    // Preview frame from scrub engine
+    property var scrubFrame: null
+    property int scrubFrameWidth: 0
+    property int scrubFrameHeight: 0
+
     signal scrubbed(double positionMs)
+    signal scrubStart()
+    signal scrubEnd(double finalPositionMs)
 
     color: Theme.rulerBg
     height: 24
@@ -94,31 +106,83 @@ Rectangle {
                 ctx.closePath()
                 ctx.fill()
             }
+
+            // Draw scrubbing preview indicator
+            if (root.isScrubbing && scrubFrame !== null && scrubFrameWidth > 0) {
+                // Draw a subtle highlight under the playhead during scrub
+                ctx.fillStyle = Theme.accent + "33"
+                ctx.fillRect(phX - 20, 0, 40, height)
+            }
         }
+
+        onImageLoaded: requestPaint()
     }
 
     // Repaint on changes
     onPositionMsChanged: canvas.requestPaint()
     onDurationMsChanged: canvas.requestPaint()
     onPixelsPerMsChanged: canvas.requestPaint()
+    onIsScrubbingChanged: canvas.requestPaint()
 
-    // Mouse scrubbing
+    // Mouse scrubbing with smooth frame preview
     MouseArea {
         anchors.fill: parent
         property bool scrubbing: false
+        property double lastScrubMs: 0
 
         onPressed: function(mouse) {
             scrubbing = true
             var ms = mouse.x / root.pixelsPerMs
-            root.scrubbed(Math.max(0, Math.round(ms)))
+            ms = Math.max(0, Math.min(ms, root.durationMs))
+            lastScrubMs = ms
+            root.positionMs = ms
+            root.scrubbed(ms)
+            root.scrubStart()
         }
+
         onPositionChanged: function(mouse) {
             if (!scrubbing) return
             var ms = mouse.x / root.pixelsPerMs
-            root.scrubbed(Math.max(0, Math.round(ms)))
+            ms = Math.max(0, Math.min(ms, root.durationMs))
+
+            // Snap to clip edges if enabled
+            if (root.snapEnabled && snapEngine && timeline) {
+                var targets = timeline.snapTargets()
+                ms = snapEngine.snap(Math.round(ms), targets)
+            }
+
+            root.positionMs = ms
+            lastScrubMs = ms
+            root.scrubbed(ms)
+
+            // Request a frame preview from the scrub engine
+            if (root.showFramePreview && scrubEngine && scrubEngine.ready) {
+                var w = 0, h = 0
+                var frameData = scrubEngine.scrubTo(ms, w, h)
+                if (frameData && frameData.length > 0 && w > 0 && h > 0) {
+                    root.scrubFrame = frameData
+                    root.scrubFrameWidth = w
+                    root.scrubFrameHeight = h
+                    canvas.requestPaint()
+                }
+            }
         }
-        onReleased: {
+
+        onReleased: function() {
+            if (!scrubbing) return
             scrubbing = false
+            root.isScrubbing = false
+            root.scrubFrame = null
+            root.scrubFrameWidth = 0
+            root.scrubFrameHeight = 0
+            root.scrubEnd(lastScrubMs)
         }
+    }
+
+    // Hover cursor change
+    MouseArea {
+        anchors.fill: parent
+        enabled: false
+        cursorShape: Qt.PointingHandCursor
     }
 }

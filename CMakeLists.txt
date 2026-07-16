@@ -43,24 +43,33 @@ set(GHITA_SOURCES
     src/app/Application.cpp
     src/engine/MediaEngine.cpp
     src/engine/Decoder.cpp
+    src/engine/ScrubEngine.cpp
     src/render/PreviewSurface.cpp
     src/audio/AudioEngine.cpp
     src/audio/AudioMixerController.cpp
+    src/audio/TimelineAudioMixer.cpp
     src/timeline/TimelineModel.cpp
     src/timeline/TimelineCommands.cpp
     src/timeline/SnapEngine.cpp
     src/timeline/TextOverlayClip.cpp
     src/timeline/FadeTransition.cpp
+    src/timeline/IrisWipeTransition.cpp
+    src/timeline/DirectionalWipeTransition.cpp
+    src/timeline/BlurDissolveTransition.cpp
+    src/timeline/ZoomDissolveTransition.cpp
+    src/timeline/TransitionFactory.cpp
     src/export/Exporter.cpp
     src/export/Compositor.cpp
     src/export/VideoEncoder.cpp
     src/export/AudioEncoder.cpp
     src/export/PacketMuxer.cpp
     src/fx/VideoFX.cpp
+    src/fx/VideoFXEffects.cpp
     src/fx/AudioDSP.cpp
     src/fx/FxController.cpp
     src/MediaBinModel.cpp
     src/ThumbnailExtractor.cpp
+    src/WaveformRenderer.cpp
 )
 
 set(GHITA_HEADERS
@@ -68,6 +77,7 @@ set(GHITA_HEADERS
     src/app/AppState.h
     src/engine/MediaEngine.h
     src/engine/Decoder.h
+    src/engine/ScrubEngine.h
     src/engine/DecodeWorker.h
     src/engine/FramePool.h
     src/engine/HWAccel.h
@@ -75,6 +85,7 @@ set(GHITA_HEADERS
     src/audio/AudioMixerController.h
     src/audio/AudioClock.h
     src/audio/AudioClip.h
+    src/audio/TimelineAudioMixer.h
     src/render/PreviewSurface.h
     src/timeline/Clip.h
     src/timeline/TimelineModel.h
@@ -84,14 +95,20 @@ set(GHITA_HEADERS
     src/timeline/TextOverlayClip.h
     src/timeline/Transition.h
     src/timeline/FadeTransition.h
+    src/timeline/IrisWipeTransition.h
+    src/timeline/DirectionalWipeTransition.h
+    src/timeline/BlurDissolveTransition.h
+    src/timeline/ZoomDissolveTransition.h
     src/timeline/Keyframe.h
     src/fx/VideoFX.h
+    src/fx/VideoFXEffects.h
     src/fx/AudioDSP.h
     src/fx/FxController.h
     src/export/Exporter.h
     src/export/Compositor.h
     src/MediaBinModel.h
     src/ThumbnailExtractor.h
+    src/WaveformRenderer.h
 )
 
 # ---- Executable ----
@@ -113,6 +130,49 @@ if(GHITA_WERROR)
     target_compile_options(GhitaEdit PRIVATE
         $<$<CXX_COMPILER_ID:MSVC>:/WX>
         $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Werror>)
+endif()
+
+# Fix for MSVC -external:W0 suppressing STL header resolution through Qt headers.
+# Qt6's CMake config marks Qt include dirs as -external:I and adds -external:W0,
+# which tells MSVC to stop searching default include paths for headers included
+# transitively through those external dirs. This breaks compilation when Qt
+# headers include <type_traits>, <cstdint>, etc.
+#
+# Root cause: -external:W0 disables the implicit default include search when
+# processing headers that were pulled in through -external:I paths.
+#
+# Solution: add the MSVC STL and CRT include directories as -external:I so
+# that headers transitively included through Qt can still resolve <type_traits>,
+# <cstdint>, crtdbg.h, etc.
+if(MSVC)
+    # CMAKE_CXX_COMPILER -> .../VC/Tools/MSVC/<ver>/bin/HostX64/x64/cl.exe
+    # Path hierarchy:
+    #   MSVC_ROOT = .../VC/Tools/MSVC/<ver>
+    #   BIN       = MSVC_ROOT/bin
+    #   HOSTX64   = BIN/HostX64
+    #   X64       = HOSTX64/x64  (parent of cl.exe)
+    #
+    # We need:
+    #   STL_INC = MSVC_ROOT/include/
+    #   CRT_INC = HOSTX64/include/
+    get_filename_component(_ghita_x64 "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_ghita_hostx64 "${_ghita_x64}/.." ABSOLUTE)
+    get_filename_component(_ghita_bin     "${_ghita_hostx64}/.." ABSOLUTE)
+    get_filename_component(_ghita_msvc    "${_ghita_bin}/.." ABSOLUTE)
+    set(_ghita_stl_inc "${_ghita_msvc}/include")
+    set(_ghita_crt_inc "${_ghita_hostx64}/include")
+    message(STATUS "[GhitaEdit] MSVC toolset: ${_ghita_msvc}")
+    message(STATUS "[GhitaEdit] MSVC STL:     ${_ghita_stl_inc}")
+    message(STATUS "[GhitaEdit] MSVC CRT:     ${_ghita_crt_inc}")
+    target_compile_options(GhitaEdit PRIVATE
+        "/external:I${_ghita_stl_inc}"
+        "/external:I${_ghita_crt_inc}")
+    unset(_ghita_x64)
+    unset(_ghita_hostx64)
+    unset(_ghita_bin)
+    unset(_ghita_msvc)
+    unset(_ghita_stl_inc)
+    unset(_ghita_crt_inc)
 endif()
 
 if(GHITA_BUILD_TESTS)

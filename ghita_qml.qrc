@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="/">
+    <file alias="AudioMixer.qml">E:/Ghita Edit/qml/AudioMixer.qml</file>
     <file alias="ClipItem.qml">E:/Ghita Edit/qml/ClipItem.qml</file>
     <file alias="CollapsibleSection.qml">E:/Ghita Edit/qml/CollapsibleSection.qml</file>
     <file alias="ExportDialog.qml">E:/Ghita Edit/qml/ExportDialog.qml</file>
@@ -18,6 +19,7 @@
     <file alias="Toolbar.qml">E:/Ghita Edit/qml/Toolbar.qml</file>
     <file alias="TrackRow.qml">E:/Ghita Edit/qml/TrackRow.qml</file>
     <file alias="TransitionBadge.qml">E:/Ghita Edit/qml/TransitionBadge.qml</file>
+    <file alias="TransitionEditor.qml">E:/Ghita Edit/qml/TransitionEditor.qml</file>
     <file alias="qmldir">E:/Ghita Edit/qml/qmldir</file>
   </qresource>
 </RCC>

@@ -1,11 +1,17 @@
 // src/timeline/Transition.h
 #pragma once
 
+#include <QString>
+#include <QVariantMap>
+#include <memory>
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
 
 namespace ghita::timeline {
+
+class TransitionEffect;
 
 /// Abstract base class for video transitions between clips.
 ///
@@ -28,5 +34,21 @@ public:
     // Get default duration in milliseconds
     virtual int defaultDurationMs() const = 0;
 };
+
+/// Factory function: creates a TransitionEffect from a type string and params.
+/// Supported types: "crossfade", "fades", "iriswipe", "directionalwipe",
+///                   "blurdissolve", "zoomdissolve".
+/// Returns nullptr if the type is unknown.
+std::unique_ptr<TransitionEffect> createTransitionEffect(const QString& type,
+                                                          const QVariantMap& params = {});
+
+/// Return a list of all supported transition type names.
+QVector<QString> supportedTransitionTypes();
+
+/// Return human-readable label for a transition type.
+QString transitionLabel(const QString& type);
+
+/// Return icon unicode character for a transition type.
+QString transitionIcon(const QString& type);
 
 } // namespace ghita::timeline

@@ -12,7 +12,10 @@ namespace ghita::audio {
 // renderer aligns frames to it. API is defined but not yet driven by PortAudio.
 class AudioClock {
 public:
-    void start() { start_ = now(); running_ = true; }
+    void start(int64_t offsetUs = 0) {
+        start_ = now() - std::chrono::microseconds(offsetUs);
+        running_ = true;
+    }
     void stop()  { running_ = false; }
 
     // Current playback position in microseconds since start().

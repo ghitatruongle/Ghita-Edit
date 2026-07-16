@@ -15,6 +15,7 @@ extern "C" {
 }
 
 #include "fx/VideoFX.h"
+#include "fx/VideoFXEffects.h"
 #include "fx/AudioDSP.h"
 #include "fx/FxController.h"
 #include "export/ExportProfile.h"
@@ -23,6 +24,8 @@ extern "C" {
 #include "export/PacketMuxer.h"
 #include "export/Compositor.h"
 #include "timeline/TimelineModel.h"
+
+#include "timeline/Transition.h"
 
 #include <QDebug>
 #include <QtConcurrent>
@@ -68,6 +71,8 @@ struct ClipInfo {
     qint64 timelineEndMs;
     int trackIndex;
     qint64 clipId;
+    double playbackSpeed = 1.0;
+    bool pitchCorrection = true;
 };
 
 static void collectClips(TimelineModel* model, std::vector<ClipInfo>& video,
@@ -82,8 +87,11 @@ static void collectClips(TimelineModel* model, std::vector<ClipInfo>& video,
         ci.timelineEndMs  = model->data(idx, TimelineModel::TimelineEndRole).toLongLong();
         ci.trackIndex = model->data(idx, TimelineModel::TrackIndexRole).toInt();
         ci.clipId = model->data(idx, TimelineModel::IdRole).toLongLong();
-        const int kind = model->data(idx, TimelineModel::KindRole).toInt();
+        ci.playbackSpeed = model->data(idx, TimelineModel::PlaybackSpeedRole).toDouble();
+        ci.pitchCorrection = model->data(idx, TimelineModel::PitchCorrectionRole).toBool();
         // Only Video clips are decoded as the base layer; Audio handled separately.
+        if (ci.playbackSpeed <= 0) ci.playbackSpeed = 1.0;
+        const int kind = model->data(idx, TimelineModel::KindRole).toInt();
         if (kind == 0) video.push_back(ci);
         else if (kind == 1) audio.push_back(ci);
     }
@@ -160,10 +168,12 @@ struct ClipSrc {
     }
 
     // Returns a newly allocated scaled YUV420P frame at the given local time
-    // (ms relative to the clip's timeline start), or nullptr.
-    AVFrame* frameAt(qint64 localMs) {
+    // (ms relative to the clip's timeline start), scaled by playback speed.
+    // When speed > 1.0, the source region is traversed faster (less source time
+    // per timeline ms), so the target source time is: srcInMs + localMs * speed.
+    AVFrame* frameAt(qint64 localMs, double speed = 1.0) {
         if (!dec) return nullptr;
-        const qint64 target = ci.srcInMs + localMs;
+        const qint64 target = ci.srcInMs + static_cast<qint64>(localMs * speed);
         const int64_t seekTs = av_rescale_q(target, AVRational{1, 1000}, inTb);
         av_seek_frame(fmt, vIdx, seekTs, AVSEEK_FLAG_BACKWARD);
         avcodec_flush_buffers(dec);
@@ -234,6 +244,8 @@ bool Exporter::runExport(TimelineModel* model, const QString& outputPath) {
 
     double brightness = 0.0, contrast = 1.0, saturation = 1.0;
     double temperature = 0.0, tint = 0.0;
+    double highlight = 0.0, shadow = 0.0;
+    double hueShift = 0.0, dryWet = 1.0;
     double gainDb = 0.0;
     bool doNormalize = false;
     int fadeInMs = 0, fadeOutMs = 0;
@@ -243,6 +255,10 @@ bool Exporter::runExport(TimelineModel* model, const QString& outputPath) {
         saturation   = fx_->saturation();
         temperature  = fx_->temperature();
         tint         = fx_->tint();
+        highlight    = fx_->highlight();
+        shadow       = fx_->shadow();
+        hueShift     = fx_->hueShift();
+        dryWet       = fx_->dryWet();
         gainDb       = fx_->gainDb();
         doNormalize  = fx_->normalize();
         fadeInMs     = fx_->fadeInMs();
@@ -357,12 +373,36 @@ bool Exporter::runExport(TimelineModel* model, const QString& outputPath) {
         memset(rgbaFrame->data[0], 0, rgbaFrame->linesize[0] * profile.outH);
 
         AVFrame* baseYuv = nullptr;
-        if (activeIdx >= 0)
-            baseYuv = vdec[activeIdx].frameAt(t - videoClips[activeIdx].timelineStartMs);
+        if (activeIdx >= 0) {
+            const double speed = videoClips[activeIdx].playbackSpeed;
+            baseYuv = vdec[activeIdx].frameAt(t - videoClips[activeIdx].timelineStartMs, speed);
+        }
 
-        // Transition (crossfade) between the active clip (A) and its successor (B).
+        // Transition dispatch: create the effect once and reuse per frame.
+        static std::unique_ptr<TransitionEffect> currentEffect;
+        static int64_t lastClipA = -1;
+        static int64_t lastClipB = -1;
+        static QString lastType;
+
         const Transition* tr = model->transitionAt(t);
-        if (tr && baseYuv) {
+        bool trChanged = false;
+        if (tr) {
+            if (tr->clipAId != lastClipA || tr->clipBId != lastClipB || tr->type != lastType) {
+                currentEffect = createTransitionEffect(tr->type, tr->params);
+                lastClipA = tr->clipAId;
+                lastClipB = tr->clipBId;
+                lastType = tr->type;
+                trChanged = true;
+            }
+        } else if (lastClipA != -1) {
+            currentEffect.reset();
+            lastClipA = -1;
+            lastClipB = -1;
+            lastType.clear();
+            trChanged = true;
+        }
+
+        if (tr && currentEffect && baseYuv) {
             int bi = -1;
             for (size_t k = 0; k < videoClips.size(); ++k) {
                 if (videoClips[k].clipId == tr->clipBId) { bi = static_cast<int>(k); break; }
@@ -372,9 +412,14 @@ bool Exporter::runExport(TimelineModel* model, const QString& outputPath) {
                 AVFrame* bYuv = vdec[bi].frameAt(bLocalMs);
                 if (bYuv) {
                     const qint64 aEnd = videoClips[activeIdx].timelineEndMs;
-                    const double a = static_cast<double>(t - (aEnd - tr->durationMs)) /
-                                     static_cast<double>(tr->durationMs);
-                    blendYuv(baseYuv, bYuv, a);
+                    const float prog = static_cast<float>(
+                        static_cast<double>(t - (aEnd - tr->durationMs)) /
+                        static_cast<double>(tr->durationMs));
+                    AVFrame* blended = currentEffect->apply(baseYuv, bYuv, prog);
+                    if (blended) {
+                        av_frame_free(&baseYuv);
+                        baseYuv = blended;
+                    }
                     av_frame_free(&bYuv);
                 }
             }
@@ -391,11 +436,17 @@ bool Exporter::runExport(TimelineModel* model, const QString& outputPath) {
                     rgbaFrame->linesize[0], QImage::Format_RGBA8888);
         Compositor::composite(qimg, model, t);
 
+        // Apply the real-time effect chain on the RGBA image (before YUV conversion).
+        if (fx_ && !fx_->effectChain().empty()) {
+            fx_->applyEffectsToImage(qimg);
+        }
+
         // Back to YUV and apply the color grade.
         sws_scale(toYuv, rgbaFrame->data, rgbaFrame->linesize, 0, profile.outH,
                   yuvFrame->data, yuvFrame->linesize);
         fx::VideoFX::applyColorGrade(yuvFrame, brightness, contrast, saturation,
-                                     temperature, tint);
+                                     temperature, tint, highlight, shadow,
+                                     hueShift, dryWet);
 
         yuvFrame->pts = vPtsTicks;
         vPtsTicks += frameDurTicks;
@@ -461,7 +512,8 @@ bool Exporter::runExport(TimelineModel* model, const QString& outputPath) {
             }
 
             audioEncoder.configureResampler(dec->ch_layout, dec->sample_rate, dec->sample_fmt);
-            int64_t clipSamples = static_cast<int64_t>((clip.srcOutMs - clip.srcInMs) / 1000.0 * 48000);
+            const double speed = clip.playbackSpeed;
+            int64_t clipSamples = static_cast<int64_t>((clip.srcOutMs - clip.srcInMs) / 1000.0 * 48000 / speed);
 
             if (doNormalize) {
                 int64_t seekTs = av_rescale_q(clip.srcInMs, AVRational{1, 1000}, inTb);

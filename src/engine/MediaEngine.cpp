@@ -1,6 +1,8 @@
 #include "MediaEngine.h"
 #include "../audio/AudioEngine.h"
 #include "../audio/AudioClock.h"
+#include "../audio/TimelineAudioMixer.h"
+#include "../timeline/TimelineModel.h"
 
 #include <QDebug>
 
@@ -52,11 +54,31 @@ void MediaEngine::seek(qint64 targetMs) {
     }
 
     decoder_->seek(targetMs);
-    if (audio_) audio_->clock().start(); // reset clock from zero
+    if (audio_) {
+        audio_->setMixerSource(nullptr);
+    }
+    audioMixer_.reset();
     emit positionChanged(targetMs);
 
     if (wasPlaying) {
-        // Restart decode from new position.
+        // Restart decode from new position, seeding the audio clock.
+        play(targetMs * 1000);
+    }
+}
+
+void MediaEngine::setPlaybackSpeed(double speed) {
+    speed = qBound(0.25, speed, 4.0);
+    if (playbackSpeed_ == speed) return;
+    playbackSpeed_ = speed;
+    emit playbackSpeedChanged(speed);
+
+    // If currently playing, restart the worker with the new speed.
+    if (playing_ && worker_) {
+        stopWorker();
+        if (audio_) audio_->stop();
+        playing_ = false;
+        emit playingChanged(playing_);
+        // Restart with new speed.
         play();
     }
 }
@@ -69,15 +91,22 @@ void MediaEngine::stopWorker() {
     worker_ = nullptr; // deleteLater was scheduled via finished->deleteLater
 }
 
-void MediaEngine::play() {
+void MediaEngine::play(qint64 startUs) {
     if (!decoder_ || playing_) return;
     if (worker_) return;                 // a worker is already alive
     if (workerThread_.isRunning()) return;
 
     // Bind audio queue to the audio engine and start playback.
     if (audio_) {
-        audio_->setSourceQueue(&audioQ_);
-        audio_->start();
+        // Prefer the timeline mixer when the timeline has audio clips;
+        // otherwise fall back to the file's single audio stream.
+        if (timeline_ && audioMixer_.prepare(timeline_) && audioMixer_.hasClips()) {
+            audio_->setMixerSource(&audioMixer_);
+        } else {
+            audio_->setMixerSource(nullptr);
+            audio_->setSourceQueue(&audioQ_);
+        }
+        audio_->start(startUs);
     }
 
     worker_ = new DecodeWorker(decoder_.get(), &videoQ_, &audioQ_);
@@ -90,6 +119,19 @@ void MediaEngine::play() {
             this, &MediaEngine::onDecodeFinished);
     connect(this, &MediaEngine::requestStop, worker_, &DecodeWorker::stop);
 
+    // Apply the current playback speed to the worker.
+    if (timeline_ && positionMs() > 0) {
+        // Find the active clip at the current playhead position and use its speed.
+        const auto& allClips = timeline_->allClips();
+        qint64 pos = positionMs();
+        for (const auto& c : allClips) {
+            if (pos >= c.timelineStartMs && pos < c.timelineEndMs) {
+                worker_->setPlaybackSpeed(c.playbackSpeed);
+                break;
+            }
+        }
+    }
+
     workerThread_.start();
     playing_ = true;
     positionTimer_->start();
@@ -101,7 +143,8 @@ void MediaEngine::play() {
 void MediaEngine::pause() {
     if (!playing_) return;
     stopWorker();
-    if (audio_) audio_->stop();
+    if (audio_) { audio_->stop(); audio_->setMixerSource(nullptr); }
+    audioMixer_.reset();
     positionTimer_->stop();
     playing_ = false;
     emit playingChanged(playing_);
@@ -110,7 +153,8 @@ void MediaEngine::pause() {
 
 void MediaEngine::stop() {
     stopWorker();
-    if (audio_) audio_->stop();
+    if (audio_) { audio_->stop(); audio_->setMixerSource(nullptr); }
+    audioMixer_.reset();
     positionTimer_->stop();
     playing_ = false;
     decoder_.reset();
@@ -134,6 +178,20 @@ void MediaEngine::onDecodeFinished() {
 
 void MediaEngine::onPositionTick() {
     emit positionChanged(positionMs());
+
+    // Update worker speed if the playhead has entered a different-speed clip.
+    if (playing_ && worker_ && timeline_) {
+        const auto& allClips = timeline_->allClips();
+        qint64 pos = positionMs();
+        for (const auto& c : allClips) {
+            if (pos >= c.timelineStartMs && pos < c.timelineEndMs) {
+                if (qAbs(c.playbackSpeed - worker_->playbackSpeed()) > 0.001) {
+                    worker_->setPlaybackSpeed(c.playbackSpeed);
+                }
+                break;
+            }
+        }
+    }
 }
 
 } // namespace ghita::engine

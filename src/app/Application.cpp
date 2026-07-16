@@ -1,6 +1,8 @@
 #include "Application.h"
 #include "render/PreviewSurface.h"
 #include "audio/AudioMixerController.h"
+#include "timeline/TimelineModel.h"
+#include "fx/VideoFXEffects.h"
 
 #include <QGuiApplication>
 #include <QQmlContext>
@@ -15,7 +17,10 @@ Application::Application(QObject* parent)
       mediaEngine_(&audioEngine_, this),
       audioEngine_(this),
       timelineModel_(this),
-      snapEngine_(this) {}
+      snapEngine_(this),
+      scrubEngine_(this) {
+    mediaEngine_.setTimeline(&timelineModel_);
+}
 
 bool Application::initialize() {
     if (!audioEngine_.init()) {
@@ -26,6 +31,7 @@ bool Application::initialize() {
     qmlEngine_.rootContext()->setContextProperty("audioEngine", &audioEngine_);
     qmlEngine_.rootContext()->setContextProperty("timeline", &timelineModel_);
     qmlEngine_.rootContext()->setContextProperty("snapEngine", &snapEngine_);
+    qmlEngine_.rootContext()->setContextProperty("scrubEngine", &scrubEngine_);
     qmlEngine_.rootContext()->setContextProperty("exporter", &exporter_);
     qmlEngine_.rootContext()->setContextProperty("fx", &fxController_);
     qmlEngine_.rootContext()->setContextProperty("mediaBinModel", &mediaBinModel_);
@@ -38,8 +44,16 @@ bool Application::initialize() {
     // The exporter reads effect parameters from the shared FxController.
     exporter_.setFxController(&fxController_);
 
+    // Wire FxController into PreviewSurface for real-time effect preview.
+    qmlEngine_.rootContext()->setContextProperty("fxControllerPtr", &fxController_);
+
     // Register the OpenGL preview surface as a QML type.
     qmlRegisterType<ghita::render::PreviewSurface>("Ghita.Render", 1, 0, "PreviewSurface");
+
+    // Register the EffectType enum so QML can reference it.
+    qmlRegisterUncreatableMetaType<ghita::fx::EffectType>(
+        "Ghita.Fx", 1, 0, "EffectType",
+        "EffectType is an enum -- use fx.addEffect(typeName) instead.");
 
     // Register GhitaTheme singletons directly (avoid QRC qmldir resolution issues).
     qmlRegisterSingletonType(QUrl("qrc:/Theme.qml"), "GhitaTheme", 1, 0, "Theme");
