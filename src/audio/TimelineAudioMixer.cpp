@@ -100,7 +100,8 @@ void TimelineAudioMixer::mix(float* out, unsigned long frameCount,
             const double speed = c.playbackSpeed > 0.0 ? c.playbackSpeed : 1.0;
             qint64 srcOffsetMs = c.srcInMs + static_cast<qint64>((tMs - c.timelineStartMs) * speed);
             int64_t sampleIdx = static_cast<int64_t>(srcOffsetMs / msPerSample);
-            if (sampleIdx * 2 + 1 >= c.pcm.size()) continue;
+            if (sampleIdx < 0) continue;
+            if (sampleIdx * 2 + 1 >= static_cast<int64_t>(c.pcm.size())) continue;
 
             float sL = c.pcm[sampleIdx * 2];
             float sR = c.pcm[sampleIdx * 2 + 1];

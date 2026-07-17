@@ -15,6 +15,8 @@
 
 namespace ghita::export_ {
 
+QMutex Compositor::stickerCacheMutex_;
+
 namespace {
 // Cache decoded sticker images by path (export runs many frames; re-decoding
 // the same SVG/PNG every frame would be wasteful).
@@ -24,6 +26,7 @@ QHash<QString, QImage>& stickerCache() {
 }
 
 QImage loadSticker(const QString& path) {
+    std::lock_guard<QMutex> lk(Compositor::stickerCacheMutex_);
     auto& cache = stickerCache();
     auto it = cache.find(path);
     if (it != cache.end()) return *it;
@@ -87,11 +90,12 @@ void Compositor::drawOverlay(QImage& img, const timeline::Clip& clip, qint64 t,
             const int ch = qRound(img.height() * (1.0 - cropTop - cropBottom));
             if (cw > 0 && ch > 0) {
                 p.save();
-                p.setClipping(true);
+                p.setClipRect(QRect(0, 0, img.width(), img.height()));
                 p.fillRect(QRect(0, 0, img.width(), img.height()), Qt::black);
                 p.translate(-cx + (cx * (cropLeft - cropRight) / 2.0),
                             -cy + (cy * (cropTop - cropBottom) / 2.0));
                 p.scale(double(cw) / img.width(), double(ch) / img.height());
+                p.restore();
             }
         }
 

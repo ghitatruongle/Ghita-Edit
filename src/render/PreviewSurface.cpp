@@ -52,14 +52,24 @@ PreviewSurface::PreviewSurface(QQuickItem* parent)
 
 PreviewSurface::~PreviewSurface() = default;
 
-void PreviewSurface::setFrame(int width, int height, const QByteArray& rgba) {
-    if (width <= 0 || height <= 0 || rgba.isEmpty()) return;
+void PreviewSurface::setFrame(int width, int height,
+                              const QByteArray& rgba,
+                              quintptr gpuHandle) {
+    if (width <= 0 || height <= 0) return;
     {
         std::lock_guard<std::mutex> lk(mutex_);
         pending_.width = width;
         pending_.height = height;
-        pending_.rgba.assign(reinterpret_cast<const uint8_t*>(rgba.constData()),
-                             reinterpret_cast<const uint8_t*>(rgba.constData()) + rgba.size());
+        if (gpuHandle == 0) {
+            // Normal RGBA path.
+            pending_.rgba.assign(reinterpret_cast<const uint8_t*>(rgba.constData()),
+                                 reinterpret_cast<const uint8_t*>(rgba.constData()) + rgba.size());
+            pending_.gpuHandle = 0;
+        } else {
+            // Hardware-accelerated path: GPU texture handle provided.
+            pending_.rgba.clear();
+            pending_.gpuHandle = gpuHandle;
+        }
     }
     if (!hasFrame_) {
         hasFrame_ = true;
@@ -74,18 +84,44 @@ QSGNode* PreviewSurface::updatePaintNode(QSGNode* oldNode,
     if (!node)
         node = new TextureNode();
 
-    // Upload latest pixels (if any) to a new texture.
+    // Pull the latest pending frame.
     std::vector<uint8_t> pixels;
+    quintptr gpuHandle = 0;
     int w = 0, h = 0;
     {
         std::lock_guard<std::mutex> lk(mutex_);
         pixels.swap(pending_.rgba);
+        gpuHandle = pending_.gpuHandle;
         w = pending_.width;
         h = pending_.height;
         pending_.width = pending_.height = 0;
+        pending_.gpuHandle = 0;
     }
 
-    if (!pixels.empty() && w > 0 && h > 0) {
+    if (w <= 0 || h <= 0) {
+        return node;
+    }
+
+    if (gpuHandle != 0) {
+        // Hardware-accelerated path: use the provided GPU texture handle
+        // directly. The handle is assumed to be a GLuint created externally
+        // by the hardware decoder. We create a QSGTexture from it.
+        QOpenGLFunctions glFuncs;
+        initializeOpenGLFunctions();
+        GLuint texId = static_cast<GLuint>(gpuHandle);
+
+        // Create a texture wrapper that reuses the existing GL texture.
+        QSGTexture* qsgTex = window()->createTextureFromId(texId, QSize(w, h));
+        if (qsgTex) {
+            node->setTexture(qsgTex);
+            texW_ = w;
+            texH_ = h;
+        }
+        return node;
+    }
+
+    // Standard software decode path: upload RGBA to a QSG texture.
+    if (!pixels.empty()) {
         QImage img(w, h, QImage::Format_RGBA8888);
         std::memcpy(img.bits(), pixels.data(), pixels.size());
 

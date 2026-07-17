@@ -137,7 +137,7 @@ Rectangle {
                 color: clrBtn.pressed ? Theme.borderLight : Theme.surfaceBg
                 border.color: Theme.border
                 border.width: 1
-                Label { anchors.centerIn: parent; text: "🗑"; font.pixelSize: 11 }
+                Label { anchors.centerIn: parent; text: "🗑"; font.pixelSize: Theme.fontSizeSm }
                 MouseArea {
                     id: clrBtn
                     anchors.fill: parent
@@ -200,9 +200,9 @@ Rectangle {
                 model: root.dots
 
                 Rectangle {
-                    width: 11
-                    height: 11
-                    radius: 5.5
+                    width: 11 * Theme.scale
+                    height: 11 * Theme.scale
+                    radius: 5.5 * Theme.scale
                     x: {
                         var local = (modelData.t - root.clipStart)
                         return local / root.clipDur * track.width - 5

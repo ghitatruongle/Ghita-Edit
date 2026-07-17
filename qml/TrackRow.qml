@@ -52,12 +52,31 @@ Rectangle {
             if (idx === root.trackIndex)
                 root.muted = timeline.isTrackMuted(idx)
         }
+        function onClipAdded() { root._pipCountDirty = true }
+        function onClipRemoved() { root._pipCountDirty = true }
+        function onClipsMoved() { root._pipCountDirty = true }
+    }
+
+    // Cached PIP clip count for overlay tracks.
+    property bool _pipCountDirty: true
+    property int _cachedPipCount: 0
+
+    function _updatePipCount() {
+        if (!root._pipCountDirty || !timeline) return
+        var count = 0
+        for (var i = 0; i < timeline.rowCount(); i++) {
+            if (timeline.clipKind(i) === 4 || timeline.clipKind(i) === 5) {
+                count++
+            }
+        }
+        root._cachedPipCount = count
+        root._pipCountDirty = false
     }
 
     // ---- Track Header (left label area) ----
     Rectangle {
         id: trackHeader
-        width: 80
+        width: 80 * Theme.scale
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
@@ -67,24 +86,24 @@ Rectangle {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 4
-            spacing: 2
+            anchors.margins: 4 * Theme.scale
+            spacing: 2 * Theme.scale
 
-            // Track number + type
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 4
+                // Track number + type
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 4 * Theme.scale
 
-                Rectangle {
-                    Layout.preferredWidth: 16
-                    Layout.preferredHeight: 16
-                    radius: 3
-                    color: root.trackColor
+                    Rectangle {
+                        Layout.preferredWidth: 16 * Theme.scale
+                        Layout.preferredHeight: 16 * Theme.scale
+                        radius: 3 * Theme.scale
+                        color: root.trackColor
 
                 Label {
                     anchors.centerIn: parent
                     text: root.trackType === 0 ? "\uD83C\uDFAC" : (root.trackType === 1 ? "\uD83C\uDFB5" : "\u2728")
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSizeXs
                 }
                 }
 
@@ -96,19 +115,12 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
 
-                    property int pipCount: {
-                        if (!timeline) return 0
-                        var count = 0
-                        for (var i = 0; i < timeline.rowCount(); i++) {
-                            if (timeline.clipKind(i) === 4 || timeline.clipKind(i) === 5) {
-                                count++
-                            }
-                        }
-                        return count
-                    }
+                    Component.onCompleted: root._updatePipCount()
+
+                    property int pipCount: { root._updatePipCount(); root._cachedPipCount }
 
                     color: Theme.clipPip
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSizeSm
                     text: "\uD83D\uDCE6" + (pipCount > 0 ? String(pipCount) : "")
                 }
 
@@ -123,23 +135,23 @@ Rectangle {
                 Item { Layout.fillWidth: true }
             }
 
-            // Control buttons: Visibility + Lock (+ Mute for audio)
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 4
+                // Control buttons: Visibility + Lock (+ Mute for audio)
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 4 * Theme.scale
 
-                // Visibility
-                Rectangle {
-                    id: visBtn
-                    Layout.preferredWidth: 20
-                    Layout.preferredHeight: 20
-                    radius: 3
+                    // Visibility
+                    Rectangle {
+                        id: visBtn
+                        Layout.preferredWidth: 20 * Theme.scale
+                        Layout.preferredHeight: 20 * Theme.scale
+                        radius: 3 * Theme.scale
                     color: visMouse.pressed ? Theme.border : (root.trackVisible ? "#33ffffff" : "transparent")
 
                     Label {
                         anchors.centerIn: parent
                         text: root.trackVisible ? "👁" : "—"
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSizeSm
                         color: root.trackVisible ? Theme.textPrimary : Theme.textMuted
                     }
 
@@ -157,15 +169,15 @@ Rectangle {
                 // Lock
                 Rectangle {
                     id: lockBtn
-                    Layout.preferredWidth: 20
-                    Layout.preferredHeight: 20
-                    radius: 3
+                    Layout.preferredWidth: 20 * Theme.scale
+                    Layout.preferredHeight: 20 * Theme.scale
+                    radius: 3 * Theme.scale
                     color: lockMouse.pressed ? Theme.border : (root.locked ? "#33ffffff" : "transparent")
 
                     Label {
                         anchors.centerIn: parent
                         text: root.locked ? "🔒" : "🔓"
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSizeSm
                     }
 
                     MouseArea {
@@ -183,15 +195,15 @@ Rectangle {
                 Rectangle {
                     id: muteBtn
                     visible: root.trackType === 1
-                    Layout.preferredWidth: 20
-                    Layout.preferredHeight: 20
-                    radius: 3
+                    Layout.preferredWidth: 20 * Theme.scale
+                    Layout.preferredHeight: 20 * Theme.scale
+                    radius: 3 * Theme.scale
                     color: muteMouse.pressed ? Theme.border : (root.muted ? "#33ffffff" : "transparent")
 
                     Label {
                         anchors.centerIn: parent
                         text: root.muted ? "🔇" : "🔊"
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSizeSm
                     }
 
                     MouseArea {
@@ -208,15 +220,15 @@ Rectangle {
                 // Remove track (trash icon)
                 Rectangle {
                     id: removeBtn
-                    Layout.preferredWidth: 20
-                    Layout.preferredHeight: 20
-                    radius: 3
+                    Layout.preferredWidth: 20 * Theme.scale
+                    Layout.preferredHeight: 20 * Theme.scale
+                    radius: 3 * Theme.scale
                     color: removeMouse.pressed ? Theme.error : "transparent"
 
                     Label {
                         anchors.centerIn: parent
                         text: "🗑"
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSizeSm
                     }
 
                     MouseArea {

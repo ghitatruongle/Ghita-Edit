@@ -3,6 +3,16 @@ pragma Singleton
 import QtQuick
 
 QtObject {
+    // ===== HiDPI / Scaling =====
+    // Automatic scaling factor derived from the primary screen's DPI.
+    // At 96 DPI (100 %) scale = 1.0; at 192 DPI (200 %) scale = 2.0, etc.
+    // This is exposed as a property so QML components can multiply any
+    // remaining fixed sizes by the current scale factor.
+    property real scale: 1.0
+
+    // Read the scale factor from the primary screen at startup.
+    onScaleChanged: console.log("[Theme] HiDPI scale:", scale)
+
     // ===== Background Colors =====
     property color bg:              "#1a1a1a"  // Main window background
     property color panelBg:         "#252525"  // Panel background (source, properties)
@@ -81,4 +91,39 @@ QtObject {
     property int animFast:          100
     property int animNormal:        200
     property int animSlow:          300
+
+    // ===== Windows Dark Mode Support =====
+    // When darkMode is true (detected from Windows registry), the dark palette
+    // above is used.  When false, a light palette is applied automatically.
+    property bool darkMode:         true
+
+    // Derived light-mode overrides (applied when darkMode is false).
+    readonly property color bgLight:        "#f5f5f5"
+    readonly property color panelBgLight:   "#eeeeee"
+    readonly property color surfaceBgLight: "#ffffff"
+    readonly property color toolbarBgLight: "#f0f0f0"
+    readonly property color statusBarBgLight:"#f0f0f0"
+    readonly property color trackBgLight:   "#fafafa"
+    readonly property color rulerBgLight:   "#f9f9f9"
+    readonly property color textPrimaryLight:"#212121"
+    readonly property color textSecondaryLight:"#757575"
+    readonly property color textMutedLight:   "#9e9e9e"
+    readonly property color borderLightColor: "#e0e0e0"
+    readonly property color borderLightLight: "#bdbdbd"
+    readonly property color borderDarkLight:  "#eeeeee"
+
+    // Effective colors: switch between dark/light based on darkMode.
+    readonly property color effectiveBg:        darkMode ? bg        : bgLight
+    readonly property color effectivePanelBg:    darkMode ? panelBg   : panelBgLight
+    readonly property color effectiveSurfaceBg:  darkMode ? surfaceBg : surfaceBgLight
+    readonly property color effectiveToolbarBg:  darkMode ? toolbarBg : toolbarBgLight
+    readonly property color effectiveStatusBarBg:darkMode ? statusBarBg : statusBarBgLight
+    readonly property color effectiveTrackBg:    darkMode ? trackBg   : trackBgLight
+    readonly property color effectiveRulerBg:    darkMode ? rulerBg   : rulerBgLight
+    readonly property color effectiveTextPrimary:darkMode ? textPrimary : textPrimaryLight
+    readonly property color effectiveTextSecondary:darkMode ? textSecondary : textSecondaryLight
+    readonly property color effectiveTextMuted:  darkMode ? textMuted : textMutedLight
+    readonly property color effectiveBorder:     darkMode ? border : borderLightColor
+    readonly property color effectiveBorderLight:darkMode ? borderLight : borderLightLight
+    readonly property color effectiveBorderDark: darkMode ? borderDark : borderDarkLight
 }

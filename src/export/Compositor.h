@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QImage>
+#include <QMutex>
 
 namespace ghita::timeline { class TimelineModel; class Clip; }
 
@@ -22,6 +23,7 @@ public:
 private:
     static void drawOverlay(QImage& img, const timeline::Clip& clip, qint64 t,
                             const timeline::TimelineModel* timeline);
+    static QMutex stickerCacheMutex_;
 };
 
 } // namespace ghita::export_

@@ -11,16 +11,28 @@ extern "C" {
 }
 
 #include <QDebug>
+#include <atomic>
 
 namespace ghita::engine {
 
+// Global network init reference counter: avformat_network_init/deinit are
+// process-global and must only be balanced (one init per deinit).  We use an
+// atomic counter so that the first Decoder instance initializes the network
+// subsystem and the last one to be destroyed tears it down.
+namespace {
+    std::atomic<int> g_networkRefCount{0};
+}
+
 Decoder::Decoder() {
-    avformat_network_init();
+    if (g_networkRefCount.fetch_add(1) == 0) {
+        avformat_network_init();
+    }
     pkt_ = av_packet_alloc();
     frame_ = av_frame_alloc();
 }
 
 Decoder::~Decoder() {
+    if (hwDeviceCtx_) av_buffer_unref(&hwDeviceCtx_);
     if (swrCtx_) swr_free(&swrCtx_);
     if (swsCtx_) sws_freeContext(swsCtx_);
     if (videoCtx_) avcodec_free_context(&videoCtx_);
@@ -28,7 +40,9 @@ Decoder::~Decoder() {
     if (fmtCtx_)   avformat_close_input(&fmtCtx_);
     if (frame_)    av_frame_free(&frame_);
     if (pkt_)      av_packet_free(&pkt_);
-    avformat_network_deinit();
+    if (g_networkRefCount.fetch_sub(1) == 1) {
+        avformat_network_deinit();
+    }
 }
 
 bool Decoder::open(std::string path) {
@@ -89,13 +103,171 @@ bool Decoder::open(std::string path) {
         av_channel_layout_uninit(&outLayout);
     }
 
+    // Try to initialize hardware acceleration.
+    hwBackend_ = selectBackend();
+    if (hwBackend_ != HWBackend::None) {
+        if (!initHardwareDecode()) {
+            qWarning() << "[Decoder] HW decode init failed, falling back to software";
+            hwBackend_ = HWBackend::None;
+            hwInitFailed_ = true;
+        } else {
+            qInfo() << "[Decoder] Hardware decode initialized:"
+                    << QString::fromUtf8(to_string(hwBackend_).data());
+        }
+    }
+
     qInfo() << "[Decoder] Opened" << path_
             << "video=" << videoCtx_->width << "x" << videoCtx_->height
             << "audio=" << audioSampleRate_ << "Hz/" << audioChannels_
             << "backend=" << QString::fromUtf8(
-                   to_string(selectBackend()).data(),
-                   static_cast<int>(to_string(selectBackend()).size()));
+                   to_string(hwBackend_).data(),
+                   static_cast<int>(to_string(hwBackend_).size()));
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Hardware decode initialization (NVDEC on Windows, VA-API on Linux)
+// ---------------------------------------------------------------------------
+
+bool Decoder::initHardwareDecode() {
+    if (!fmtCtx_ || !videoCtx_) return false;
+
+    // Determine which AVHWDeviceType to use.
+    enum AVHWDeviceType devType = AV_HWDEVICE_TYPE_NONE;
+    switch (hwBackend_) {
+        case HWBackend::NVDEC:
+#ifdef GHITA_HW_NVDEC
+            devType = av_hwdevice_find_type_by_name("cuda");
+            if (devType != AV_HWDEVICE_TYPE_NONE) break;
+            devType = av_hwdevice_find_type_by_name("d3d11va");
+#endif
+            break;
+        case HWBackend::QuickSync:
+#ifdef GHITA_HW_QUICKSYNC
+            devType = av_hwdevice_find_type_by_name("qsv");
+#endif
+            break;
+        case HWBackend::AMF:
+#ifdef GHITA_HW_AMF
+            devType = av_hwdevice_find_type_by_name("videotoolbox");
+#endif
+            break;
+        case HWBackend::VAAPI:
+#ifdef GHITA_HW_VAAPI
+            devType = av_hwdevice_find_type_by_name("vaapi");
+#endif
+            break;
+        default:
+            break;
+    }
+
+    if (devType == AV_HWDEVICE_TYPE_NONE) {
+        qWarning() << "[Decoder] No HW device type found for backend"
+                   << QString::fromUtf8(to_string(hwBackend_).data());
+        return false;
+    }
+
+    // Create the hardware device context.
+    if (av_hwdevice_ctx_create(&hwDeviceCtx_, devType, nullptr, nullptr, 0) < 0) {
+        qWarning() << "[Decoder] Failed to create HW device context";
+        return false;
+    }
+
+    // Re-open the video codec with the hardware device context.
+    const AVCodec* codec = avcodec_find_decoder(videoCtx_->codec_id);
+    if (!codec) {
+        qWarning() << "[Decoder] Cannot re-find decoder for HW";
+        return false;
+    }
+
+    // Allocate a new codec context for hardware decoding.
+    AVCodecContext* hwCtx = avcodec_alloc_context3(codec);
+    if (!hwCtx) {
+        qWarning() << "[Decoder] Cannot alloc HW codec context";
+        return false;
+    }
+
+    // Copy parameters from the original context.
+    hwCtx->width = videoCtx_->width;
+    hwCtx->height = videoCtx_->height;
+    hwCtx->pix_fmt = videoCtx_->sw_pix_fmt;
+    hwCtx->time_base = videoCtx_->time_base;
+    hwCtx->framerate = videoCtx_->framerate;
+    hwCtx->hw_frames_ctx = av_buffer_ref(videoCtx_->hw_frames_ctx);
+    hwCtx->extradata = videoCtx_->extradata;
+    hwCtx->extradata_size = videoCtx_->extradata_size;
+
+    // Set the hardware device context.
+    hwCtx->hw_device_ctx = av_buffer_ref(hwDeviceCtx_);
+
+    // Tell the decoder to produce hardware frames.
+    hwCtx->pix_fmt = devType == AV_HWDEVICE_TYPE_CUDA ? AV_PIX_FMT_CUDA :
+                     devType == AV_HWDEVICE_TYPE_VAAPI ? AV_PIX_FMT_VAAPI :
+                     AV_PIX_FMT_NV12;
+
+    if (avcodec_open2(hwCtx, codec, nullptr) < 0) {
+        qWarning() << "[Decoder] Cannot open codec for HW decode";
+        avcodec_free_context(&hwCtx);
+        return false;
+    }
+
+    // Replace the software codec context with the hardware one.
+    avcodec_free_context(&videoCtx_);
+    videoCtx_ = hwCtx;
+
+    return true;
+}
+
+bool Decoder::tryHardwareDecode(AVFrame* frame, VideoFrameQueue& videoQ) {
+    // Only attempt if we have a hardware device context and the frame
+    // is in a hardware pixel format.
+    if (!hwDeviceCtx_ || !videoCtx_) return false;
+
+    // Check if the frame came from hardware.
+    if (!av_buffer_is_available(&frame->hw_frames_ctx)) return false;
+
+    // Map the hardware frame to a software format (NV12 -> RGBA).
+    AVFrame* swFrame = av_frame_alloc();
+    if (!swFrame) return false;
+
+    int ret = av_hwframe_transfer_data(swFrame, frame, 0);
+    if (ret < 0) {
+        // Transfer failed -- fall back to software decode path.
+        av_frame_free(&swFrame);
+        return false;
+    }
+
+    // Build the output frame.
+    Frame out;
+    out.width = swFrame->width;
+    out.height = swFrame->height;
+    out.streamIndex = videoStreamIndex_;
+    out.pts = swFrame->pts;
+    out.ptsMs = static_cast<int64_t>(
+        swFrame->pts * 1000.0 * videoTimeBaseNum_ / videoTimeBaseDen_);
+    out.pictureNumber = pictureCounter_++;
+
+    // Upload to RGBA via sws_scale.
+    out.rgba.resize(static_cast<size_t>(out.width) * out.height * 4);
+    uint8_t* dst[] = { out.rgba.data() };
+    int dstStride[] = { out.width * 4 };
+
+    if (!swsCtx_ || swsCtx_->srcW != swFrame->width
+                   || swsCtx_->srcH != swFrame->height
+                   || swsCtx_->srcFormat != AVPixelFormat(swFrame->format)) {
+        sws_freeContext(swsCtx_);
+        swsCtx_ = sws_getContext(
+            swFrame->width, swFrame->height, AVPixelFormat(swFrame->format),
+            swFrame->width, swFrame->height, AV_PIX_FMT_RGBA,
+            SWS_BILINEAR, nullptr, nullptr, nullptr);
+    }
+
+    sws_scale(swsCtx_, swFrame->data, swFrame->linesize, 0,
+              swFrame->height, dst, dstStride);
+
+    av_frame_free(&swFrame);
+
+    return videoQ.try_push(std::move(out));
 }
 
 bool Decoder::openStream(int index, AVCodecContext*& ctx) {
@@ -116,13 +288,18 @@ bool Decoder::openStream(int index, AVCodecContext*& ctx) {
 }
 
 HWBackend Decoder::selectBackend() const {
-    // M0: software decode (portable, deterministic). HW upload path is a
-    // later milestone; the selection logic is intentionally centralized here.
+#if defined(GHITA_HW_ACCEL_ENABLED)
+    // Hardware acceleration is enabled at compile time.
+    // Choose the best backend for the current platform.
 #if defined(_WIN32)
     return HWBackend::NVDEC;
 #elif defined(__linux__)
     return HWBackend::VAAPI;
 #else
+    return HWBackend::None;
+#endif
+#else
+    // Hardware acceleration is disabled -- always use software.
     return HWBackend::None;
 #endif
 }
@@ -203,7 +380,23 @@ bool Decoder::decodeStep(VideoFrameQueue& videoQ, AudioFrameQueue& audioQ) {
 }
 
 bool Decoder::decodeVideoFrame(AVFrame* frame, VideoFrameQueue& videoQ) {
-    if (!swsCtx_) {
+    // If hardware decode is active, attempt to use it first.
+    if (hwBackend_ != HWBackend::None && !hwInitFailed_) {
+        if (tryHardwareDecode(frame, videoQ)) {
+            return true;
+        }
+        // tryHardwareDecode returned false -- fall through to software path.
+        qWarning() << "[Decoder] HW decode transfer failed, falling back to SW";
+        hwInitFailed_ = true;
+        hwBackend_ = HWBackend::None;
+    }
+
+    // Software decode path: convert decoded frame to RGBA.
+    // Recreate swsCtx_ if dimensions or pixel format changed.
+    if (!swsCtx_ || swsCtx_->srcW != frame->width
+                   || swsCtx_->srcH != frame->height
+                   || swsCtx_->srcFormat != AVPixelFormat(frame->format)) {
+        sws_freeContext(swsCtx_);
         swsCtx_ = sws_getContext(
             frame->width, frame->height, AVPixelFormat(frame->format),
             frame->width, frame->height, AV_PIX_FMT_RGBA,

@@ -16,12 +16,10 @@ namespace {
 
 // Probe a file to determine if it contains video, audio, or both.
 int probeMediaType(const QString &path) {
-    avformat_network_init();
     AVFormatContext *fmtCtx = nullptr;
     int ret = avformat_open_input(&fmtCtx, path.toUtf8().constData(), nullptr, nullptr);
     if (ret < 0 || !fmtCtx) {
         avformat_close_input(&fmtCtx);
-        avformat_network_deinit();
         // Fall back to extension-based heuristic.
         QString ext = QFileInfo(path).suffix().toLower();
         QSet<QString> videoExts = {"mp4","mkv","avi","mov","wmv","flv","webm","m4v","mpg","mpeg","3gp"};
@@ -32,7 +30,6 @@ int probeMediaType(const QString &path) {
     }
     if (avformat_find_stream_info(fmtCtx, nullptr) < 0) {
         avformat_close_input(&fmtCtx);
-        avformat_network_deinit();
         return 0;
     }
     bool hasVideo = false, hasAudio = false;
@@ -42,7 +39,6 @@ int probeMediaType(const QString &path) {
         if (type == AVMEDIA_TYPE_AUDIO) hasAudio = true;
     }
     avformat_close_input(&fmtCtx);
-    avformat_network_deinit();
     if (hasVideo && hasAudio) return 3;  // both
     if (hasVideo) return 1;              // video
     if (hasAudio) return 2;              // audio

@@ -30,10 +30,10 @@ ColumnLayout {
             Repeater {
                 model: [
                     { id: 0, label: "Custom", icon: "\u270F\uFE0F" },
-                    { id: 1, label: "Top-Left", icon: "\u25B3\uFE0F" },
-                    { id: 2, label: "Top-Right", icon: "\u25B3\uFE0F" },
-                    { id: 3, label: "Bottom-Left", icon: "\u25BC\uFE0F" },
-                    { id: 4, label: "Bottom-Right", icon: "\u25BC\uFE0F" }
+                    { id: 1, label: "Top-Left", icon: "\u25B2" },
+                    { id: 2, label: "Top-Right", icon: "\u25B6" },
+                    { id: 3, label: "Bottom-Left", icon: "\u25BC" },
+                    { id: 4, label: "Bottom-Right", icon: "\u25C0" }
                 ]
 
                 Rectangle {
@@ -226,11 +226,11 @@ ColumnLayout {
                 color: timeline.pipShadowEnabled(root.pipClipId) ? Theme.accent : Theme.borderDark
 
                 Rectangle {
-                    width: 16; height: 16; radius: 8
+                    width: 16 * Theme.scale; height: 16 * Theme.scale; radius: 8 * Theme.scale
                     color: Theme.textPrimary
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
-                    anchors.leftMargin: timeline.pipShadowEnabled(root.pipClipId) ? 18 : 2
+                    anchors.leftMargin: timeline.pipShadowEnabled(root.pipClipId) ? 18 * Theme.scale : 2 * Theme.scale
                 }
 
                 MouseArea {

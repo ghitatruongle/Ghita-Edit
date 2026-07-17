@@ -177,100 +177,6 @@ Rectangle {
     }
 
     // ---- Parameter controls for the selected transition type ----
-    function buildParamControls(schema, parentLayout) {
-        for (var i = 0; i < schema.length; i++) {
-            var param = schema[i]
-            if (param.type === "slider") {
-                // Slider parameter control.
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.spacingXs
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: Theme.spacingSm
-
-                        Label {
-                            text: param.label
-                            color: Theme.textSecondary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeXs
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        Label {
-                            text: {
-                                if (typeof paramsState[param.key] === "undefined") return param.default
-                                var v = paramsState[param.key]
-                                return (v % 1 === 0) ? v.toString() : v.toFixed(2)
-                            }
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeXs
-                        }
-                    }
-
-                    Slider {
-                        Layout.fillWidth: true
-                        from: param.min
-                        to: param.max
-                        stepSize: param.step
-                        value: paramsState[param.key] !== undefined
-                               ? paramsState[param.key] : param.default
-                        onMoved: {
-                            paramsState[param.key] = Math.round(value / param.step) * param.step
-                        }
-                    }
-                }
-            } else if (param.type === "combo") {
-                // Combo (dropdown) parameter control.
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.spacingXs
-
-                    Label {
-                        text: param.label
-                        color: Theme.textSecondary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeXs
-                    }
-
-                    ComboBox {
-                        Layout.fillWidth: true
-                        model: param.options
-                        currentIndex: paramsState[param.key] !== undefined
-                                     ? paramsState[param.key] : param.default
-                        onCurrentIndexChanged: {
-                            paramsState[param.key] = currentIndex
-                        }
-                        delegate: ItemDelegate {
-                            width: parent.width
-                            text: modelData
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeSm
-                            highlighted: parent.highlightIndex === index
-                        }
-                        indicator: IconLabel {
-                            icon: "\u25BC"
-                            anchors.right: parent.right
-                            anchors.rightMargin: Theme.spacingSm
-                            color: Theme.textSecondary
-                            font.pixelSize: 10
-                        }
-                        contentItem: Label {
-                            text: parent.currentText
-                            color: Theme.textPrimary
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeSm
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.spacingMd
@@ -699,22 +605,24 @@ Rectangle {
                             color: Theme.clipVideo
                             visible: irisPreviewAnim.running
 
-                            PropertyAnimation on width {
-                                id: irisPreviewAnim
-                                running: false
-                                loops: Animation.Infinite
-                                from: 0
-                                to: parent.width * 0.5
-                                duration: root.durationMs / 2
-                                easing.type: Easing.InOutQuad
-                            }
-                            PropertyAnimation on width {
-                                running: false
-                                loops: Animation.Infinite
-                                from: parent.width * 0.5
-                                to: 0
-                                duration: root.durationMs / 2
-                                easing.type: Easing.InOutQuad
+                            SequentialAnimation {
+                                PropertyAnimation on width {
+                                    id: irisPreviewAnim
+                                    running: false
+                                    loops: Animation.Infinite
+                                    from: 0
+                                    to: parent.width * 0.5
+                                    duration: root.durationMs / 2
+                                    easing.type: Easing.InOutQuad
+                                }
+                                PropertyAnimation on width {
+                                    running: false
+                                    loops: Animation.Infinite
+                                    from: parent.width * 0.5
+                                    to: 0
+                                    duration: root.durationMs / 2
+                                    easing.type: Easing.InOutQuad
+                                }
                             }
                         }
                     }
@@ -788,22 +696,24 @@ Rectangle {
                             color: Theme.clipVideo
                             visible: zoomAnim.running
 
-                            PropertyAnimation on width {
-                                id: zoomAnim
-                                running: false
-                                loops: Animation.Infinite
-                                from: 0
-                                to: parent.width
-                                duration: root.durationMs / 2
-                                easing.type: Easing.InOutQuad
-                            }
-                            PropertyAnimation on width {
-                                running: false
-                                loops: Animation.Infinite
-                                from: parent.width
-                                to: 0
-                                duration: root.durationMs / 2
-                                easing.type: Easing.InOutQuad
+                            SequentialAnimation {
+                                PropertyAnimation on width {
+                                    id: zoomAnim
+                                    running: false
+                                    loops: Animation.Infinite
+                                    from: 0
+                                    to: parent.width
+                                    duration: root.durationMs / 2
+                                    easing.type: Easing.InOutQuad
+                                }
+                                PropertyAnimation on width {
+                                    running: false
+                                    loops: Animation.Infinite
+                                    from: parent.width
+                                    to: 0
+                                    duration: root.durationMs / 2
+                                    easing.type: Easing.InOutQuad
+                                }
                             }
                         }
                     }
@@ -830,11 +740,11 @@ Rectangle {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                previewAnim.running = true
-                                irisPreviewAnim.running = true
-                                swipeRect.running = true
-                                blurDissolveAnim.running = true
-                                zoomAnim.running = true
+                                if (root.selectedType === "crossfade" || root.selectedType === "fades") previewAnim.running = true
+                                if (root.selectedType === "iriswipe") irisPreviewAnim.running = true
+                                if (root.selectedType === "directionalwipe") swipeRect.running = true
+                                if (root.selectedType === "blurdissolve") blurDissolveAnim.running = true
+                                if (root.selectedType === "zoomdissolve") zoomAnim.running = true
                             }
                         }
                     }
@@ -923,5 +833,13 @@ Rectangle {
     // Re-scan when the transitions tab becomes visible.
     Component.onCompleted: {
         scanAdjacentPairs()
+    }
+
+    // Re-scan when clips are added, removed, or moved on the timeline.
+    Connections {
+        target: timeline
+        function onClipAdded() { scanAdjacentPairs() }
+        function onClipRemoved() { scanAdjacentPairs() }
+        function onClipsMoved() { scanAdjacentPairs() }
     }
 }

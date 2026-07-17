@@ -184,13 +184,14 @@ void VideoFXEffects::applyVignette(QImage& img, double strength, double intensit
 
     const int w = img.width();
     const int h = img.height();
-    const QPointF center(w / 2.0, h / 2.0);
-    const double maxDist = center.manhattanLength();
+    const double cx = w / 2.0;
+    const double cy = h / 2.0;
+    const double maxDist = std::abs(cx) + std::abs(cy);
 
     for (int y = 0; y < h; ++y) {
         uint32_t* row = reinterpret_cast<uint32_t*>(img.scanLine(y));
         for (int x = 0; x < w; ++x) {
-            double dist = QPointF(x - w / 2.0, y - h / 2.0).manhattanLength();
+            double dist = std::abs(x - cx) + std::abs(y - cy);
             double norm = dist / maxDist;
 
             // Smooth falloff: vignette kicks in after 40% from center.
@@ -209,15 +210,6 @@ void VideoFXEffects::applyVignette(QImage& img, double strength, double intensit
                            qAlpha(p));
         }
     }
-}
-
-// ---- Box blur helper ----
-
-void VideoFXEffects::boxBlur(QImage& img, int radius) {
-    if (radius <= 0 || img.isNull()) return;
-    // Already handled via the multi-pass approach in applyBlur.
-    (void)img;
-    (void)radius;
 }
 
 // ---- Presets ----

@@ -98,6 +98,13 @@ ColumnLayout {
     }
 
     // Visual feedback: highlight newly pasted clips briefly.
+    Timer {
+        id: pasteHighlightTimer
+        interval: 1200
+        repeat: false
+        onTriggered: { root.recentlyPastedIds = [] }
+    }
+
     Connections {
         target: timeline
         function onClipsPasted(pastedIds) {
@@ -105,16 +112,36 @@ ColumnLayout {
             // will read this property to show a brief highlight.
             root.recentlyPastedIds = pastedIds
             // Reset after a short delay.
-            clearTimeout(root._pasteHighlightTimer)
-            root._pasteHighlightTimer = setTimeout(function() {
-                root.recentlyPastedIds = []
-            }, 1200)
+            pasteHighlightTimer.stop()
+            pasteHighlightTimer.start()
         }
     }
 
     // Property tracking recently pasted clip IDs.
     property var recentlyPastedIds: []
-    property var _pasteHighlightTimer: -1
+
+    // Cached clip-position map for O(1) lookup. Rebuilt when clips change.
+    property var _clipMap: ({})
+
+    function _rebuildClipMap() {
+        if (!timeline) { root._clipMap = {}; return }
+        var map = ({})
+        for (var i = 0; i < timeline.rowCount(); i++) {
+            var cid = timeline.clipId(i)
+            map[cid] = {
+                timelineStart: timeline.clipStartMs(i),
+                timelineEnd: timeline.clipEndMs(i)
+            }
+        }
+        root._clipMap = map
+    }
+
+    Connections {
+        target: timeline
+        function onClipAdded() { root._rebuildClipMap() }
+        function onClipRemoved() { root._rebuildClipMap() }
+        function onClipsMoved() { root._rebuildClipMap() }
+    }
 
     // ---- Add Track Dialog ----
     AddTrackDialog {
@@ -389,7 +416,7 @@ ColumnLayout {
             Label {
                 text: "\u2212"
                 color: Theme.textSecondary
-                font.pixelSize: 16
+                font.pixelSize: Theme.fontSizeMd
                 font.weight: Font.Bold
             }
 
@@ -438,23 +465,19 @@ ColumnLayout {
             Label {
                 text: "+"
                 color: Theme.textSecondary
-                font.pixelSize: 16
+                font.pixelSize: Theme.fontSizeMd
                 font.weight: Font.Bold
             }
         }
     }
 
-    // Helper: find clip data from model
+    // Helper: find clip data from cached map (O(1)).
     function findClipData(clipId) {
-        if (!timeline) return null
-        for (var i = 0; i < timeline.rowCount(); i++) {
-            if (timeline.clipId(i) === clipId) {
-                return {
-                    timelineStart: timeline.clipStartMs(i),
-                    timelineEnd: timeline.clipEndMs(i)
-                }
-            }
-        }
-        return null
+        if (!timeline || !root._clipMap) return null
+        return root._clipMap[clipId] || null
+    }
+
+    Component.onCompleted: {
+        root._rebuildClipMap()
     }
 }

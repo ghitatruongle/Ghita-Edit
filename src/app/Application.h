@@ -44,6 +44,10 @@ private:
     AppState appState_;
     engine::ScrubEngine scrubEngine_;
     QQmlApplicationEngine qmlEngine_;
+signals:
+    // Forwarded from the Exporter so main.cpp can wire the taskbar progress.
+    void exportProgressUpdated(int percent);
+    void exportFinishedSignal(bool success);
 };
 
 } // namespace ghita::app

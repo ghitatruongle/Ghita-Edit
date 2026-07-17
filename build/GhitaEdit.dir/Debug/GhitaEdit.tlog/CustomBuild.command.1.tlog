@@ -1,0 +1,24 @@
+^E:\GHITA EDIT\BUILD\CMAKEFILES\03A86AFABFE9E3C64F5D9C11A75481FE\QRC_GHITA_QML.CPP.RULE
+setlocal
+cd "E:\Ghita Edit\build"
+if %errorlevel% neq 0 goto :cmEnd
+E:
+if %errorlevel% neq 0 goto :cmEnd
+"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -E cmake_autorcc "E:/Ghita Edit/build/CMakeFiles/GhitaEdit_autogen.dir/AutoRcc_ghita_qml_JU62CA5L7X_Info.json" Debug
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^E:\GHITA EDIT\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" "-SE:/Ghita Edit" "-BE:/Ghita Edit/build" --check-stamp-file "E:/Ghita Edit/build/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

@@ -110,7 +110,7 @@ int AudioEngine::paCallback(const void* /*input*/, void* output,
                 reinterpret_cast<const float*>(f.rgba.data()) + f.rgba.size() / sizeof(float));
             self->stagingPos_ = 0;
         }
-        out[written++] = self->staging_[self->stagingPos_++] * self->masterGain_;
+        out[written++] = self->staging_[self->stagingPos_++] * self->masterGain_.load();
     }
 
     // Advance master clock by the samples we just consumed (frames * 2 ch).
@@ -142,8 +142,8 @@ bool AudioEngine::isTrackMuted(int trackIndex) const {
     return (trackIndex >= 0 && trackIndex < kMaxTracks) ? trackMuted_[trackIndex] : false;
 }
 void AudioEngine::setMasterVolume(float linearGain) {
-    masterGain_ = std::clamp(linearGain, 0.0f, 2.0f);
+    masterGain_.store(std::clamp(linearGain, 0.0f, 2.0f));
 }
-float AudioEngine::masterVolume() const { return masterGain_; }
+float AudioEngine::masterVolume() const { return masterGain_.load(); }
 
 } // namespace ghita::audio

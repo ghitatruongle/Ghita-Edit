@@ -29,6 +29,7 @@ class MediaEngine : public QObject {
     Q_PROPERTY(qint64 durationMs READ durationMs NOTIFY durationChanged)
     Q_PROPERTY(qint64 positionMs READ positionMs NOTIFY positionChanged)
     Q_PROPERTY(double playbackSpeed READ playbackSpeed WRITE setPlaybackSpeed NOTIFY playbackSpeedChanged)
+    Q_PROPERTY(QString backendStatus READ backendStatus NOTIFY backendStatusChanged)
 
 public:
     explicit MediaEngine(ghita::audio::AudioEngine* audio, QObject* parent = nullptr);
@@ -51,6 +52,8 @@ public:
     // Bind the timeline whose audio clips should be mixed during playback.
     void setTimeline(ghita::timeline::TimelineModel* t) { timeline_ = t; }
 
+    QString backendStatus() const { return backendStatus_; }
+
 public slots:
     void open(const QString& path);
     void play(qint64 startUs = 0);
@@ -65,11 +68,14 @@ signals:
     void startDecode();
     void requestStop();
     void playbackSpeedChanged(double);
+    void backendStatusChanged(const QString&);
 
 private slots:
     void onFrameReady(int width, int height, const QByteArray& rgba);
+    void onFrameReadyGpu(int width, int height, quintptr gpuHandle);
     void onDecodeFinished();
     void onPositionTick();
+    void onBackendChanged(const QString& label);
 
 private:
     void stopWorker();  // tear down the decode worker + thread, clear worker_
@@ -88,6 +94,7 @@ private:
     qint64 durationMs_ = 0;
     QTimer* positionTimer_ = nullptr;
     double playbackSpeed_ = 1.0;
+    QString backendStatus_;
 };
 
 } // namespace ghita::engine

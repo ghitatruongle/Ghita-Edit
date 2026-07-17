@@ -35,23 +35,26 @@ AVFrame* FadeTransition::apply(AVFrame* fromFrame, AVFrame* toFrame, float progr
         outY[i] = static_cast<uint8_t>(fromY[i] * alpha + toY[i] * beta);
     }
 
-    // U plane (half size)
-    size = (fromFrame->width / 2) * (fromFrame->height / 2);
-    uint8_t* fromU = fromFrame->data[1];
-    uint8_t* toU = toFrame->data[1];
-    uint8_t* outU = output->data[1];
-
-    for (int i = 0; i < size; i++) {
-        outU[i] = static_cast<uint8_t>(fromU[i] * alpha + toU[i] * beta);
+    // U plane (half size, linesize-aware)
+    const int uw = fromFrame->width / 2;
+    const int uh = fromFrame->height / 2;
+    for (int row = 0; row < uh; ++row) {
+        uint8_t* fromU = fromFrame->data[1] + row * fromFrame->linesize[1];
+        uint8_t* toU = toFrame->data[1] + row * toFrame->linesize[1];
+        uint8_t* outU = output->data[1] + row * output->linesize[1];
+        for (int col = 0; col < uw; ++col) {
+            outU[col] = static_cast<uint8_t>(fromU[col] * alpha + toU[col] * beta);
+        }
     }
 
-    // V plane (half size)
-    uint8_t* fromV = fromFrame->data[2];
-    uint8_t* toV = toFrame->data[2];
-    uint8_t* outV = output->data[2];
-
-    for (int i = 0; i < size; i++) {
-        outV[i] = static_cast<uint8_t>(fromV[i] * alpha + toV[i] * beta);
+    // V plane (half size, linesize-aware)
+    for (int row = 0; row < uh; ++row) {
+        uint8_t* fromV = fromFrame->data[2] + row * fromFrame->linesize[2];
+        uint8_t* toV = toFrame->data[2] + row * toFrame->linesize[2];
+        uint8_t* outV = output->data[2] + row * output->linesize[2];
+        for (int col = 0; col < uw; ++col) {
+            outV[col] = static_cast<uint8_t>(fromV[col] * alpha + toV[col] * beta);
+        }
     }
 
     return output;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QMutex>
 #include <QObject>
 #include <QString>
 #include <vector>
@@ -72,6 +73,7 @@ public slots:
 
     // Reset everything to identity.
     void reset() {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         brightness_ = 0.0; contrast_ = 1.0; saturation_ = 1.0;
         temperature_ = 0.0; tint_ = 0.0; highlight_ = 0.0; shadow_ = 0.0;
         hueShift_ = 0.0; dryWet_ = 1.0;
@@ -86,16 +88,21 @@ public slots:
     // ---- Effect chain management ----
 
     // Get the current effect chain (copy).
-    std::vector<EffectEntry> effectChain() const { return effectChain_; }
+    std::vector<EffectEntry> effectChain() const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
+        return effectChain_;
+    }
 
     // Set the effect chain (full replacement).
     void setEffectChain(const std::vector<EffectEntry>& chain) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         effectChain_ = chain;
         emit effectChainChanged();
     }
 
     // Apply a preset by name. Clears existing chain and loads the preset.
     void applyPreset(const QString& name) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (name.isEmpty() || name == "None") {
             effectChain_.clear();
             currentPreset_ = "None";
@@ -137,12 +144,14 @@ public slots:
             case EffectType::Vignette:
                 e.vignetteStrength = 0.5; break;
         }
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         effectChain_.push_back(std::move(e));
         emit effectChainChanged();
     }
 
     // Remove an effect by index.
     Q_INVOKABLE void removeEffect(int index) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return;
         effectChain_.erase(effectChain_.begin() + index);
         emit effectChainChanged();
@@ -150,6 +159,7 @@ public slots:
 
     // Toggle an effect on/off.
     Q_INVOKABLE void setEffectEnabled(int index, bool enabled) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return;
         effectChain_[index].enabled = enabled;
         emit effectChainChanged();
@@ -157,6 +167,7 @@ public slots:
 
     // Set effect intensity (0..1).
     Q_INVOKABLE void setEffectIntensity(int index, double intensity) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return;
         effectChain_[index].intensity = qBound(0.0, intensity, 1.0);
         emit effectChainChanged();
@@ -164,6 +175,7 @@ public slots:
 
     // Set brightness for the brightness/contrast effect at index.
     Q_INVOKABLE void setEffectBrightness(int index, double val) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return;
         if (effectChain_[index].type == EffectType::BrightnessContrast) {
             effectChain_[index].brightness = val;
@@ -173,6 +185,7 @@ public slots:
 
     // Set contrast for the brightness/contrast effect at index.
     Q_INVOKABLE void setEffectContrast(int index, double val) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return;
         if (effectChain_[index].type == EffectType::BrightnessContrast) {
             effectChain_[index].contrast = val;
@@ -182,6 +195,7 @@ public slots:
 
     // Set blur radius.
     Q_INVOKABLE void setEffectBlurRadius(int index, double val) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return;
         if (effectChain_[index].type == EffectType::Blur) {
             effectChain_[index].blurRadius = val;
@@ -191,6 +205,7 @@ public slots:
 
     // Set vignette strength.
     Q_INVOKABLE void setEffectVignetteStrength(int index, double val) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return;
         if (effectChain_[index].type == EffectType::Vignette) {
             effectChain_[index].vignetteStrength = val;
@@ -200,6 +215,7 @@ public slots:
 
     // Move an effect up in the chain (swap with previous).
     Q_INVOKABLE void moveEffectUp(int index) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index <= 0 || index >= static_cast<int>(effectChain_.size())) return;
         std::swap(effectChain_[index], effectChain_[index - 1]);
         emit effectChainChanged();
@@ -207,16 +223,21 @@ public slots:
 
     // Move an effect down in the chain (swap with next).
     Q_INVOKABLE void moveEffectDown(int index) {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size()) - 1) return;
         std::swap(effectChain_[index], effectChain_[index + 1]);
         emit effectChainChanged();
     }
 
     // Get the number of effects in the chain.
-    Q_INVOKABLE int effectCount() const { return static_cast<int>(effectChain_.size()); }
+    Q_INVOKABLE int effectCount() const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
+        return static_cast<int>(effectChain_.size());
+    }
 
     // Get effect type name at index (for QML display).
     Q_INVOKABLE QString effectTypeName(int index) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return "";
         switch (effectChain_[index].type) {
             case EffectType::BrightnessContrast: return "BrightnessContrast";
@@ -229,48 +250,56 @@ public slots:
 
     // Get effect display name at index.
     Q_INVOKABLE QString effectDisplayName(int index) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return "";
         return effectChain_[index].displayName();
     }
 
     // Get effect icon at index.
     Q_INVOKABLE QString effectIcon(int index) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return "";
         return effectChain_[index].icon();
     }
 
     // Get effect enabled at index.
     Q_INVOKABLE bool effectEnabled(int index) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return false;
         return effectChain_[index].enabled;
     }
 
     // Get effect intensity at index.
     Q_INVOKABLE double effectIntensity(int index) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return 0;
         return effectChain_[index].intensity;
     }
 
     // Get effect brightness at index.
     Q_INVOKABLE double effectBrightness(int index) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return 0;
         return effectChain_[index].brightness;
     }
 
     // Get effect contrast at index.
     Q_INVOKABLE double effectContrast(int index) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return 1;
         return effectChain_[index].contrast;
     }
 
     // Get effect blur radius at index.
     Q_INVOKABLE double effectBlurRadius(int index) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return 3;
         return effectChain_[index].blurRadius;
     }
 
     // Get effect vignette strength at index.
     Q_INVOKABLE double effectVignetteStrength(int index) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (index < 0 || index >= static_cast<int>(effectChain_.size())) return 0.5;
         return effectChain_[index].vignetteStrength;
     }
@@ -282,6 +311,7 @@ public slots:
 
     // Apply the current effect chain to an RGBA image (for PreviewSurface).
     void applyEffectsToImage(QImage& img) const {
+        std::lock_guard<QMutex> lk(effectChainMutex_);
         if (img.isNull() || effectChain_.empty()) return;
         VideoFXEffects::applyChain(img, effectChain_);
     }

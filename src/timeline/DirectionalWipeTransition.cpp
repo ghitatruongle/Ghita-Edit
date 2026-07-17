@@ -81,10 +81,12 @@ AVFrame* DirectionalWipeTransition::apply(AVFrame* fromFrame, AVFrame* toFrame, 
                         alpha = (y >= ph - sy) ? 1.0 : 0.0;
                         break;
                     case 4: // Diagonal TL to BR
-                        // Distance from top-left corner along the diagonal.
+                        // Guard against pw + ph <= 2 which causes divide-by-zero.
+                        if (pw + ph <= 2) { alpha = 1.0; break; }
                         alpha = ((static_cast<double>(x) + static_cast<double>(y)) / (pw + ph - 2.0) <= sweep) ? 1.0 : 0.0;
                         break;
                     case 5: // Diagonal TR to BL
+                        if (pw + ph <= 2) { alpha = 1.0; break; }
                         alpha = ((static_cast<double>(pw - 1 - x) + static_cast<double>(y)) / (pw + ph - 2.0) <= sweep) ? 1.0 : 0.0;
                         break;
                 }

@@ -26,4 +26,15 @@ inline std::string_view to_string(HWBackend b) {
     return "unknown";
 }
 
+// Human-readable status string for the UI indicator.
+inline std::string_view status_label(HWBackend b) {
+    switch (b) {
+        case HWBackend::NVDEC:     return "HW: NVDEC";
+        case HWBackend::QuickSync: return "HW: QuickSync";
+        case HWBackend::AMF:       return "HW: AMF";
+        case HWBackend::VAAPI:     return "HW: VA-API";
+        default:                   return "SW: CPU";
+    }
+}
+
 } // namespace ghita::engine

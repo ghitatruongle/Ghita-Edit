@@ -18,6 +18,16 @@ struct Frame {
     int64_t pictureNumber = 0;
     int streamIndex = -1;     // which stream produced this frame
     std::vector<uint8_t> rgba; // RGBA pixels, row-major, size = w*h*4
+
+    // GPU texture handle for hardware-decoded frames.
+    // When non-null, the texture contains the decoded frame and the
+    // renderer should use it directly instead of uploading from rgba.
+    struct GpuTexture {
+        quintptr handle = 0;  // opaque texture handle (GLuint on Qt)
+        int width = 0;
+        int height = 0;
+    };
+    std::unique_ptr<GpuTexture> gpuTexture;
 };
 
 // Lock-free single-producer / single-consumer ring buffer.

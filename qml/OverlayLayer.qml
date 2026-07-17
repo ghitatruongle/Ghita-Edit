@@ -108,9 +108,9 @@ Item {
             // Left edge handle
             Rectangle {
                 visible: ov.cid === root.selectedClipId && root.width > 0
-                width: 8; height: 30
-                x: parent.width * (timeline.overlayCropLeft(ov.cid) || 0) - 4
-                y: parent.height / 2 - 15
+                width: 8 * Theme.scale; height: 30 * Theme.scale
+                x: parent.width * (timeline.overlayCropLeft(ov.cid) || 0) - 4 * Theme.scale
+                y: parent.height / 2 - 15 * Theme.scale
                 color: Theme.accent
                 radius: 2
                 z: 11
@@ -146,9 +146,9 @@ Item {
             // Right edge handle
             Rectangle {
                 visible: ov.cid === root.selectedClipId && root.width > 0
-                width: 8; height: 30
-                x: parent.width * (1 - (timeline.overlayCropRight(ov.cid) || 0)) - 4
-                y: parent.height / 2 - 15
+                width: 8 * Theme.scale; height: 30 * Theme.scale
+                x: parent.width * (1 - (timeline.overlayCropRight(ov.cid) || 0)) - 4 * Theme.scale
+                y: parent.height / 2 - 15 * Theme.scale
                 color: Theme.accent
                 radius: 2
                 z: 11
@@ -184,9 +184,9 @@ Item {
             // Top edge handle
             Rectangle {
                 visible: ov.cid === root.selectedClipId && root.width > 0
-                width: 30; height: 8
-                x: parent.width / 2 - 15
-                y: parent.height * (timeline.overlayCropTop(ov.cid) || 0) - 4
+                width: 30 * Theme.scale; height: 8 * Theme.scale
+                x: parent.width / 2 - 15 * Theme.scale
+                y: parent.height * (timeline.overlayCropTop(ov.cid) || 0) - 4 * Theme.scale
                 color: Theme.accent
                 radius: 2
                 z: 11
@@ -222,9 +222,9 @@ Item {
             // Bottom edge handle
             Rectangle {
                 visible: ov.cid === root.selectedClipId && root.width > 0
-                width: 30; height: 8
-                x: parent.width / 2 - 15
-                y: parent.height * (1 - (timeline.overlayCropBottom(ov.cid) || 0)) - 4
+                width: 30 * Theme.scale; height: 8 * Theme.scale
+                x: parent.width / 2 - 15 * Theme.scale
+                y: parent.height * (1 - (timeline.overlayCropBottom(ov.cid) || 0)) - 4 * Theme.scale
                 color: Theme.accent
                 radius: 2
                 z: 11

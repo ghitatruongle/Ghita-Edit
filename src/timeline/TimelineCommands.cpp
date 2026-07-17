@@ -164,12 +164,12 @@ AddTrackCommand::AddTrackCommand(TimelineModel* model, TimelineModel::TrackType 
 
 void AddTrackCommand::undo() {
     // Remove the track we added.
-    model_->removeTrack(removedIndex_);
+    model_->removeTrackDirect(removedIndex_);
 }
 
 void AddTrackCommand::redo() {
     // Directly add the track via the model.
-    model_->addTrack(type_);
+    model_->addTrackDirect(type_);
     // The model appends at the end, so index = size - 1.
     removedIndex_ = model_->trackCount() - 1;
 }
@@ -191,7 +191,7 @@ void RemoveTrackCommand::undo() {
 void RemoveTrackCommand::redo() {
     // Store the track info before removal.
     savedInfo_ = model_->trackInfo(removedIndex_);
-    model_->removeTrack(removedIndex_);
+    model_->removeTrackDirect(removedIndex_);
 }
 
 // ---- CopyClipCommand ----

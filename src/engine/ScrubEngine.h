@@ -53,6 +53,7 @@ signals:
 private:
     std::unique_ptr<Decoder> decoder_;
     int fps_ = 30;
+    int64_t currentPositionMs_ = 0;
     mutable std::mutex mutex_;
 };
 

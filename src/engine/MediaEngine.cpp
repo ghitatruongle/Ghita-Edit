@@ -95,6 +95,7 @@ void MediaEngine::play(qint64 startUs) {
     if (!decoder_ || playing_) return;
     if (worker_) return;                 // a worker is already alive
     if (workerThread_.isRunning()) return;
+    if (!workerThread_.isFinished()) return; // thread was told to quit but hasn't finished yet
 
     // Bind audio queue to the audio engine and start playback.
     if (audio_) {
@@ -115,8 +116,12 @@ void MediaEngine::play(qint64 startUs) {
     connect(this, &MediaEngine::startDecode, worker_, &DecodeWorker::run);
     connect(worker_, &DecodeWorker::frameReady,
             this, &MediaEngine::onFrameReady);
+    connect(worker_, &DecodeWorker::frameReadyGpu,
+            this, &MediaEngine::onFrameReadyGpu);
     connect(worker_, &DecodeWorker::finished,
             this, &MediaEngine::onDecodeFinished);
+    connect(worker_, &DecodeWorker::backendChanged,
+            this, &MediaEngine::onBackendChanged);
     connect(this, &MediaEngine::requestStop, worker_, &DecodeWorker::stop);
 
     // Apply the current playback speed to the worker.
@@ -169,6 +174,10 @@ void MediaEngine::onFrameReady(int width, int height, const QByteArray& rgba) {
     if (preview_) preview_->setFrame(width, height, rgba);
 }
 
+void MediaEngine::onFrameReadyGpu(int width, int height, quintptr gpuHandle) {
+    if (preview_) preview_->setFrame(width, height, QByteArray{}, gpuHandle);
+}
+
 void MediaEngine::onDecodeFinished() {
     positionTimer_->stop();
     playing_ = false;
@@ -191,6 +200,15 @@ void MediaEngine::onPositionTick() {
                 break;
             }
         }
+    }
+}
+
+void MediaEngine::onBackendChanged(const QString& label) {
+    backendStatus_ = label;
+    emit backendStatusChanged(label);
+    if (preview_) {
+        // Update the preview surface with the backend status label.
+        preview_->setBackendStatus(label);
     }
 }
 

@@ -98,7 +98,7 @@ Rectangle {
                         Label {
                             text: "+"
                             color: Theme.textMuted
-                            font.pixelSize: 24
+                            font.pixelSize: Theme.fontSizeLg * 2
                             Layout.alignment: Qt.AlignHCenter
                         }
                         Label {
@@ -186,7 +186,7 @@ Rectangle {
                         Label {
                             text: "♪"
                             color: Theme.textMuted
-                            font.pixelSize: 20
+                            font.pixelSize: Theme.fontSizeMd
                             Layout.alignment: Qt.AlignHCenter
                         }
                         Label {
@@ -233,7 +233,7 @@ Rectangle {
                             anchors.leftMargin: 6
                             anchors.rightMargin: 6
                             spacing: 6
-                            Label { text: "🎵"; font.pixelSize: 13 }
+                            Label { text: "🎵"; font.pixelSize: Theme.fontSizeMd }
                             Label {
                                 text: model.fileName
                                 color: Theme.textPrimary
@@ -378,7 +378,7 @@ Rectangle {
                         Label {
                             anchors.centerIn: parent
                             text: modelData
-                            font.pixelSize: 22
+                            font.pixelSize: Theme.fontSizeLg * 2
                         }
 
                         MouseArea {
@@ -431,7 +431,7 @@ Rectangle {
 
                         Label {
                             text: "\uD83D\uDCE6"
-                            font.pixelSize: 18
+                            font.pixelSize: Theme.fontSizeLg
                         }
                         Label {
                             text: "Add PIP Video"
@@ -473,7 +473,7 @@ Rectangle {
 
                         Label {
                             text: "\uD83D\uDCE6"
-                            font.pixelSize: 18
+                            font.pixelSize: Theme.fontSizeLg
                         }
                         Label {
                             text: "Add PIP Image"
@@ -668,7 +668,7 @@ Rectangle {
 
             Label {
                 text: "🎬"
-                font.pixelSize: 20
+                font.pixelSize: Theme.fontSizeMd
                 Layout.alignment: Qt.AlignHCenter
             }
             Label {

@@ -10,7 +10,7 @@ Popup {
     y: Math.min(contextY, Screen.height - menuHeight - 8)
     width: menuWidth
     height: menuHeight
-    modal: true
+    modal: false
     focus: true
 
     property real contextX: 0
@@ -82,11 +82,12 @@ Popup {
     // Fade + scale animation
     enter: Transition {
         NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: Theme.animFast }
-        ScaleAnimation {
-            xScale: 0.95
-            yScale: 0.95
-            origin.x: 0
-            origin.y: 0
+        PropertyAnimation {
+            target: root
+            properties: "scale"
+            from: 0.95
+            to: 1.0
+            duration: Theme.animFast
         }
     }
     exit: Transition {
@@ -231,7 +232,7 @@ Component {
         y: Math.min(contextY, Screen.height - 300 - 8)
         width: 200
         height: Math.min(actions.length * 36 + 16, 300)
-        modal: true
+        modal: false
         focus: true
 
         background: Rectangle {

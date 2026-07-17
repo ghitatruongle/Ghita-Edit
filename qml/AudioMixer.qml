@@ -66,8 +66,8 @@ Rectangle {
                 handle: Rectangle {
                     x: masterSlider.leftPadding + masterSlider.visualPosition * (masterSlider.availableWidth - width)
                     y: masterSlider.topPadding + masterSlider.availableHeight / 2 - height / 2
-                    width: 14
-                    height: 14
+                    width: 14 * Theme.scale
+                    height: 14 * Theme.scale
                     radius: 7
                     color: Theme.textPrimary
                     border.color: Qt.darker(Theme.textPrimary, 1.2)
@@ -80,7 +80,7 @@ Rectangle {
                 color: Theme.textPrimary
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeMd
-                Layout.preferredWidth: 30
+                Layout.preferredWidth: 30 * Theme.scale
                 horizontalAlignment: Text.AlignRight
             }
         }
@@ -88,7 +88,7 @@ Rectangle {
         // Separator
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 1
+            Layout.preferredHeight: 1 * Theme.scale
             color: Theme.borderDark
         }
 
@@ -105,13 +105,13 @@ Rectangle {
                     color: Theme.textSecondary
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeMd
-                    Layout.preferredWidth: 60
+                    Layout.preferredWidth: 60 * Theme.scale
                 }
 
                 Slider {
                     id: trackSlider
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 20
+                    Layout.preferredHeight: 20 * Theme.scale
                     from: 0.0
                     to: 2.0
                     value: audioMixer.trackStates[index].volume
@@ -121,14 +121,14 @@ Rectangle {
                         x: trackSlider.leftPadding
                         y: trackSlider.topPadding + trackSlider.availableHeight / 2 - height / 2
                         width: trackSlider.availableWidth
-                        height: 3
-                        radius: 1.5
+                        height: 3 * Theme.scale
+                        radius: 1.5 * Theme.scale
                         color: Theme.border
 
                         Rectangle {
                             width: trackSlider.visualPosition * parent.width
                             height: parent.height
-                            radius: 1.5
+                            radius: 1.5 * Theme.scale
                             color: audioMixer.trackStates[index].muted ? Theme.textMuted : Theme.accent
                         }
                     }
@@ -136,8 +136,8 @@ Rectangle {
                     handle: Rectangle {
                         x: trackSlider.leftPadding + trackSlider.visualPosition * (trackSlider.availableWidth - width)
                         y: trackSlider.topPadding + trackSlider.availableHeight / 2 - height / 2
-                        width: 14
-                        height: 14
+                        width: 14 * Theme.scale
+                        height: 14 * Theme.scale
                         radius: 7
                         color: audioMixer.trackStates[index].muted ? Theme.textMuted : Theme.textPrimary
                         border.color: Qt.darker(color, 1.2)
@@ -150,16 +150,16 @@ Rectangle {
                     color: Theme.textPrimary
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeMd
-                    Layout.preferredWidth: 30
+                    Layout.preferredWidth: 30 * Theme.scale
                     horizontalAlignment: Text.AlignRight
                 }
 
                 // Pan control
                 Slider {
                     id: panSlider
-                    Layout.preferredWidth: 80
+                    Layout.preferredWidth: 80 * Theme.scale
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 20
+                    Layout.preferredHeight: 20 * Theme.scale
                     from: -1.0
                     to: 1.0
                     stepSize: 0.05
@@ -170,14 +170,14 @@ Rectangle {
                         x: panSlider.leftPadding
                         y: panSlider.topPadding + panSlider.availableHeight / 2 - height / 2
                         width: panSlider.availableWidth
-                        height: 3
-                        radius: 1.5
+                        height: 3 * Theme.scale
+                        radius: 1.5 * Theme.scale
                         color: Theme.border
 
                         Rectangle {
                             width: panSlider.visualPosition * parent.width
                             height: parent.height
-                            radius: 1.5
+                            radius: 1.5 * Theme.scale
                             color: Theme.accent
                         }
                     }
@@ -185,8 +185,8 @@ Rectangle {
                     handle: Rectangle {
                         x: panSlider.leftPadding + panSlider.visualPosition * (panSlider.availableWidth - width)
                         y: panSlider.topPadding + panSlider.availableHeight / 2 - height / 2
-                        width: 14
-                        height: 14
+                        width: 14 * Theme.scale
+                        height: 14 * Theme.scale
                         radius: 7
                         color: Theme.textPrimary
                         border.color: Qt.darker(Theme.textPrimary, 1.2)
@@ -199,7 +199,7 @@ Rectangle {
                     color: Theme.textPrimary
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeXs
-                    Layout.preferredWidth: 36
+                    Layout.preferredWidth: 36 * Theme.scale
                     horizontalAlignment: Text.AlignRight
                 }
 

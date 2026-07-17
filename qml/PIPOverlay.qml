@@ -63,8 +63,8 @@ Item {
             property bool isDragging: false
 
             // Computed position and size
-            property real baseX: nx * root.width * sc
-            property real baseY: ny * root.height * sc
+            property real baseX: nx * root.width
+            property real baseY: ny * root.height
             property real pipW: root.width * 0.4  // default PIP size at scale=1
             property real pipH: pipW * 9 / 16     // 16:9 aspect ratio
 
@@ -137,7 +137,7 @@ Item {
                     Label {
                         anchors.centerIn: parent
                         text: "\uD83D\uDD06"
-                        font.pixelSize: 32
+                        font.pixelSize: Theme.fontSizeLg * 2
                         color: Theme.textMuted
                     }
                 }
@@ -253,11 +253,11 @@ Item {
             // Bottom-right resize handle
             Rectangle {
                 visible: pipItem.cid === root.selectedClipId && pipItem.width > 20
-                width: 14; height: 14
+                width: 14 * Theme.scale; height: 14 * Theme.scale
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
-                anchors.bottomMargin: -3
-                anchors.rightMargin: -3
+                anchors.bottomMargin: -3 * Theme.scale
+                anchors.rightMargin: -3 * Theme.scale
                 radius: 3
                 color: Theme.accent
                 z: 10
@@ -279,7 +279,7 @@ Item {
                         if (!pressed) return
                         var dx = m.x - startX
                         var dy = m.y - startY
-                        var delta = Math.min(dx, dy) / 20  // 1 delta = 1/20 of preview width
+                        var delta = Math.min(dx, dy) / (20 / Theme.scale)
                         var newScale = timeline.overlayScale(pipItem.cid) + delta * 0.01
                         newScale = Math.min(5, Math.max(0.1, newScale))
                         timeline.setOverlayScale(pipItem.cid, newScale)
@@ -290,11 +290,11 @@ Item {
             // Top-left resize handle
             Rectangle {
                 visible: pipItem.cid === root.selectedClipId && pipItem.width > 20
-                width: 14; height: 14
+                width: 14 * Theme.scale; height: 14 * Theme.scale
                 anchors.top: parent.top
                 anchors.left: parent.left
-                anchors.topMargin: -3
-                anchors.leftMargin: -3
+                anchors.topMargin: -3 * Theme.scale
+                anchors.leftMargin: -3 * Theme.scale
                 radius: 3
                 color: Theme.accent
                 z: 10
@@ -309,7 +309,7 @@ Item {
                         if (!pressed) return
                         var dx = m.x - startX
                         var dy = m.y - startY
-                        var delta = Math.min(dx, dy) / 20
+                        var delta = Math.min(dx, dy) / (20 / Theme.scale)
                         var newScale = timeline.overlayScale(pipItem.cid) + delta * 0.01
                         newScale = Math.min(5, Math.max(0.1, newScale))
                         timeline.setOverlayScale(pipItem.cid, newScale)
@@ -320,11 +320,11 @@ Item {
             // Top-right resize handle
             Rectangle {
                 visible: pipItem.cid === root.selectedClipId && pipItem.width > 20
-                width: 14; height: 14
+                width: 14 * Theme.scale; height: 14 * Theme.scale
                 anchors.top: parent.top
                 anchors.right: parent.right
-                anchors.topMargin: -3
-                anchors.rightMargin: -3
+                anchors.topMargin: -3 * Theme.scale
+                anchors.rightMargin: -3 * Theme.scale
                 radius: 3
                 color: Theme.accent
                 z: 10
@@ -339,7 +339,7 @@ Item {
                         if (!pressed) return
                         var dx = m.x - startX
                         var dy = m.y - startY
-                        var delta = Math.max(dx, -dy) / 20
+                        var delta = Math.max(dx, -dy) / (20 / Theme.scale)
                         var newScale = timeline.overlayScale(pipItem.cid) + delta * 0.01
                         newScale = Math.min(5, Math.max(0.1, newScale))
                         timeline.setOverlayScale(pipItem.cid, newScale)
@@ -350,11 +350,11 @@ Item {
             // Bottom-left resize handle
             Rectangle {
                 visible: pipItem.cid === root.selectedClipId && pipItem.width > 20
-                width: 14; height: 14
+                width: 14 * Theme.scale; height: 14 * Theme.scale
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
-                anchors.bottomMargin: -3
-                anchors.leftMargin: -3
+                anchors.bottomMargin: -3 * Theme.scale
+                anchors.leftMargin: -3 * Theme.scale
                 radius: 3
                 color: Theme.accent
                 z: 10
@@ -369,7 +369,7 @@ Item {
                         if (!pressed) return
                         var dx = m.x - startX
                         var dy = m.y - startY
-                        var delta = Math.max(-dx, dy) / 20
+                        var delta = Math.max(-dx, dy) / (20 / Theme.scale)
                         var newScale = timeline.overlayScale(pipItem.cid) + delta * 0.01
                         newScale = Math.min(5, Math.max(0.1, newScale))
                         timeline.setOverlayScale(pipItem.cid, newScale)

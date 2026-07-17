@@ -11,7 +11,15 @@ ApplicationWindow {
     width: 1280
     height: 800
     title: "Ghita Edit"
-    color: Theme.bg
+    color: Theme.effectiveBg
+    flags: Qt.FramelessWindowHint  // Custom Windows-style chrome
+    minimumWidth: 960
+    minimumHeight: 540
+
+    // Initialize Theme scale from the primary screen's device pixel ratio.
+    Component.onCompleted: {
+        Theme.scale = Screen.devicePixelRatio
+    }
 
     property bool playing: mediaEngine ? mediaEngine.playing : false
     property int exportProgress: 0
@@ -613,8 +621,8 @@ ApplicationWindow {
                                         handle: Rectangle {
                                             x: slider.leftPadding + slider.visualPosition * (slider.availableWidth - width)
                                             y: slider.topPadding + slider.availableHeight / 2 - height / 2
-                                            width: 14
-                                            height: 14
+                                            width: 14 * Theme.scale
+                                            height: 14 * Theme.scale
                                             radius: 7
                                             color: Theme.textPrimary
                                             border.color: Qt.darker(Theme.textPrimary, 1.2)
@@ -630,7 +638,7 @@ ApplicationWindow {
                                         Repeater {
                                             model: [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0]
                                             Rectangle {
-                                                width: 56; height: 24
+                                                width: 56 * Theme.scale; height: 24 * Theme.scale
                                                 radius: Theme.radiusSmall
                                                 color: btnMouse.pressed ? Theme.borderLight :
                                                        (appState && Math.abs(timeline.playbackSpeed(appState.selectedClipId) - modelData) < 0.001)
@@ -687,7 +695,7 @@ ApplicationWindow {
                                                 anchors.centerIn: parent
                                                 text: "✓"
                                                 color: Theme.textPrimary
-                                                font.pixelSize: 10
+                                                font.pixelSize: Theme.fontSizeXs
                                                 visible: pcCheckbox
                                             }
 
@@ -740,7 +748,7 @@ ApplicationWindow {
                                                 anchors.centerIn: parent
                                                 text: "✓"
                                                 color: Theme.textPrimary
-                                                font.pixelSize: 10
+                                                font.pixelSize: Theme.fontSizeXs
                                                 visible: fx.normalize
                                             }
 
@@ -808,7 +816,7 @@ ApplicationWindow {
                                     Repeater {
                                         model: filterCategories
                                         delegate: Rectangle {
-                                            height: 24
+                                            height: 24 * Theme.scale
                                             radius: Theme.radiusSmall
                                             color: filterCatMouse.pressed ? Theme.borderLight :
                                                   (filtersView.currentCategory === modelData ? Theme.accent : Theme.surfaceBg)
@@ -838,9 +846,9 @@ ApplicationWindow {
                                 GridView {
                                     id: filtersView
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 140
+                                    Layout.preferredHeight: 140 * Theme.scale
                                     cellWidth: (filtersView.width) / 3
-                                    cellHeight: 50
+                                    cellHeight: 50 * Theme.scale
                                     clip: true
                                     property string currentCategory: "All"
                                     property string activeFilter: ""
@@ -859,8 +867,8 @@ ApplicationWindow {
 
                                         // Color swatch
                                         Rectangle {
-                                            width: 16; height: 16; radius: 8
-                                            anchors.top: parent.top; anchors.topMargin: 5
+                                            width: 16 * Theme.scale; height: 16 * Theme.scale; radius: 8 * Theme.scale
+                                            anchors.top: parent.top; anchors.topMargin: 5 * Theme.scale
                                             anchors.horizontalCenter: parent.horizontalCenter
                                             color: modelData.swatch
                                         }
@@ -990,12 +998,12 @@ ApplicationWindow {
 
                                     ListView {
                                         Layout.fillWidth: true
-                                        Layout.preferredHeight: Math.min(savedFilters.length * 28, 100)
+                                        Layout.preferredHeight: Math.min(savedFilters.length * 28 * Theme.scale, 100 * Theme.scale)
                                         clip: true
                                         model: savedFilters
                                         delegate: Rectangle {
                                             width: parent ? parent.width : 200
-                                            height: 28
+                                            height: 28 * Theme.scale
                                             color: smMouse.pressed ? Theme.borderLight : Theme.surfaceBg
 
                                             Label {
@@ -1093,7 +1101,7 @@ ApplicationWindow {
 
                                     Rectangle {
                                         width: parent ? parent.width : 200
-                                        height: 48
+                                        height: 48 * Theme.scale
                                         color: Theme.surfaceBg
                                         radius: Theme.radiusSmall
                                         border.color: Theme.border
@@ -1112,7 +1120,7 @@ ApplicationWindow {
                                                 // Effect icon
                                                 Label {
                                                     text: fx.effectIcon(index)
-                                                    font.pixelSize: 16
+                                                    font.pixelSize: Theme.fontSizeMd
                                                     Layout.preferredWidth: 20
                                                 }
 
@@ -1217,7 +1225,7 @@ ApplicationWindow {
                                             spacing: 0
 
                                             Rectangle {
-                                                width: 18; height: 18
+                                                width: 18 * Theme.scale; height: 18 * Theme.scale
                                                 radius: 3
                                                 color: upMouse.pressed ? Theme.borderLight : "transparent"
                                                 MouseArea {
@@ -1230,12 +1238,12 @@ ApplicationWindow {
                                                     anchors.centerIn: parent
                                                     text: "\u25B2"
                                                     color: Theme.textSecondary
-                                                    font.pixelSize: 8
+                                                    font.pixelSize: Theme.fontSizeXs
                                                 }
                                             }
 
                                             Rectangle {
-                                                width: 18; height: 18
+                                                width: 18 * Theme.scale; height: 18 * Theme.scale
                                                 radius: 3
                                                 color: downMouse.pressed ? Theme.borderLight : "transparent"
                                                 MouseArea {
@@ -1248,12 +1256,12 @@ ApplicationWindow {
                                                     anchors.centerIn: parent
                                                     text: "\u25BC"
                                                     color: Theme.textSecondary
-                                                    font.pixelSize: 8
+                                                    font.pixelSize: Theme.fontSizeXs
                                                 }
                                             }
 
                                             Rectangle {
-                                                width: 18; height: 18
+                                                width: 18 * Theme.scale; height: 18 * Theme.scale
                                                 radius: 3
                                                 color: remMouse.pressed ? Theme.error : "transparent"
                                                 MouseArea {
@@ -1266,7 +1274,7 @@ ApplicationWindow {
                                                     anchors.centerIn: parent
                                                     text: "\u2715"
                                                     color: Theme.textSecondary
-                                                    font.pixelSize: 10
+                                                    font.pixelSize: Theme.fontSizeXs
                                                 }
                                             }
                                         }
@@ -1418,7 +1426,7 @@ ApplicationWindow {
                                     spacing: Theme.spacingXs
 
                                     Rectangle {
-                                        width: 80; height: 28
+                                        width: 80 * Theme.scale; height: 28 * Theme.scale
                                         radius: Theme.radiusSmall
                                         color: addBtnMouse.pressed ? Theme.borderLight : Theme.surfaceBg
                                         border.color: Theme.border; border.width: 1
@@ -1440,7 +1448,7 @@ ApplicationWindow {
                                     }
 
                                     Rectangle {
-                                        width: 80; height: 28
+                                        width: 80 * Theme.scale; height: 28 * Theme.scale
                                         radius: Theme.radiusSmall
                                         color: addBtnMouse2.pressed ? Theme.borderLight : Theme.surfaceBg
                                         border.color: Theme.border; border.width: 1
@@ -1462,7 +1470,7 @@ ApplicationWindow {
                                     }
 
                                     Rectangle {
-                                        width: 80; height: 28
+                                        width: 80 * Theme.scale; height: 28 * Theme.scale
                                         radius: Theme.radiusSmall
                                         color: addBtnMouse3.pressed ? Theme.borderLight : Theme.surfaceBg
                                         border.color: Theme.border; border.width: 1
@@ -1484,7 +1492,7 @@ ApplicationWindow {
                                     }
 
                                     Rectangle {
-                                        width: 80; height: 28
+                                        width: 80 * Theme.scale; height: 28 * Theme.scale
                                         radius: Theme.radiusSmall
                                         color: addBtnMouse4.pressed ? Theme.borderLight : Theme.surfaceBg
                                         border.color: Theme.border; border.width: 1
@@ -1630,7 +1638,7 @@ ApplicationWindow {
                                                 anchors.centerIn: parent
                                                 text: "L"
                                                 color: Theme.textPrimary
-                                                font.pixelSize: 9
+                                                font.pixelSize: Theme.fontSizeXs
                                                 font.bold: true
                                                 visible: appState && timeline.overlayCropLockAspect(appState.selectedClipId)
                                             }
@@ -1672,7 +1680,7 @@ ApplicationWindow {
                                                 anchors.centerIn: parent
                                                 text: "+"
                                                 color: Theme.textPrimary
-                                                font.pixelSize: 10
+                                                font.pixelSize: Theme.fontSizeXs
                                                 visible: appState && timeline.overlayCropSnapCenter(appState.selectedClipId)
                                             }
 
@@ -1995,7 +2003,7 @@ ApplicationWindow {
                                 // History list
                                 ListView {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: Math.min(historyModel.count * 28 + 10, 200)
+                                    Layout.preferredHeight: Math.min(historyModel.count * 28 * Theme.scale + 10 * Theme.scale, 200 * Theme.scale)
                                     clip: true
                                     model: timeline ? timeline.undoHistory() : []
                                     ScrollBar.vertical: ScrollBar {
@@ -2281,8 +2289,8 @@ ApplicationWindow {
             handle: Rectangle {
                 x: slider.leftPadding + slider.visualPosition * (slider.availableWidth - width)
                 y: slider.topPadding + slider.availableHeight / 2 - height / 2
-                width: 14
-                height: 14
+                width: 14 * Theme.scale
+                height: 14 * Theme.scale
                 radius: 7
                 color: Theme.textPrimary
                 border.color: Qt.darker(Theme.textPrimary, 1.2)

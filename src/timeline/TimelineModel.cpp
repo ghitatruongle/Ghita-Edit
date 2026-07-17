@@ -1023,6 +1023,10 @@ void TimelineModel::syncTrackStates(int minSize) {
 }
 
 void TimelineModel::addTrack(TrackType type) {
+    undoStack_.push(new AddTrackCommand(this, type));
+}
+
+void TimelineModel::addTrackDirect(TrackType type) {
     TrackInfo info;
     info.type = type;
     info.visible = true;
@@ -1064,6 +1068,10 @@ void TimelineModel::addTrack(TrackType type) {
 }
 
 void TimelineModel::removeTrack(int trackIndex) {
+    undoStack_.push(new RemoveTrackCommand(this, trackIndex));
+}
+
+void TimelineModel::removeTrackDirect(int trackIndex) {
     if (trackIndex < 0 || trackIndex >= tracks_.size()) return;
     if (tracks_.size() <= 1) {
         qWarning() << "[Timeline] Cannot remove the last track";

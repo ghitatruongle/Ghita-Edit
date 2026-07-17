@@ -47,6 +47,7 @@ QByteArray ScrubEngine::scrubTo(qint64 targetMs, int& outWidth, int& outHeight) 
         outHeight = 0;
         return {};
     }
+    currentPositionMs_ = targetMs;
 
     // Decode exactly one video frame.
     VideoFrameQueue videoQ;
@@ -94,25 +95,20 @@ QByteArray ScrubEngine::stepFrame(int direction, int& outWidth, int& outHeight) 
         }
     }
 
-    // Backward stepping: seek to a slightly earlier position and decode.
-    // This is approximate since Decoder doesn't support frame-by-frame reverse.
-    // We seek back by 1/fps seconds and grab the next frame.
+    // Backward stepping: seek back by one frame duration and decode.
     if (direction < 0) {
-        // Estimate current PTS from last known position.
-        // For backward step, we seek back by one frame duration.
         int64_t frameDuration = (fps_ > 0) ? (1000 / fps_) : 33;
-        // We need to track current position; for simplicity, decode the current
-        // decoder state backwards by seeking to a slightly earlier point.
-        // Since we don't track current position in scrub, we use decodeStep
-        // to advance and capture frames. For backward, we seek back 1 frame.
-        // This requires knowing the current position, so we approximate.
-        // Best effort: just try to decode one frame (same as forward).
-        while (decoder_->decodeStep(videoQ, audioQ)) {
-            if (videoQ.try_pop(frame)) {
-                outWidth = frame.width;
-                outHeight = frame.height;
-                return QByteArray(reinterpret_cast<const char*>(frame.rgba.data()),
-                                  static_cast<int>(frame.rgba.size()));
+        int64_t seekPos = currentPositionMs_ - frameDuration;
+        if (seekPos < 0) seekPos = 0;
+        if (decoder_->seek(seekPos)) {
+            currentPositionMs_ = seekPos;
+            while (decoder_->decodeStep(videoQ, audioQ)) {
+                if (videoQ.try_pop(frame)) {
+                    outWidth = frame.width;
+                    outHeight = frame.height;
+                    return QByteArray(reinterpret_cast<const char*>(frame.rgba.data()),
+                                      static_cast<int>(frame.rgba.size()));
+                }
             }
         }
     }

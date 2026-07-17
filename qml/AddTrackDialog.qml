@@ -17,8 +17,8 @@ Rectangle {
 
     property int preferredTrackType: 0  // default selection
 
-    width: 320
-    height: 260
+    width: 320 * Theme.scale
+    height: 260 * Theme.scale
     radius: Theme.radiusMedium
     color: Theme.surfaceBg
     border.color: Theme.border
@@ -88,7 +88,7 @@ Rectangle {
                         Label {
                             anchors.centerIn: parent
                             text: "\uD83C\uDFAC"
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.fontSizeMd
                         }
                     }
 
@@ -127,12 +127,6 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         root.preferredTrackType = 0
-                        videoOption.color = Theme.accent + "22"
-                        videoOption.border.color = Theme.accent
-                        audioOption.color = Theme.panelBg
-                        audioOption.border.color = Theme.border
-                        overlayOption.color = Theme.panelBg
-                        overlayOption.border.color = Theme.border
                     }
                 }
             }
@@ -161,7 +155,7 @@ Rectangle {
                         Label {
                             anchors.centerIn: parent
                             text: "\uD83C\uDFB5"
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.fontSizeMd
                         }
                     }
 
@@ -200,12 +194,6 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         root.preferredTrackType = 1
-                        audioOption.color = Theme.accent + "22"
-                        audioOption.border.color = Theme.accent
-                        videoOption.color = Theme.panelBg
-                        videoOption.border.color = Theme.border
-                        overlayOption.color = Theme.panelBg
-                        overlayOption.border.color = Theme.border
                     }
                 }
             }
@@ -234,7 +222,7 @@ Rectangle {
                         Label {
                             anchors.centerIn: parent
                             text: "\u2728"
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.fontSizeMd
                         }
                     }
 
@@ -273,12 +261,6 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         root.preferredTrackType = 2
-                        overlayOption.color = Theme.accent + "22"
-                        overlayOption.border.color = Theme.accent
-                        videoOption.color = Theme.panelBg
-                        videoOption.border.color = Theme.border
-                        audioOption.color = Theme.panelBg
-                        audioOption.border.color = Theme.border
                     }
                 }
             }

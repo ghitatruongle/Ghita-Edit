@@ -46,7 +46,7 @@ Rectangle {
 
                 Label {
                     text: "\uD83D\uDCF8"
-                    font.pixelSize: 48
+                    font.pixelSize: Theme.fontSizeLg * 3
                     Layout.alignment: Qt.AlignHCenter
                 }
 
@@ -138,11 +138,37 @@ Rectangle {
         }
     }
 
+    // Backend status indicator — shows "HW: NVDEC" or "SW: CPU"
+    // Based on whether hardware acceleration is active.
+    Rectangle {
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.margins: Theme.spacingSm
+        width: backendLabel.contentWidth + 16
+        height: 22
+        radius: Theme.radiusSmall
+        color: backendLabel.text.startsWith("HW:") ? "#aa00b894" : "#bb555555"
+        visible: root.hasFrame && mediaEngine
+
+        Label {
+            id: backendLabel
+            anchors.centerIn: parent
+            text: mediaEngine && mediaEngine.backendStatus !== ""
+                  ? mediaEngine.backendStatus
+                  : "SW: CPU"
+            color: "#ffffff"
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeXs
+            font.bold: true
+        }
+    }
+
     // Current preset badge
     Rectangle {
         anchors.top: parent.top
-        anchors.left: effectIndicator.right
+        anchors.left: parent.left
         anchors.margins: Theme.spacingSm
+        anchors.topMargin: 46
         width: presetBadgeLabel.contentWidth + 16
         height: 24
         radius: Theme.radiusSmall
@@ -346,7 +372,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: mediaEngine && mediaEngine.playing ? "\u23F8" : "\u25B6"
                     color: Theme.textPrimary
-                    font.pixelSize: 14
+                    font.pixelSize: Theme.fontSizeMd
                 }
 
                 MouseArea {
@@ -389,7 +415,7 @@ Rectangle {
             Label {
                 text: "\uD83D\uDD0A"
                 color: Theme.textPrimary
-                font.pixelSize: 14
+                font.pixelSize: Theme.fontSizeMd
             }
             Rectangle {
                 Layout.preferredWidth: 60
@@ -418,7 +444,7 @@ Rectangle {
                         ? mediaEngine.playbackSpeed.toFixed(1) + "x"
                         : "\u26A1"
                     color: Theme.textPrimary
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSizeXs
                     font.bold: true
                 }
 

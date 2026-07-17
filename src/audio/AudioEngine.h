@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QString>
 #include <array>
+#include <atomic>
 
 extern "C" {
 #include <portaudio.h>
@@ -77,7 +78,7 @@ private:
     std::array<float, kMaxTracks> trackGain_ = {};    // 0.0..2.0 (linear)
     std::array<float, kMaxTracks> trackPan_  = {};    // -1.0..1.0
     std::array<bool,  kMaxTracks> trackMuted_ = {};   // true = silent
-    float masterGain_ = 1.0f;
+    std::atomic<float> masterGain_{1.0f};
 };
 
 } // namespace ghita::audio

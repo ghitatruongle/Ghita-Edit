@@ -138,6 +138,7 @@ struct ClipSrc {
     AVRational inTb{1, 1};
     SwsContext* sws = nullptr;
     AVFrame* frame = nullptr;
+    qint64 _cursorSrcMs = 0;  // monotonic decode cursor for sequential frameAt
 
     ClipSrc(const ClipInfo& c, int w, int h) : ci(c), outW(w), outH(h) { open(); }
     ~ClipSrc() { close(); }
@@ -171,12 +172,30 @@ struct ClipSrc {
     // (ms relative to the clip's timeline start), scaled by playback speed.
     // When speed > 1.0, the source region is traversed faster (less source time
     // per timeline ms), so the target source time is: srcInMs + localMs * speed.
+    //
+    // Optimisation: instead of calling av_seek_frame on every call (which is O(seeks)
+    // and causes severe stutter for high-frame-rate export), we maintain a monotonic
+    // cursor (_cursorSrcMs) and advance it by decoding frames sequentially, dropping
+    // any frame whose source time is before the target.
     AVFrame* frameAt(qint64 localMs, double speed = 1.0) {
         if (!dec) return nullptr;
-        const qint64 target = ci.srcInMs + static_cast<qint64>(localMs * speed);
-        const int64_t seekTs = av_rescale_q(target, AVRational{1, 1000}, inTb);
-        av_seek_frame(fmt, vIdx, seekTs, AVSEEK_FLAG_BACKWARD);
-        avcodec_flush_buffers(dec);
+
+        // Clamp the target to the clip's valid source range.
+        // Use double for the intermediate multiply to avoid qint64 overflow
+        // when localMs is large and speed >> 1.0.
+        const double speedMs = static_cast<double>(localMs) * speed;
+        const qint64 rawTarget = ci.srcInMs + static_cast<qint64>(speedMs);
+        const qint64 target = qBound(ci.srcInMs, rawTarget, ci.srcOutMs);
+
+        // If the requested target moved backwards (e.g. due to speed=0.5),
+        // fall back to a single seek so we don't have to rewind the buffer.
+        if (target < _cursorSrcMs) {
+            _cursorSrcMs = 0;
+            const int64_t seekTs = av_rescale_q(target, AVRational{1, 1000}, inTb);
+            av_seek_frame(fmt, vIdx, seekTs, AVSEEK_FLAG_BACKWARD);
+            avcodec_flush_buffers(dec);
+        }
+
         AVPacket* pkt = av_packet_alloc();
         AVFrame* out = av_frame_alloc();
         out->format = AV_PIX_FMT_YUV420P;
@@ -185,6 +204,7 @@ struct ClipSrc {
         av_frame_get_buffer(out, 0);
         bool got = false;
         AVRational msTb{1, 1000};
+
         while (av_read_frame(fmt, pkt) >= 0) {
             if (pkt->stream_index != vIdx) { av_packet_unref(pkt); continue; }
             avcodec_send_packet(dec, pkt);
@@ -192,17 +212,26 @@ struct ClipSrc {
                 int64_t ts = frame->pts;
                 if (ts != AV_NOPTS_VALUE) {
                     int64_t fms = av_rescale_q(ts, inTb, msTb);
-                    if (fms < target) { av_frame_unref(frame); continue; }
+                    if (fms < _cursorSrcMs) { av_frame_unref(frame); av_packet_unref(pkt); continue; }
+                    if (fms > ci.srcOutMs) {
+                        av_packet_unref(pkt);
+                        goto done;
+                    }
+                    if (fms >= target) {
+                        sws_scale(sws, frame->data, frame->linesize, 0, frame->height,
+                                  out->data, out->linesize);
+                        _cursorSrcMs = fms;
+                        got = true;
+                        av_frame_unref(frame);
+                        av_packet_unref(pkt);
+                        goto done;
+                    }
                 }
-                sws_scale(sws, frame->data, frame->linesize, 0, frame->height,
-                          out->data, out->linesize);
                 av_frame_unref(frame);
-                got = true;
-                break;
             }
             av_packet_unref(pkt);
-            if (got) break;
         }
+    done:
         av_packet_free(&pkt);
         if (!got) { av_frame_free(&out); return nullptr; }
         return out;
@@ -348,8 +377,6 @@ bool Exporter::runExport(TimelineModel* model, const QString& outputPath) {
         qWarning() << "[Exporter] sws_getContext failed";
         av_frame_free(&rgbaFrame);
         av_frame_free(&yuvFrame);
-        sws_freeContext(toRgba);
-        sws_freeContext(toYuv);
         avio_closep(&outFmt->pb);
         avformat_free_context(outFmt);
         return false;
@@ -419,6 +446,9 @@ bool Exporter::runExport(TimelineModel* model, const QString& outputPath) {
                     if (blended) {
                         av_frame_free(&baseYuv);
                         baseYuv = blended;
+                    } else {
+                        av_frame_free(&baseYuv);
+                        baseYuv = nullptr;
                     }
                     av_frame_free(&bYuv);
                 }

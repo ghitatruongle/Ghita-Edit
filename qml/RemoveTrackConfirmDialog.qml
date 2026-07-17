@@ -17,8 +17,8 @@ Rectangle {
     property string trackName: "Unknown"
     property bool hasClips: false
 
-    width: 340
-    height: hasClips ? 220 : 180
+    width: 340 * Theme.scale
+    height: hasClips ? 220 * Theme.scale : 180 * Theme.scale
     radius: Theme.radiusMedium
     color: Theme.surfaceBg
     border.color: Theme.border

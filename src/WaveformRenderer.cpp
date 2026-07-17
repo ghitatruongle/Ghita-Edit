@@ -82,6 +82,7 @@ QVector<float> WaveformRenderer::decodeAudioToPCM(const QString &mediaPath)
 
     // Setup resampler: decode format -> interleaved float 48 kHz stereo.
     SwrContext *swrCtx = swr_alloc();
+    av_opt_set_int(swrCtx, "resampler", SWR_RESAMPLE_METHOD_SINC, 0);
     av_opt_set_chlayout(swrCtx, "in_chlayout", &codecCtx->ch_layout, 0);
     av_opt_set_int(swrCtx, "in_sample_rate", codecCtx->sample_rate, 0);
     av_opt_set_sample_fmt(swrCtx, "in_sample_fmt", codecCtx->sample_fmt, 0);

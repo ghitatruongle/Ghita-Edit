@@ -10,8 +10,8 @@ Dialog {
     title: "Export"
     modal: true
     standardButtons: Dialog.NoButton
-    width: 420
-    height: 360
+    width: 420 * Theme.scale
+    height: 360 * Theme.scale
 
     signal beginExport(string path, int w, int h, int crf)
 

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(GhitaEdit
-    VERSION 0.1.5
+    VERSION 0.0.0
     DESCRIPTION "Ghita Edit - high-performance video/audio editor (C++20 + Qt6 QML + FFmpeg)"
     LANGUAGES CXX)
 
@@ -25,16 +25,18 @@ option(GHITA_WERROR "Treat compiler warnings as errors" OFF)
 include(cmake/GhitaDependencies.cmake)
 
 # ---- Hardware acceleration (opt-in) ----
-# These backends are NOT wired yet (HW frame upload lands in a later step), so
-# they are disabled by default to avoid a misleading "enabled" state.
 option(GHITA_HW_ACCEL "Enable hardware decode acceleration (NVDEC/QuickSync/AMF/VA-API)" OFF)
 if(GHITA_HW_ACCEL)
-    add_compile_definitions(
-        GHITA_HW_NVDEC
-        GHITA_HW_QUICKSYNC
-        GHITA_HW_AMF
-        GHITA_HW_VAAPI
-    )
+    # Select platform-appropriate backends.
+    # On Windows prefer NVDEC; on Linux prefer VA-API; also enable others as fallbacks.
+    add_compile_definitions(GHITA_HW_ACCEL_ENABLED)
+    if(MSVC OR WIN32)
+        add_compile_definitions(GHITA_HW_NVDEC GHITA_HW_QUICKSYNC)
+    elseif(UNIX AND NOT APPLE)
+        add_compile_definitions(GHITA_HW_VAAPI GHITA_HW_AMF)
+    else()
+        add_compile_definitions(GHITA_HW_NVDEC GHITA_HW_VAAPI)
+    endif()
 endif()
 
 # ---- Sources ----
@@ -70,6 +72,7 @@ set(GHITA_SOURCES
     src/MediaBinModel.cpp
     src/ThumbnailExtractor.cpp
     src/WaveformRenderer.cpp
+    src/platform/WindowsPlatformHelper.cpp
 )
 
 set(GHITA_HEADERS
@@ -109,9 +112,14 @@ set(GHITA_HEADERS
     src/MediaBinModel.h
     src/ThumbnailExtractor.h
     src/WaveformRenderer.h
+    src/platform/WindowsPlatformHelper.h
 )
 
 # ---- Executable ----
+if(WIN32)
+    list(APPEND GHITA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/GhitaEdit.rc")
+endif()
+
 add_executable(GhitaEdit ${GHITA_SOURCES} ${GHITA_HEADERS})
 
 target_include_directories(GhitaEdit PRIVATE
@@ -211,6 +219,10 @@ endif()
 # QML resources: embed qml/ as Qt resource so the binary is self-contained.
 set(GHITA_QML_QRC ${CMAKE_CURRENT_BINARY_DIR}/ghita_qml.qrc)
 file(WRITE ${GHITA_QML_QRC} "<RCC>\n  <qresource prefix=\"/\">\n")
+# NOTE: file(GLOB) is used here intentionally. QML files are managed as a
+# batch by windeployqt / the QRC generator at configure time. Adding or
+# removing *.qml files requires a CMake reconfigure, which is acceptable
+# because the QRC file is regenerated from scratch each time.
 file(GLOB GHITA_QML_FILES "${CMAKE_CURRENT_SOURCE_DIR}/qml/*.qml")
 foreach(qmlfile ${GHITA_QML_FILES})
     get_filename_component(qmlname ${qmlfile} NAME)
@@ -225,9 +237,20 @@ endif()
 file(APPEND ${GHITA_QML_QRC} "  </qresource>\n</RCC>\n")
 target_sources(GhitaEdit PRIVATE ${GHITA_QML_QRC})
 
-	if(WIN32)
-	    set_target_properties(GhitaEdit PROPERTIES
-	        WIN32_EXECUTABLE TRUE)
+# ---- Windows-specific packaging ----
+if(WIN32)
+    set_target_properties(GhitaEdit PROPERTIES
+        WIN32_EXECUTABLE TRUE)
+
+    # Link Windows platform libraries for native integrations.
+    target_link_libraries(GhitaEdit PRIVATE
+        shobjidl_core
+        pathcch
+        ncrypt
+        ole32
+        oleaut32
+        uuid
+    )
 
     # Deploy Qt + QML modules next to the executable so the app is runnable
     # standalone. --qmldir points windeployqt at the QML sources (they are
@@ -241,6 +264,22 @@ target_sources(GhitaEdit PRIVATE ${GHITA_QML_QRC})
                 --no-translations
                 "$<TARGET_FILE:GhitaEdit>"
             COMMENT "Deploying Qt + QML via windeployqt")
+    endif()
+
+    # ---- NSIS installer target ----
+    find_program(NSIS_MAKENSISScript makensis)
+    if(NSIS_MAKENSISScript)
+        add_custom_target(package
+            COMMAND "${NSIS_MAKENSISScript}"
+                /DRELEASE_DIR="${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/NSIS.nsi"
+            COMMENT "Building NSIS installer..."
+            DEPENDS GhitaEdit
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+        message(STATUS "[GhitaEdit] NSIS installer target 'make package' enabled")
+    else()
+        message(STATUS "[GhitaEdit] NSIS not found -- 'make package' target disabled. Install NSIS to enable.")
     endif()
 endif()
 

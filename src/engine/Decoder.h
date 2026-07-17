@@ -19,8 +19,8 @@ namespace ghita::engine {
 // video (to RGBA) and audio (to float PCM) frames into the queues.
 //
 // M0: software decode path is implemented (most portable, works on any GPU).
-// The HW backend selection API exists but defaults to software for M0 to
-// keep the pipeline deterministic; NVDEC/VA-API upload lands in a later step.
+// When GHITA_HW_ACCEL is enabled, hardware decode is attempted first
+// (NVDEC on Windows, VA-API on Linux) with graceful fallback to software.
 class Decoder {
 public:
     Decoder();
@@ -28,9 +28,12 @@ public:
 
     bool open(std::string path);
     HWBackend selectBackend() const;
+    HWBackend currentBackend() const { return hwBackend_; }
 
     // Decode one packet worth of frames (video and/or audio) and push them
     // into the respective queues. Returns false at end of stream or on error.
+    // When hardware decode is active, frames may carry a GPU texture handle
+    // instead of an RGBA pixel buffer.
     bool decodeStep(VideoFrameQueue& videoQ, AudioFrameQueue& audioQ);
 
     // Seek to a position in milliseconds. Flushes codec buffers and resets EOF.
@@ -55,6 +58,7 @@ private:
     bool openStream(int index, AVCodecContext*& ctx);
     bool decodeVideoFrame(AVFrame* frame, VideoFrameQueue& videoQ);
     bool decodeAudioFrame(AVFrame* frame, AudioFrameQueue& audioQ);
+    bool tryHardwareDecode(AVFrame* frame, VideoFrameQueue& videoQ);
 
     std::string path_;
     AVFormatContext* fmtCtx_ = nullptr;
@@ -72,6 +76,11 @@ private:
     AVFrame* frame_ = nullptr;
     bool eof_ = false;
     int64_t pictureCounter_ = 0;
+
+    // Hardware acceleration state.
+    HWBackend hwBackend_ = HWBackend::None;
+    AVBufferRef* hwDeviceCtx_ = nullptr;  // hardware device context (NVDEC/VAAPI)
+    bool hwInitFailed_ = false;           // true if HW init tried and failed
 };
 
 } // namespace ghita::engine

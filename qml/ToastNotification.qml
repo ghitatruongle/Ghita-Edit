@@ -107,7 +107,7 @@ Rectangle {
                     Text {
                         text: toastItem.toastIcon(toastItem.type)
                         color: "#ffffff"
-                        font.pixelSize: 14
+                        font.pixelSize: Theme.fontSizeMd
                         font.bold: true
                         Layout.preferredWidth: 16
                         Layout.alignment: Qt.AlignVCenter

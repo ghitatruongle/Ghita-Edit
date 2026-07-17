@@ -47,6 +47,13 @@ bool Application::initialize() {
     // Wire FxController into PreviewSurface for real-time effect preview.
     qmlEngine_.rootContext()->setContextProperty("fxControllerPtr", &fxController_);
 
+    // Expose the exporter's progress signal so QML can drive the taskbar
+    // progress bar via the WindowsPlatformHelper.
+    QObject::connect(&exporter_, &export_::Exporter::progressChanged,
+                     this, &Application::exportProgressUpdated);
+    QObject::connect(&exporter_, &export_::Exporter::exportFinished,
+                     this, &Application::exportFinishedSignal);
+
     // Register the OpenGL preview surface as a QML type.
     qmlRegisterType<ghita::render::PreviewSurface>("Ghita.Render", 1, 0, "PreviewSurface");
 

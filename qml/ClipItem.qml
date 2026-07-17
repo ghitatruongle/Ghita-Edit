@@ -81,7 +81,7 @@ Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            anchors.topMargin: 4
+            anchors.topMargin: 4 * Theme.scale
             color: Theme.textPrimary
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
@@ -94,7 +94,7 @@ Rectangle {
         Label {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 4
+            anchors.bottomMargin: 4 * Theme.scale
             color: Qt.rgba(1, 1, 1, 0.7)
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
@@ -110,11 +110,11 @@ Rectangle {
         Rectangle {
             anchors.right: parent.right
             anchors.top: parent.top
-            anchors.topMargin: 2
-            anchors.rightMargin: 2
-            width: speedLabel.width + 8
-            height: 16
-            radius: 4
+            anchors.topMargin: 2 * Theme.scale
+            anchors.rightMargin: 2 * Theme.scale
+            width: speedLabel.width + 8 * Theme.scale
+            height: 16 * Theme.scale
+            radius: 4 * Theme.scale
             color: "#cc000000"
             visible: root.playbackSpeed >= 1.25 || root.playbackSpeed <= 0.75
 
@@ -133,11 +133,11 @@ Rectangle {
         Rectangle {
             anchors.right: parent.right
             anchors.top: parent.top
-            anchors.topMargin: 2
-            anchors.rightMargin: 2
-            width: pipBadgeLabel.width + 8
-            height: 16
-            radius: 4
+            anchors.topMargin: 2 * Theme.scale
+            anchors.rightMargin: 2 * Theme.scale
+            width: pipBadgeLabel.width + 8 * Theme.scale
+            height: 16 * Theme.scale
+            radius: 4 * Theme.scale
             color: "#cc000000"
             visible: root.isPip
 
@@ -157,10 +157,10 @@ Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 2
-            anchors.leftMargin: 4
-            anchors.rightMargin: 4
-            height: 16
+            anchors.bottomMargin: 2 * Theme.scale
+            anchors.leftMargin: 4 * Theme.scale
+            anchors.rightMargin: 4 * Theme.scale
+            height: 16 * Theme.scale
             visible: root.isAudio && clipWidth > 40 && envelope.length > 0
             envelope: root.envelope
         }
@@ -169,17 +169,17 @@ Rectangle {
     // ---- Left Trim Handle ----
     Rectangle {
         id: leftHandle
-        width: 6
+        width: 6 * Theme.scale
         height: parent.height
-        radius: 2
+        radius: 2 * Theme.scale
         color: leftDrag.pressed ? "#ffffff" : Qt.rgba(1, 1, 1, 0.6)
         anchors.left: parent.left
-        anchors.leftMargin: -3
+        anchors.leftMargin: -3 * Theme.scale
         visible: clipWidth > 20
 
         // Handle grip lines
-        Rectangle { width: 1; height: 12; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: -3 }
-        Rectangle { width: 1; height: 12; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: 3 }
+        Rectangle { width: 1 * Theme.scale; height: 12 * Theme.scale; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: -3 * Theme.scale }
+        Rectangle { width: 1 * Theme.scale; height: 12 * Theme.scale; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: 3 * Theme.scale }
 
         MouseArea {
             id: leftDrag
@@ -205,17 +205,17 @@ Rectangle {
     // ---- Right Trim Handle ----
     Rectangle {
         id: rightHandle
-        width: 6
+        width: 6 * Theme.scale
         height: parent.height
-        radius: 2
+        radius: 2 * Theme.scale
         color: rightDrag.pressed ? "#ffffff" : Qt.rgba(1, 1, 1, 0.6)
         anchors.right: parent.right
-        anchors.rightMargin: -3
+        anchors.rightMargin: -3 * Theme.scale
         visible: clipWidth > 20
 
         // Handle grip lines
-        Rectangle { width: 1; height: 12; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: -3 }
-        Rectangle { width: 1; height: 12; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: 3 }
+        Rectangle { width: 1 * Theme.scale; height: 12 * Theme.scale; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: -3 * Theme.scale }
+        Rectangle { width: 1 * Theme.scale; height: 12 * Theme.scale; color: Qt.rgba(0, 0, 0, 0.3); anchors.centerIn: parent; anchors.verticalCenterOffset: 3 * Theme.scale }
 
         MouseArea {
             id: rightDrag

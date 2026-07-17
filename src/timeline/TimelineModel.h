@@ -92,6 +92,10 @@ public:
     Q_INVOKABLE void removeTrack(int trackIndex);
     Q_INVOKABLE TrackType trackType(int trackIndex) const;
 
+    // Direct track manipulation (called by undo commands, bypasses undo stack).
+    void addTrackDirect(TrackType type);
+    void removeTrackDirect(int trackIndex);
+
     // Check if a track has any clips.
     Q_INVOKABLE bool trackHasClips(int trackIndex) const;
 
@@ -299,9 +303,6 @@ signals:
     void trackAdded(int index);
     void trackRemoved(int index);
 
-protected:
-    void recalcDuration();
-
 private:
     QVector<Clip> clips_;
     QVector<Transition> transitions_;
@@ -331,7 +332,6 @@ private:
     void initDefaultTracks();
     void syncTrackStates(int minSize);
 
-protected:
     void recalcDuration();
 
 } // namespace ghita::timeline
