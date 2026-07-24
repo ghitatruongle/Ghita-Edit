@@ -12,7 +12,7 @@
 
 # =============================================================================
 # Project: ghita_engine
-# Configurations: 
+# Configurations: Debug
 # =============================================================================
 
 #############################################
@@ -20,6 +20,11 @@
 
 ninja_required_version = 1.5
 
+
+#############################################
+# Set configuration variable for custom commands.
+
+CONFIGURATION = Debug
 # =============================================================================
 # Include auxiliary files.
 
@@ -44,20 +49,20 @@ cmake_ninja_workdir = E$:/Ghita$ Edit/native_engine/build/
 
 build cmake_object_order_depends_target_ghita_engine: phony || .
 
-build CMakeFiles/ghita_engine.dir/src/ghita_engine.cpp.obj: CXX_COMPILER__ghita_engine_unscanned_ E$:/Ghita$ Edit/native_engine/src/ghita_engine.cpp || cmake_object_order_depends_target_ghita_engine
+build CMakeFiles/ghita_engine.dir/src/ghita_engine.cpp.obj: CXX_COMPILER__ghita_engine_unscanned_Debug E$:/Ghita$ Edit/native_engine/src/ghita_engine.cpp || cmake_object_order_depends_target_ghita_engine
   DEFINES = -DGHITA_ENGINE_EXPORTS -Dghita_engine_EXPORTS
   DEP_FILE = CMakeFiles\ghita_engine.dir\src\ghita_engine.cpp.obj.d
-  FLAGS = -std=gnu++20
+  FLAGS = -g -std=gnu++20
   INCLUDES = -I"E:/Ghita Edit/native_engine/include"
   OBJECT_DIR = CMakeFiles\ghita_engine.dir
   OBJECT_FILE_DIR = CMakeFiles\ghita_engine.dir\src
   TARGET_COMPILE_PDB = CMakeFiles\ghita_engine.dir\
   TARGET_PDB = libghita_engine.pdb
 
-build CMakeFiles/ghita_engine.dir/src/ghita_c_api.cpp.obj: CXX_COMPILER__ghita_engine_unscanned_ E$:/Ghita$ Edit/native_engine/src/ghita_c_api.cpp || cmake_object_order_depends_target_ghita_engine
+build CMakeFiles/ghita_engine.dir/src/ghita_c_api.cpp.obj: CXX_COMPILER__ghita_engine_unscanned_Debug E$:/Ghita$ Edit/native_engine/src/ghita_c_api.cpp || cmake_object_order_depends_target_ghita_engine
   DEFINES = -DGHITA_ENGINE_EXPORTS -Dghita_engine_EXPORTS
   DEP_FILE = CMakeFiles\ghita_engine.dir\src\ghita_c_api.cpp.obj.d
-  FLAGS = -std=gnu++20
+  FLAGS = -g -std=gnu++20
   INCLUDES = -I"E:/Ghita Edit/native_engine/include"
   OBJECT_DIR = CMakeFiles\ghita_engine.dir
   OBJECT_FILE_DIR = CMakeFiles\ghita_engine.dir\src
@@ -72,7 +77,8 @@ build CMakeFiles/ghita_engine.dir/src/ghita_c_api.cpp.obj: CXX_COMPILER__ghita_e
 #############################################
 # Link the shared library libghita_engine.dll
 
-build libghita_engine.dll libghita_engine.dll.a: CXX_SHARED_LIBRARY_LINKER__ghita_engine_ CMakeFiles/ghita_engine.dir/src/ghita_engine.cpp.obj CMakeFiles/ghita_engine.dir/src/ghita_c_api.cpp.obj
+build libghita_engine.dll libghita_engine.dll.a: CXX_SHARED_LIBRARY_LINKER__ghita_engine_Debug CMakeFiles/ghita_engine.dir/src/ghita_engine.cpp.obj CMakeFiles/ghita_engine.dir/src/ghita_c_api.cpp.obj
+  LANGUAGE_COMPILE_FLAGS = -g
   LINK_LIBRARIES = -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = CMakeFiles\ghita_engine.dir
   POST_BUILD = cd .
@@ -82,6 +88,102 @@ build libghita_engine.dll libghita_engine.dll.a: CXX_SHARED_LIBRARY_LINKER__ghit
   TARGET_FILE = libghita_engine.dll
   TARGET_IMPLIB = libghita_engine.dll.a
   TARGET_PDB = libghita_engine.pdb
+
+# =============================================================================
+# Object build statements for STATIC_LIBRARY target ghita_engine_static
+
+
+#############################################
+# Order-only phony target for ghita_engine_static
+
+build cmake_object_order_depends_target_ghita_engine_static: phony || .
+
+build CMakeFiles/ghita_engine_static.dir/src/ghita_engine.cpp.obj: CXX_COMPILER__ghita_engine_static_unscanned_Debug E$:/Ghita$ Edit/native_engine/src/ghita_engine.cpp || cmake_object_order_depends_target_ghita_engine_static
+  DEFINES = -DGHITA_ENGINE_EXPORTS -DGHITA_ENGINE_STATIC
+  DEP_FILE = CMakeFiles\ghita_engine_static.dir\src\ghita_engine.cpp.obj.d
+  FLAGS = -g -std=gnu++20
+  INCLUDES = -I"E:/Ghita Edit/native_engine/include"
+  OBJECT_DIR = CMakeFiles\ghita_engine_static.dir
+  OBJECT_FILE_DIR = CMakeFiles\ghita_engine_static.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\ghita_engine_static.dir\ghita_engine_static.pdb
+  TARGET_PDB = libghita_engine_static.pdb
+
+build CMakeFiles/ghita_engine_static.dir/src/ghita_c_api.cpp.obj: CXX_COMPILER__ghita_engine_static_unscanned_Debug E$:/Ghita$ Edit/native_engine/src/ghita_c_api.cpp || cmake_object_order_depends_target_ghita_engine_static
+  DEFINES = -DGHITA_ENGINE_EXPORTS -DGHITA_ENGINE_STATIC
+  DEP_FILE = CMakeFiles\ghita_engine_static.dir\src\ghita_c_api.cpp.obj.d
+  FLAGS = -g -std=gnu++20
+  INCLUDES = -I"E:/Ghita Edit/native_engine/include"
+  OBJECT_DIR = CMakeFiles\ghita_engine_static.dir
+  OBJECT_FILE_DIR = CMakeFiles\ghita_engine_static.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\ghita_engine_static.dir\ghita_engine_static.pdb
+  TARGET_PDB = libghita_engine_static.pdb
+
+
+# =============================================================================
+# Link build statements for STATIC_LIBRARY target ghita_engine_static
+
+
+#############################################
+# Link the static library libghita_engine_static.a
+
+build libghita_engine_static.a: CXX_STATIC_LIBRARY_LINKER__ghita_engine_static_Debug CMakeFiles/ghita_engine_static.dir/src/ghita_engine.cpp.obj CMakeFiles/ghita_engine_static.dir/src/ghita_c_api.cpp.obj
+  LANGUAGE_COMPILE_FLAGS = -g
+  OBJECT_DIR = CMakeFiles\ghita_engine_static.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_COMPILE_PDB = CMakeFiles\ghita_engine_static.dir\ghita_engine_static.pdb
+  TARGET_FILE = libghita_engine_static.a
+  TARGET_PDB = libghita_engine_static.pdb
+
+# =============================================================================
+# Object build statements for EXECUTABLE target native_engine_test
+
+
+#############################################
+# Order-only phony target for native_engine_test
+
+build cmake_object_order_depends_target_native_engine_test: phony || cmake_object_order_depends_target_ghita_engine cmake_object_order_depends_target_ghita_engine_static
+
+build CMakeFiles/native_engine_test.dir/test/native_engine_self_test.cpp.obj: CXX_COMPILER__native_engine_test_unscanned_Debug E$:/Ghita$ Edit/native_engine/test/native_engine_self_test.cpp || cmake_object_order_depends_target_native_engine_test
+  DEFINES = -DGHITA_ENGINE_EXPORTS
+  DEP_FILE = CMakeFiles\native_engine_test.dir\test\native_engine_self_test.cpp.obj.d
+  FLAGS = -g -std=gnu++20
+  INCLUDES = -I"E:/Ghita Edit/native_engine/include"
+  OBJECT_DIR = CMakeFiles\native_engine_test.dir
+  OBJECT_FILE_DIR = CMakeFiles\native_engine_test.dir\test
+  TARGET_COMPILE_PDB = CMakeFiles\native_engine_test.dir\
+  TARGET_PDB = native_engine_test.pdb
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target native_engine_test
+
+
+#############################################
+# Link the executable native_engine_test.exe
+
+build native_engine_test.exe: CXX_EXECUTABLE_LINKER__native_engine_test_Debug CMakeFiles/native_engine_test.dir/test/native_engine_self_test.cpp.obj | libghita_engine_static.a || libghita_engine.dll libghita_engine_static.a
+  FLAGS = -g
+  LINK_LIBRARIES = libghita_engine_static.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  OBJECT_DIR = CMakeFiles\native_engine_test.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_COMPILE_PDB = CMakeFiles\native_engine_test.dir\
+  TARGET_FILE = native_engine_test.exe
+  TARGET_IMPLIB = libnative_engine_test.dll.a
+  TARGET_PDB = native_engine_test.pdb
+
+
+#############################################
+# Utility command for test
+
+build CMakeFiles/test.util: CUSTOM_COMMAND
+  COMMAND = C:\WINDOWS\system32\cmd.exe /C "cd /D "E:\Ghita Edit\native_engine\build" && "C:\Program Files\CodeBlocks\MinGW\bin\ctest.exe" --force-new-ctest-process "
+  DESC = Running tests...
+  pool = console
+  restat = 1
+
+build test: phony CMakeFiles/test.util
 
 
 #############################################
@@ -111,6 +213,10 @@ build rebuild_cache: phony CMakeFiles/rebuild_cache.util
 
 build ghita_engine: phony libghita_engine.dll
 
+build ghita_engine_static: phony libghita_engine_static.a
+
+build native_engine_test: phony native_engine_test.exe
+
 # =============================================================================
 # Folder targets.
 
@@ -119,7 +225,7 @@ build ghita_engine: phony libghita_engine.dll
 #############################################
 # Folder: E:/Ghita Edit/native_engine/build
 
-build all: phony libghita_engine.dll
+build all: phony libghita_engine.dll libghita_engine_static.a native_engine_test.exe
 
 # =============================================================================
 # Built-in targets

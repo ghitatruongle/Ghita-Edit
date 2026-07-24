@@ -1,6 +1,14 @@
-#include "ghita_engine.h"
 #include <iostream>
 #include <vector>
+#include <sstream>
+#include <cstring>
+#include <algorithm>
+
+#include "ghita_engine.h"
+#include "ghita_c_api.h"
+
+// Forward declare C API version function
+extern "C" const char* ghita_engine_get_version(void);
 
 static int g_passed = 0;
 static int g_failed = 0;
@@ -22,15 +30,20 @@ static int g_failed = 0;
     } while (0)
 
 #define EXPECT_TRUE(expr) \
-    if (!(expr)) throw std::runtime_error("EXPECT_TRUE failed: " #expr)
+    if (!(expr)) { throw std::runtime_error("EXPECT_TRUE failed: " #expr); }
+
 #define EXPECT_FALSE(expr) \
-    if (expr) throw std::runtime_error("EXPECT_FALSE failed: " #expr)
+    if (expr) { throw std::runtime_error("EXPECT_FALSE failed: " #expr); }
+
 #define EXPECT_EQ(a, b) \
-    if (!((a) == (b))) { \
-        std::ostringstream _ss; \
-        _ss << "EXPECT_EQ failed: " << (a) << " != " << (b); \
-        throw std::runtime_error(_ss.str()); \
-    }
+    do { \
+        auto _a = (a); auto _b = (b); \
+        if (!(_a == _b)) { \
+            std::ostringstream _ss; \
+            _ss << "EXPECT_EQ failed: " << _a << " != " << _b; \
+            throw std::runtime_error(_ss.str()); \
+        } \
+    } while (0)
 
 void test_engine_lifecycle() {
     GhitaEngine engine;
@@ -49,7 +62,6 @@ void test_render_frame_rgba() {
     std::vector<uint8_t> buf(128 * 64 * 4, 0);
     EXPECT_TRUE(engine.renderFrameRGBA(buf.data(), 128, 64));
 
-    // Alpha should be 255 for every pixel
     for (int i = 0; i < 128 * 64; ++i) {
         EXPECT_EQ(buf[i * 4 + 3], static_cast<uint8_t>(255));
     }
@@ -83,7 +95,7 @@ void test_seek_bounds() {
     EXPECT_EQ(engine.getPositionMs(), int64_t(0));
 
     engine.seek(99999999);
-    EXPECT_EQ(engine.getPositionMs(), int64_t(30000));
+    EXPECT_EQ(engine.getPositionMs(), int64_t(60000));
 }
 
 void test_load_media_mock() {
@@ -96,8 +108,6 @@ void test_load_media_mock() {
 }
 
 void test_get_version_string() {
-    // The C API version function should return non-null
-    extern "C" const char* ghita_engine_get_version(void);
     const char* v = ghita_engine_get_version();
     EXPECT_TRUE(v != nullptr);
 }

@@ -82,7 +82,7 @@ class _ExportDialogState extends State<ExportDialog> {
         children: [
           Icon(Icons.output, color: AppTheme.accent),
           const SizedBox(width: 8),
-          Text("Export Media Project", style: AppTheme.titleMedium),
+          Text("Export Media Project", style: const TextStyle(color: AppTheme.textMain, fontSize: 16)),
         ],
       ),
       content: SizedBox(

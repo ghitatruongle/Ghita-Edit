@@ -2,6 +2,7 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../../controllers/editor_controller.dart';
+import '../../controllers/engine_service.dart';
 import '../theme/app_theme.dart';
 
 class PreviewPlayer extends StatefulWidget {
@@ -34,8 +35,8 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
     if (bytes != null && bytes.isNotEmpty) {
       ui.decodeImageFromPixels(
         bytes,
-        EditorController.renderWidth,
-        EditorController.renderHeight,
+        EngineService.renderWidth,
+        EngineService.renderHeight,
         ui.PixelFormat.rgba8888,
         (ui.Image image) {
           if (mounted) {

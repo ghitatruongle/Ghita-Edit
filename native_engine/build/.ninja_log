@@ -1,5 +1,10 @@
 # ninja log v6
-13	3930	8065640792725614	CMakeFiles/ghita_engine.dir/src/ghita_c_api.cpp.obj	cc8e3e1f4e1415c6
-5	4619	8065640792645630	CMakeFiles/ghita_engine.dir/src/ghita_engine.cpp.obj	4874ee06616c5f96
-4619	4863	8065640841094494	libghita_engine.dll	717190da84e54c57
-4619	4863	8065640841094494	libghita_engine.dll.a	717190da84e54c57
+49	7290	8066205510031325	CMakeFiles/ghita_engine_static.dir/src/ghita_c_api.cpp.obj	6e5ecdb43ab8429f
+29	7304	8066205509832669	CMakeFiles/ghita_engine.dir/src/ghita_c_api.cpp.obj	943e5b83beb8f8d0
+60	7791	8066205510151608	CMakeFiles/native_engine_test.dir/test/native_engine_self_test.cpp.obj	af989d656ae120cd
+9	8156	8066205509639011	CMakeFiles/ghita_engine.dir/src/ghita_engine.cpp.obj	6f8c0f6c1939468e
+38	8289	8066205509921321	CMakeFiles/ghita_engine_static.dir/src/ghita_engine.cpp.obj	78bb91c5fc739ae7
+8156	8605	8066205595283070	libghita_engine.dll	a73a0f5fd026550
+8156	8605	8066205595283070	libghita_engine.dll.a	a73a0f5fd026550
+8289	8811	8066205592431569	libghita_engine_static.a	c86cf36d6679c13b
+8811	9126	8066205597661388	native_engine_test.exe	269897f8cc9b3ec7

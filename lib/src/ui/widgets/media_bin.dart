@@ -43,14 +43,13 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
 
   Future<void> _openFilePicker() async {
     try {
-      final result = await FilePicker.platform.filePicker(
+      final result = await FilePicker.platform.pickFiles(
         dialogTitle: 'Import Media File',
         type: FileType.custom,
         allowedExtensions: ['mp4', 'mov', 'avi', 'mkv', 'mp3', 'wav', 'flac', 'png', 'jpg', 'jpeg'],
       );
-
       if (result != null && mounted) {
-        widget.controller.loadMedia(result.path ?? '');
+        widget.controller.loadMedia(result.files.single.path!);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Media loaded into C++ Core Engine!'),

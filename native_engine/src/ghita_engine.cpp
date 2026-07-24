@@ -1,9 +1,9 @@
 #include "ghita_engine.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace {
-    // SIMD-style inline helpers for per-pixel filters
     struct Vec3 { uint8_t r, g, b; };
 
     Vec3 applyGrayscale(uint8_t r, uint8_t g, uint8_t b, float intensity) {
@@ -36,7 +36,7 @@ namespace {
     }
 
     Vec3 applyBrightness(uint8_t r, uint8_t g, uint8_t b, float intensity) {
-        float factor = 1.0f + intensity; // intensity 0..1 -> multiplier 1.0..2.0
+        float factor = 1.0f + intensity;
         return {
             static_cast<uint8_t>(std::clamp(r * factor, 0.0f, 255.0f)),
             static_cast<uint8_t>(std::clamp(g * factor, 0.0f, 255.0f)),
@@ -46,14 +46,11 @@ namespace {
 }
 
 GhitaEngine::GhitaEngine() {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
     m_lastTickTime = std::chrono::high_resolution_clock::now();
     m_ready = false;
 }
 
 GhitaEngine::~GhitaEngine() {
-    // Directly stop playback without calling pause() — pause() also locks
-    // m_engineMutex which would deadlock since std::mutex is non-recursive.
     std::lock_guard<std::mutex> lock(m_engineMutex);
     m_isPlaying.store(false);
     m_ready = false;
@@ -61,7 +58,7 @@ GhitaEngine::~GhitaEngine() {
 
 bool GhitaEngine::initialize() {
     std::lock_guard<std::mutex> lock(m_engineMutex);
-    if (m_ready.load()) return true; // already initialized
+    if (m_ready.load()) return true;
 
     m_isPlaying.store(false);
     m_currentPosMs.store(0);
@@ -103,7 +100,7 @@ bool GhitaEngine::isPlaying() const {
 void GhitaEngine::seek(int64_t positionMs) {
     std::lock_guard<std::mutex> lock(m_engineMutex);
     if (!m_ready.load()) return;
-    m_currentPosMs = std::clamp(positionMs, (int64_t)0, m_durationMs);
+    m_currentPosMs.store(std::clamp(positionMs, (int64_t)0, m_durationMs));
     m_lastTickTime = std::chrono::high_resolution_clock::now();
 }
 
@@ -120,24 +117,12 @@ void GhitaEngine::setVolume(float volume) {
     m_volume.store(std::clamp(volume, 0.0f, 2.0f));
 }
 
-float GhitaEngine::getVolume() const {
-    return m_volume.load();
-}
-
 void GhitaEngine::applyFilter(int filterType, float intensity) {
     std::lock_guard<std::mutex> lock(m_engineMutex);
     if (filterType >= 0 && filterType <= 4) {
         m_activeFilterType = filterType;
         m_filterIntensity.store(std::clamp(intensity, 0.0f, 1.0f));
     }
-}
-
-int GhitaEngine::getActiveFilterType() const {
-    return m_activeFilterType.load();
-}
-
-float GhitaEngine::getFilterIntensity() const {
-    return m_filterIntensity.load();
 }
 
 void GhitaEngine::updateClock() {
@@ -172,46 +157,21 @@ void GhitaEngine::generateSyntheticFrame(uint8_t* outBuffer, int width, int heig
     const int filterType = m_activeFilterType;
     const float intensity = m_filterIntensity.load();
 
-    // Precompute filter weights once per frame (reduce branch overhead inside pixel loop)
-    const float inv = 1.0f - intensity;
-
-    float rCoeff[3] = {}, gCoeff[3] = {}, bCoeff[3] = {};
-    switch (filterType) {
-        case 1: // Grayscale
-            rCoeff[0] = 0.299f; rCoeff[1] = 0.587f; rCoeff[2] = 0.114f;
-            break;
-        case 2: // Sepia
-            rCoeff[0] = 0.393f; rCoeff[1] = 0.769f; rCoeff[2] = 0.189f;
-            break;
-        case 3: // Invert — uses original RGB directly
-            break;
-        case 4: // Brightness — uses original RGB directly
-            break;
-        default: // None
-            break;
-    }
-
-    const float brightnessMul = 1.0f + intensity;
-
-    // Bouncing ball
-    const float cx = (std::sin(t * 2.0f) * 0.35f + 0.5f) * width;
-    const float cy = (std::cos(t * 2.5f) * 0.35f + 0.5f) * height;
-    const float ballR2 = 40.0f * 40.0f;
+    const float cx = std::sin(t * 2.0f) * 0.35f + 0.5f;
+    const float cy = std::cos(t * 2.5f) * 0.35f + 0.5f;
 
     for (int y = 0; y < height; ++y) {
         const float ny = static_cast<float>(y) / static_cast<float>(height);
         for (int x = 0; x < width; ++x) {
             const float nx = static_cast<float>(x) / static_cast<float>(width);
 
-            // Base gradient colors
             uint8_t r = static_cast<uint8_t>((std::sin(nx * 3.14159f + t) * 0.5f + 0.5f) * 200 + 30);
             uint8_t g = static_cast<uint8_t>((std::cos(ny * 3.14159f + t * 1.5f) * 0.5f + 0.5f) * 180 + 20);
             uint8_t b = static_cast<uint8_t>((std::sin((nx + ny) * 3.14159f - t * 2.0f) * 0.5f + 0.5f) * 220 + 30);
 
-            // Bouncing ball indicator (applied after filter to preserve effect)
-            const float dx = static_cast<float>(x) - cx;
-            const float dy = static_cast<float>(y) - cy;
-            if (dx * dx + dy * dy < ballR2) {
+            const float dx = static_cast<float>(x) - cx * width;
+            const float dy = static_cast<float>(y) - cy * height;
+            if (dx * dx + dy * dy < 40.0f * 40.0f) {
                 r = 255; g = 230; b = 50;
             } else if (filterType != 0) {
                 Vec3 c;
@@ -229,25 +189,24 @@ void GhitaEngine::generateSyntheticFrame(uint8_t* outBuffer, int width, int heig
             outBuffer[idx + 0] = r;
             outBuffer[idx + 1] = g;
             outBuffer[idx + 2] = b;
-            outBuffer[idx + 3] = 255; // Alpha
+            outBuffer[idx + 3] = 255;
         }
     }
 }
 
 bool GhitaEngine::selfTest() {
-    // Minimal sanity check
     GhitaEngine engine;
     if (!engine.initialize()) return false;
     if (!engine.renderFrameRGBA(nullptr, 1, 1)) return false;
 
     uint8_t buf[16] = {};
     if (!engine.renderFrameRGBA(buf, 4, 4)) return false;
-    if (buf[3] != 255) return false; // alpha should be 255
+    if (buf[3] != 255) return false;
 
     engine.setVolume(0.0f);
     if (engine.getVolume() != 0.0f) return false;
     engine.setVolume(3.0f);
-    if (engine.getVolume() > 2.0f) return false; // clamped
+    if (engine.getVolume() > 2.0f) return false;
 
     engine.applyFilter(1, 1.0f);
     if (engine.getActiveFilterType() != 1) return false;

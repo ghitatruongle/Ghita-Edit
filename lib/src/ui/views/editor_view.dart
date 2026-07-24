@@ -223,26 +223,18 @@ class _EditorViewState extends State<EditorView> {
   Widget _buildTextMenu(String label) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8.0),
-      child: MenuAnchor(
-        builder: (context, controller, child) {
-          return InkWell(
-            onTap: () => controller.open(),
-            onHover: () => controller.open(),
-            borderRadius: BorderRadius.circular(4),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              child: Text(
-                label,
-                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w500),
-              ),
-            ),
-          );
-        },
-        menuChildren: [
-          MenuItemButton(onPressed: () {}, child: const Text('New Project')),
-          MenuItemButton(onPressed: () {}, child: const Text('Open Project...')),
-          MenuItemButton(onPressed: () {}, child: const Text('Save As...')),
-        ],
+      child: InkWell(
+        borderRadius: BorderRadius.circular(4),
+        onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$label menu clicked'), duration: Duration(seconds: 1)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Text(
+            label,
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w500),
+          ),
+        ),
       ),
     );
   }

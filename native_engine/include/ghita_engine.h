@@ -30,7 +30,7 @@ public:
     float getVolume() const { return m_volume.load(); }
 
     void applyFilter(int filterType, float intensity);
-    int getActiveFilterType() const { return m_activeFilterType.load(); }
+    int getActiveFilterType() const { return m_activeFilterType; }
     float getFilterIntensity() const { return m_filterIntensity.load(); }
 
     bool isReady() const { return m_ready.load(); }
