@@ -1,153 +1,120 @@
 import 'dart:async';
-import 'dart:ffi';
 import 'dart:typed_data';
-import 'package:ffi/ffi.dart';
-import 'package:flutter/material.dart';
-import '../ffi/native_bindings.dart';
 
+import 'package:flutter/material.dart';
+import 'engine_service.dart';
+
+/// Orchestrates UI state on top of [EngineService].
+/// All native FFI calls go through the engine service — this class only
+/// handles business logic and notifies listeners when state changes.
 class EditorController extends ChangeNotifier {
-  Pointer<GhitaEngineContext>? _ctx;
-  bool _isEngineReady = false;
-  
-  bool get isEngineReady => _isEngineReady;
-  String _engineVersion = 'Loading...';
-  String get engineVersion => _engineVersion;
+  final EngineService _engine;
+  bool _disposed = false;
+  String _statusMessage = 'Initializing...';
+
+  bool get isEngineReady => _engine.isReady;
+  String get engineVersion => _engine.engineVersion;
 
   bool _isPlaying = false;
-  bool get isPlaying => _isPlaying;
-
   int _positionMs = 0;
-  int get positionMs => _positionMs;
-
   int _durationMs = 60000;
-  int get durationMs => _durationMs;
-
   double _volume = 1.0;
-  double get volume => _volume;
-
-  int _activeFilterType = 0; // 0: None, 1: Grayscale, 2: Sepia, 3: Invert
-  int get activeFilterType => _activeFilterType;
-
+  int _activeFilterType = 0;
   double _filterIntensity = 1.0;
+
+  bool get isPlaying => _isPlaying;
+  int get positionMs => _positionMs;
+  int get durationMs => _durationMs;
+  double get volume => _volume;
+  int get activeFilterType => _activeFilterType;
   double get filterIntensity => _filterIntensity;
+  Uint8List? get frameBytes => _engine.frameBytes;
 
-  String _currentMediaName = "Sample_Video_Track.mp4";
-  String get currentMediaName => _currentMediaName;
+  String get statusMessage => _statusMessage;
 
-  Timer? _renderTimer;
+  String _currentMediaName = '';
+  String get currentMediaName =>
+      _currentMediaName.isNotEmpty ? _currentMediaName : 'No media loaded';
 
-  // Frame rendering buffers for preview
-  static const int renderWidth = 640;
-  static const int renderHeight = 360;
-  Pointer<Uint8>? _framePointer;
-  Uint8List? _frameBytes;
-  Uint8List? get frameBytes => _frameBytes;
+  EditorController({EngineService? engine}) : _engine = engine ?? EngineService();
 
-  EditorController() {
-    _initEngine();
-  }
-
-  void _initEngine() {
+  /// Initialize the native engine asynchronously.
+  Future<void> init() async {
+    if (_disposed) return;
     try {
-      final bindings = GhitaNativeBindings.instance;
-      _ctx = bindings.createEngine();
-      if (_ctx != null && _ctx != nullptr) {
-        bindings.initEngine(_ctx!);
-        _isEngineReady = true;
-
-        final verPtr = bindings.getVersion();
-        if (verPtr != nullptr) {
-          _engineVersion = verPtr.toDartString();
-        }
-
-        // Allocate native buffer for 640x360 RGBA frames (640 * 360 * 4 bytes = 921,600 bytes)
-        _framePointer = calloc<Uint8>(renderWidth * renderHeight * 4);
-        _frameBytes = Uint8List(renderWidth * renderHeight * 4);
-
-        // Start 30fps preview ticker loop
-        _renderTimer = Timer.periodic(const Duration(milliseconds: 33), (timer) {
-          _tickFrame();
-        });
+      await _engine.initialize();
+      if (!isEngineReady) {
+        _statusMessage = 'Native engine unavailable (Demo Mode)';
+        notifyListeners();
+        return;
       }
-    } catch (e) {
-      _engineVersion = "Native C++ Engine initializing (Demo Mode)";
-      _isEngineReady = false;
+      _statusMessage = 'C++ Engine ready';
       notifyListeners();
-    }
-  }
-
-  void _tickFrame() {
-    if (!_isEngineReady || _ctx == null || _framePointer == null) return;
-    
-    final bindings = GhitaNativeBindings.instance;
-    _isPlaying = bindings.isPlaying(_ctx!);
-    _positionMs = bindings.getPositionMs(_ctx!);
-    _durationMs = bindings.getDurationMs(_ctx!);
-
-    bool success = bindings.renderFrameRgba(_ctx!, _framePointer!, renderWidth, renderHeight);
-    if (success) {
-      final nativeList = _framePointer!.asTypedList(renderWidth * renderHeight * 4);
-      _frameBytes!.setAll(0, nativeList);
+    } catch (e) {
+      _statusMessage = 'Error: $e';
       notifyListeners();
     }
   }
 
   void loadMedia(String path) {
-    if (!_isEngineReady || _ctx == null) return;
-    final pathPtr = path.toNativeUtf8();
-    GhitaNativeBindings.instance.loadMedia(_ctx!, pathPtr);
-    calloc.free(pathPtr);
-
+    if (_disposed || path.isEmpty) return;
+    _engine.loadMedia(path);
     _currentMediaName = path.split(RegExp(r'[/\\]')).last;
     _positionMs = 0;
+    _statusMessage = 'Loaded: ${_currentMediaName}';
     notifyListeners();
   }
 
   void togglePlayPause() {
-    if (!_isEngineReady || _ctx == null) return;
-    final bindings = GhitaNativeBindings.instance;
-    if (_isPlaying) {
-      bindings.pause(_ctx!);
-    } else {
-      bindings.play(_ctx!);
-    }
+    if (_disposed) return;
     _isPlaying = !_isPlaying;
+    if (_engine.isReady) {
+      if (_isPlaying) {
+        _engine.play();
+      } else {
+        _engine.pause();
+      }
+    }
     notifyListeners();
   }
 
   void seek(int positionMs) {
-    if (!_isEngineReady || _ctx == null) return;
-    GhitaNativeBindings.instance.seek(_ctx!, positionMs);
-    _positionMs = positionMs;
+    if (_disposed) return;
+    final clamped = positionMs.clamp(0, _durationMs);
+    _positionMs = clamped;
+    if (_engine.isReady) {
+      _engine.seek(clamped);
+    }
     notifyListeners();
   }
 
   void setVolume(double val) {
-    _volume = val;
-    if (_isEngineReady && _ctx != null) {
-      GhitaNativeBindings.instance.setVolume(_ctx!, val);
+    if (_disposed) return;
+    final clamped = val.clamp(0.0, 2.0);
+    _volume = clamped;
+    if (_engine.isReady) {
+      _engine.setVolume(clamped);
     }
     notifyListeners();
   }
 
   void setFilter(int filterType, double intensity) {
-    _activeFilterType = filterType;
-    _filterIntensity = intensity;
-    if (_isEngineReady && _ctx != null) {
-      GhitaNativeBindings.instance.applyFilter(_ctx!, filterType, intensity);
+    if (_disposed) return;
+    final safeType = filterType.clamp(0, 4);
+    final safeIntensity = intensity.clamp(0.0, 1.0);
+    _activeFilterType = safeType;
+    _filterIntensity = safeIntensity;
+    if (_engine.isReady) {
+      _engine.applyFilter(safeType, safeIntensity);
     }
     notifyListeners();
   }
 
   @override
   void dispose() {
-    _renderTimer?.cancel();
-    if (_framePointer != null) {
-      calloc.free(_framePointer!);
-    }
-    if (_ctx != null && _isEngineReady) {
-      GhitaNativeBindings.instance.destroyEngine(_ctx!);
-    }
+    if (_disposed) return;
+    _disposed = true;
     super.dispose();
+    _engine.dispose();
   }
 }

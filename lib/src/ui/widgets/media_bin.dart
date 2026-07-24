@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../../controllers/editor_controller.dart';
 import '../theme/app_theme.dart';
@@ -13,6 +14,7 @@ class MediaBin extends StatefulWidget {
 
 class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  String _searchQuery = '';
 
   final List<Map<String, String>> _sampleMedia = [
     {"name": "Intro_Vlog_4K.mp4", "duration": "00:45", "type": "video"},
@@ -21,6 +23,11 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
     {"name": "Sound_Effect_Whoosh.wav", "duration": "00:03", "type": "audio"},
     {"name": "Overlay_Text_Title.png", "duration": "Text", "type": "text"},
   ];
+
+  List<Map<String, String>> get _filteredMedia => _sampleMedia.where((item) {
+    if (_searchQuery.isEmpty) return true;
+    return item['name']!.toLowerCase().contains(_searchQuery.toLowerCase());
+  }).toList();
 
   @override
   void initState() {
@@ -32,6 +39,35 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _openFilePicker() async {
+    try {
+      final result = await FilePicker.platform.filePicker(
+        dialogTitle: 'Import Media File',
+        type: FileType.custom,
+        allowedExtensions: ['mp4', 'mov', 'avi', 'mkv', 'mp3', 'wav', 'flac', 'png', 'jpg', 'jpeg'],
+      );
+
+      if (result != null && mounted) {
+        widget.controller.loadMedia(result.path ?? '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Media loaded into C++ Core Engine!'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to pick file: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -61,30 +97,37 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
           // Search & Import Bar
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Search media...',
+                    hintStyle: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                    prefixIcon: const Icon(Icons.search, color: AppTheme.textMuted, size: 16),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide.none,
                     ),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text("Import File", style: TextStyle(fontSize: 12)),
-                    onPressed: () {
-                      widget.controller.loadMedia("C:/Media/New_Imported_Clip.mp4");
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text("Media loaded into C++ Core Engine!"),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    },
+                    fillColor: AppTheme.background,
+                    filled: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
+                  style: const TextStyle(color: AppTheme.textMain, fontSize: 12),
+                  onChanged: (val) => setState(() => _searchQuery = val),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text("Import File", style: TextStyle(fontSize: 12)),
+                  onPressed: _openFilePicker,
                 ),
               ],
             ),
@@ -104,9 +147,9 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                     mainAxisSpacing: 8,
                     childAspectRatio: 1.2,
                   ),
-                  itemCount: _sampleMedia.length,
+                  itemCount: _filteredMedia.length,
                   itemBuilder: (context, index) {
-                    final item = _sampleMedia[index];
+                    final item = _filteredMedia[index];
                     return GestureDetector(
                       onTap: () => widget.controller.loadMedia(item["name"]!),
                       child: Container(
@@ -170,6 +213,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                     _buildFilterTile("Grayscale Filter", 1, widget.controller),
                     _buildFilterTile("Warm Sepia Tone", 2, widget.controller),
                     _buildFilterTile("Negative / Invert", 3, widget.controller),
+                    _buildFilterTile("Brightness", 4, widget.controller),
                   ],
                 ),
 

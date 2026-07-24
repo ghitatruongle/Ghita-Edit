@@ -6,6 +6,9 @@ struct GhitaEngineContext {
     GhitaEngine engine;
 };
 
+// Static string is safe to return because it lives for the process lifetime
+static const char VERSION_STRING[] = "Ghita Core Engine v0.1.0 (C++/Flutter)";
+
 extern "C" {
 
 GHITA_API GhitaEngineContext* ghita_engine_create(void) {
@@ -29,15 +32,18 @@ GHITA_API int ghita_engine_load_media(GhitaEngineContext* ctx, const char* file_
 }
 
 GHITA_API int64_t ghita_engine_get_duration_ms(GhitaEngineContext* ctx) {
-    return ctx ? ctx->engine.getDurationMs() : 0;
+    if (!ctx) return 0;
+    return ctx->engine.getDurationMs();
 }
 
 GHITA_API int ghita_engine_get_media_width(GhitaEngineContext* ctx) {
-    return ctx ? ctx->engine.getWidth() : 0;
+    if (!ctx) return 0;
+    return ctx->engine.getWidth();
 }
 
 GHITA_API int ghita_engine_get_media_height(GhitaEngineContext* ctx) {
-    return ctx ? ctx->engine.getHeight() : 0;
+    if (!ctx) return 0;
+    return ctx->engine.getHeight();
 }
 
 GHITA_API void ghita_engine_play(GhitaEngineContext* ctx) {
@@ -49,7 +55,8 @@ GHITA_API void ghita_engine_pause(GhitaEngineContext* ctx) {
 }
 
 GHITA_API bool ghita_engine_is_playing(GhitaEngineContext* ctx) {
-    return ctx ? ctx->engine.isPlaying() : false;
+    if (!ctx) return false;
+    return ctx->engine.isPlaying();
 }
 
 GHITA_API void ghita_engine_seek(GhitaEngineContext* ctx, int64_t position_ms) {
@@ -57,7 +64,8 @@ GHITA_API void ghita_engine_seek(GhitaEngineContext* ctx, int64_t position_ms) {
 }
 
 GHITA_API int64_t ghita_engine_get_position_ms(GhitaEngineContext* ctx) {
-    return ctx ? ctx->engine.getPositionMs() : 0;
+    if (!ctx) return 0;
+    return ctx->engine.getPositionMs();
 }
 
 GHITA_API void ghita_engine_set_volume(GhitaEngineContext* ctx, float volume) {
@@ -69,12 +77,13 @@ GHITA_API void ghita_engine_apply_filter(GhitaEngineContext* ctx, int filter_typ
 }
 
 GHITA_API bool ghita_engine_render_frame_rgba(GhitaEngineContext* ctx, uint8_t* out_buffer, int width, int height) {
-    if (!ctx) return false;
+    if (!ctx || !out_buffer) return false;
     return ctx->engine.renderFrameRGBA(out_buffer, width, height);
 }
 
+// Returns a static pointer that lives for the process lifetime — safe for FFI
 GHITA_API const char* ghita_engine_get_version(void) {
-    return "Ghita Core Engine v0.1.0-alpha (C++/Flutter)";
+    return VERSION_STRING;
 }
 
 }

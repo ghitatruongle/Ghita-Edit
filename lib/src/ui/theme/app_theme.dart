@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
+  static const String appVersion = 'v0.1.0+2';
+
   static const Color background = Color(0xFF0F1017);
   static const Color surface = Color(0xFF181A24);
   static const Color card = Color(0xFF202332);
@@ -24,6 +26,11 @@ class AppTheme {
       appBarTheme: const AppBarTheme(
         backgroundColor: surface,
         elevation: 0,
+      ),
+      textTheme: const TextTheme(
+        titleMedium: TextStyle(color: textMain, fontSize: 16, fontWeight: FontWeight.bold),
+        bodySmall: TextStyle(color: textMuted, fontSize: 11, fontWeight: FontWeight.normal),
+        labelSmall: TextStyle(color: textMuted, fontSize: 10, fontWeight: FontWeight.w500),
       ),
     );
   }

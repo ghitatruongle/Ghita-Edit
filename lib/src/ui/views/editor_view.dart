@@ -18,6 +18,14 @@ class _EditorViewState extends State<EditorView> {
   final EditorController _controller = EditorController();
 
   @override
+  void initState() {
+    super.initState();
+    _controller.init().catchError((Object error, StackTrace stack) {
+      debugPrint('GhitaEngine init failed: $error\n$stack');
+    });
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     super.dispose();
@@ -28,33 +36,32 @@ class _EditorViewState extends State<EditorView> {
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
+        if (!_controller.isEngineReady) {
+          return _loadingShell();
+        }
+
         return Scaffold(
           backgroundColor: AppTheme.background,
           body: Column(
             children: [
-              // Top Header Bar
               _buildTopHeader(context),
 
-              // Main Workspace Split Area
               Expanded(
                 flex: 6,
                 child: Row(
                   children: [
-                    // Left Panel: Media Bin
                     SizedBox(
                       width: 280,
                       child: MediaBin(controller: _controller),
                     ),
                     const VerticalDivider(width: 1, color: AppTheme.divider),
 
-                    // Center Panel: Preview Player Canvas
                     Expanded(
                       flex: 5,
                       child: PreviewPlayer(controller: _controller),
                     ),
                     const VerticalDivider(width: 1, color: AppTheme.divider),
 
-                    // Right Panel: Inspector Properties
                     SizedBox(
                       width: 260,
                       child: InspectorPanel(controller: _controller),
@@ -65,7 +72,6 @@ class _EditorViewState extends State<EditorView> {
 
               const Divider(height: 1, color: AppTheme.divider),
 
-              // Bottom Area: Timeline
               Expanded(
                 flex: 4,
                 child: TimelinePanel(controller: _controller),
@@ -74,6 +80,32 @@ class _EditorViewState extends State<EditorView> {
           ),
         );
       },
+    );
+  }
+
+  Widget _loadingShell() {
+    return MaterialApp(
+      title: 'Ghita Edit',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
+      home: Scaffold(
+        backgroundColor: AppTheme.background,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _controller.statusMessage,
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -87,7 +119,6 @@ class _EditorViewState extends State<EditorView> {
       ),
       child: Row(
         children: [
-          // Logo & App Name
           Row(
             children: [
               Container(
@@ -118,9 +149,9 @@ class _EditorViewState extends State<EditorView> {
                   borderRadius: BorderRadius.circular(4),
                   border: Border.all(color: AppTheme.divider),
                 ),
-                child: const Text(
-                  "C++ ENGINE v0.1",
-                  style: TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.bold),
+                child: Text(
+                  "C++ ENGINE ${AppTheme.appVersion}",
+                  style: const TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.bold),
                 ),
               ),
             ],
@@ -130,7 +161,6 @@ class _EditorViewState extends State<EditorView> {
           const VerticalDivider(indent: 12, endIndent: 12, color: AppTheme.divider),
           const SizedBox(width: 12),
 
-          // Menu items
           _buildTextMenu("File"),
           _buildTextMenu("Edit"),
           _buildTextMenu("Track"),
@@ -139,7 +169,6 @@ class _EditorViewState extends State<EditorView> {
 
           const Spacer(),
 
-          // C++ Status Badge
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
@@ -171,7 +200,6 @@ class _EditorViewState extends State<EditorView> {
 
           const SizedBox(width: 16),
 
-          // Export Action Button
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.primary,
@@ -182,12 +210,10 @@ class _EditorViewState extends State<EditorView> {
             ),
             icon: const Icon(Icons.file_upload_outlined, size: 16),
             label: const Text("Export", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => ExportDialog(controller: _controller),
-              );
-            },
+            onPressed: () => showDialog(
+              context: context,
+              builder: (_) => ExportDialog(controller: _controller),
+            ),
           ),
         ],
       ),
@@ -197,16 +223,26 @@ class _EditorViewState extends State<EditorView> {
   Widget _buildTextMenu(String label) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8.0),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(4),
-        onTap: () {},
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: Text(
-            label,
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w500),
-          ),
-        ),
+      child: MenuAnchor(
+        builder: (context, controller, child) {
+          return InkWell(
+            onTap: () => controller.open(),
+            onHover: () => controller.open(),
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              child: Text(
+                label,
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+            ),
+          );
+        },
+        menuChildren: [
+          MenuItemButton(onPressed: () {}, child: const Text('New Project')),
+          MenuItemButton(onPressed: () {}, child: const Text('Open Project...')),
+          MenuItemButton(onPressed: () {}, child: const Text('Save As...')),
+        ],
       ),
     );
   }

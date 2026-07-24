@@ -46,3 +46,24 @@ app.*.map.json
 
 # Local internal directory
 /noibo/
+
+# Windows MSVC intermediate files
+*.obj
+*.exp
+*.ilk
+*.pdb
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.sdf
+*.suo
+*.user
+
+# Android NDK intermediate build files
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+*.exe

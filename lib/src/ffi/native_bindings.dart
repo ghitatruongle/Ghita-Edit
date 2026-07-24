@@ -51,6 +51,7 @@ typedef DartGhitaEngineApplyFilter = void Function(Pointer<GhitaEngineContext> c
 typedef CGhitaEngineRenderFrameRgba = Bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer, Int32 width, Int32 height);
 typedef DartGhitaEngineRenderFrameRgba = bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer, int width, int height);
 
+// getVersion returns static char* valid for process lifetime (no free needed)
 typedef CGhitaEngineGetVersion = Pointer<Utf8> Function();
 typedef DartGhitaEngineGetVersion = Pointer<Utf8> Function();
 
@@ -83,26 +84,61 @@ class GhitaNativeBindings {
   void _loadLibrary() {
     if (_initialized) return;
 
-    if (Platform.isWindows) {
+    try {
+      _lib = _resolveLibraryPath();
+    } catch (_) {
       try {
-        _lib = DynamicLibrary.open('ghita_engine.dll');
-      } catch (_) {
-        try {
-          _lib = DynamicLibrary.open('libghita_engine.dll');
-        } catch (_) {
-          try {
-            _lib = DynamicLibrary.open('${Directory.current.path}\\native_engine\\build\\libghita_engine.dll');
-          } catch (_) {
-            _lib = DynamicLibrary.open('${Directory.current.path}\\build\\windows\\x64\\runner\\Debug\\ghita_engine.dll');
-          }
-        }
+        _lib = DynamicLibrary.process();
+      } catch (e) {
+        throw StateError('Cannot open ghita_engine native library: $e');
       }
-    } else if (Platform.isAndroid) {
-      _lib = DynamicLibrary.open('libghita_engine.so');
-    } else {
-      _lib = DynamicLibrary.process();
     }
 
+    _bindFunctions();
+    _initialized = true;
+  }
+
+  DynamicLibrary _resolveLibraryPath() {
+    if (Platform.isWindows) {
+      final candidates = <String>[
+        'ghita_engine.dll',
+        'libghita_engine.dll',
+        '${Directory.current.path}\\native_engine\\build\\libghita_engine.dll',
+        '${Directory.current.path}\\build\\windows\\x64\\runner\\Debug\\ghita_engine.dll',
+        '${Directory(Platform.resolvedExecutable).parent.path}\\ghita_engine.dll',
+        '${Directory(Platform.resolvedExecutable).parent.path}\\libghita_engine.dll',
+      ];
+      for (final path in candidates) {
+        try {
+          return DynamicLibrary.open(path);
+        } catch (_) {
+          continue;
+        }
+      }
+      throw StateError('ghita_engine.dll not found in any expected location');
+    } else if (Platform.isAndroid) {
+      return DynamicLibrary.open('libghita_engine.so');
+    } else if (Platform.isMacOS || Platform.isLinux) {
+      final candidates = <String>[
+        'libghita_engine.dylib',
+        'libghita_engine.so',
+        '${Directory.current.path}\\native_engine\\build\\libghita_engine.so',
+        '${Directory(Platform.resolvedExecutable).parent.path}\\libghita_engine.dylib',
+      ];
+      for (final path in candidates) {
+        try {
+          return DynamicLibrary.open(path);
+        } catch (_) {
+          continue;
+        }
+      }
+      throw StateError('libghita_engine shared library not found in any expected location');
+    }
+    throw UnsupportedError('Unsupported platform: ${Platform.operatingSystem}');
+  }
+
+  void _bindFunctions() {
+    // Use typed lookupFunction<T, U>() — compatible with Dart SDK >= 3.12
     createEngine = _lib.lookupFunction<CGhitaEngineCreate, DartGhitaEngineCreate>('ghita_engine_create');
     destroyEngine = _lib.lookupFunction<CGhitaEngineDestroy, DartGhitaEngineDestroy>('ghita_engine_destroy');
     initEngine = _lib.lookupFunction<CGhitaEngineInit, DartGhitaEngineInit>('ghita_engine_init');
@@ -119,7 +155,5 @@ class GhitaNativeBindings {
     applyFilter = _lib.lookupFunction<CGhitaEngineApplyFilter, DartGhitaEngineApplyFilter>('ghita_engine_apply_filter');
     renderFrameRgba = _lib.lookupFunction<CGhitaEngineRenderFrameRgba, DartGhitaEngineRenderFrameRgba>('ghita_engine_render_frame_rgba');
     getVersion = _lib.lookupFunction<CGhitaEngineGetVersion, DartGhitaEngineGetVersion>('ghita_engine_get_version');
-
-    _initialized = true;
   }
 }
