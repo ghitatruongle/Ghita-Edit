@@ -1,0 +1,5 @@
+# ninja log v6
+13	3930	8065640792725614	CMakeFiles/ghita_engine.dir/src/ghita_c_api.cpp.obj	cc8e3e1f4e1415c6
+5	4619	8065640792645630	CMakeFiles/ghita_engine.dir/src/ghita_engine.cpp.obj	4874ee06616c5f96
+4619	4863	8065640841094494	libghita_engine.dll	717190da84e54c57
+4619	4863	8065640841094494	libghita_engine.dll.a	717190da84e54c57
