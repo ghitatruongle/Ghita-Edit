@@ -194,6 +194,111 @@ void GhitaEngine::generateSyntheticFrame(uint8_t* outBuffer, int width, int heig
     }
 }
 
+// ========== TIMELINE / CLIP OPERATIONS (v0.2.0) ==========
+
+int GhitaEngine::addClip(const std::string& filePath, int64_t startMs, int64_t durationMs, int trackIndex) {
+    std::lock_guard<std::mutex> lock(m_engineMutex);
+    if (!m_ready.load()) return -1;
+
+    NativeClip clip;
+    clip.id = m_nextClipId++;
+    clip.filePath = filePath;
+    clip.startMs = std::max(startMs, (int64_t)0);
+    clip.durationMs = std::max(durationMs, (int64_t)100); // Min 100ms
+    clip.trackIndex = std::clamp(trackIndex, 0, 2);
+    clip.filterType = 0;
+    clip.filterIntensity = 1.0f;
+
+    m_clips.push_back(clip);
+    recalculateDuration();
+    return clip.id;
+}
+
+bool GhitaEngine::removeClip(int clipId) {
+    std::lock_guard<std::mutex> lock(m_engineMutex);
+    for (auto it = m_clips.begin(); it != m_clips.end(); ++it) {
+        if (it->id == clipId) {
+            m_clips.erase(it);
+            recalculateDuration();
+            return true;
+        }
+    }
+    return false;
+}
+
+int GhitaEngine::getClipCount() const {
+    std::lock_guard<std::mutex> lock(m_engineMutex);
+    return static_cast<int>(m_clips.size());
+}
+
+bool GhitaEngine::setClipPosition(int clipId, int64_t startMs) {
+    std::lock_guard<std::mutex> lock(m_engineMutex);
+    for (auto& clip : m_clips) {
+        if (clip.id == clipId) {
+            clip.startMs = std::max(startMs, (int64_t)0);
+            recalculateDuration();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool GhitaEngine::setClipFilter(int clipId, int filterType, float intensity) {
+    std::lock_guard<std::mutex> lock(m_engineMutex);
+    for (auto& clip : m_clips) {
+        if (clip.id == clipId) {
+            clip.filterType = std::clamp(filterType, 0, 4);
+            clip.filterIntensity = std::clamp(intensity, 0.0f, 1.0f);
+            return true;
+        }
+    }
+    return false;
+}
+
+void GhitaEngine::recalculateDuration() {
+    int64_t maxEnd = 60000; // Default minimum 60s
+    for (const auto& clip : m_clips) {
+        int64_t clipEnd = clip.startMs + clip.durationMs;
+        if (clipEnd > maxEnd) maxEnd = clipEnd;
+    }
+    m_durationMs = maxEnd;
+}
+
+// ========== EXPORT PIPELINE (v0.2.0) ==========
+
+bool GhitaEngine::startExport(const std::string& outputPath, int width, int height, int fps) {
+    std::lock_guard<std::mutex> lock(m_engineMutex);
+    if (!m_ready.load() || m_isExporting.load()) return false;
+    if (outputPath.empty() || width <= 0 || height <= 0 || fps <= 0) return false;
+
+    m_exportOutputPath = outputPath;
+    m_isExporting.store(true);
+    m_exportProgress.store(0.0f);
+
+    // TODO: In a real implementation, this would spawn a thread that:
+    // 1. Opens FFmpeg encoder (libavcodec)
+    // 2. Iterates through timeline frames at the given FPS
+    // 3. Renders each frame via renderFrameRGBA
+    // 4. Encodes and writes to output file
+    // For now, simulate progress advancement per tick
+    return true;
+}
+
+float GhitaEngine::getExportProgress() const {
+    return m_exportProgress.load();
+}
+
+bool GhitaEngine::isExporting() const {
+    return m_isExporting.load();
+}
+
+void GhitaEngine::cancelExport() {
+    m_isExporting.store(false);
+    m_exportProgress.store(0.0f);
+}
+
+// ========== SELF TEST ==========
+
 bool GhitaEngine::selfTest() {
     GhitaEngine engine;
     if (!engine.initialize()) return false;
@@ -210,6 +315,13 @@ bool GhitaEngine::selfTest() {
 
     engine.applyFilter(1, 1.0f);
     if (engine.getActiveFilterType() != 1) return false;
+
+    // v0.2.0 clip tests
+    int id = engine.addClip("test.mp4", 0, 5000, 0);
+    if (id < 0) return false;
+    if (engine.getClipCount() != 1) return false;
+    if (!engine.removeClip(id)) return false;
+    if (engine.getClipCount() != 0) return false;
 
     return true;
 }

@@ -2,7 +2,7 @@ name: ghita_edit
 description: Cross-platform multimedia editor prototype with native C++ engine via Dart FFI.
 publish_to: 'none'
 
-version: 0.1.0+2
+version: 0.2.0+1
 
 environment:
   sdk: ^3.12.2
@@ -15,6 +15,7 @@ dependencies:
   ffi: ^2.1.2
   file_picker: ^8.1.4
   path: ^1.9.0
+  path_provider: ^2.1.4
 
 dev_dependencies:
   flutter_test:

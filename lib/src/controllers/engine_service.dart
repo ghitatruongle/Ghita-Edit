@@ -9,7 +9,7 @@ import '../ffi/native_bindings.dart';
 /// This class owns the FFI boundary — the controller should never call
 /// native bindings directly for engine operations.
 class EngineService {
-  final GhitaNativeBindings _bindings;
+  final GhitaNativeBindings? _bindings;
   Pointer<GhitaEngineContext>? _ctx;
 
   // Render frame buffer allocated via calloc.
@@ -47,23 +47,33 @@ class EngineService {
 
   Uint8List? get frameBytes => _frameBytes;
 
-  EngineService({GhitaNativeBindings? bindings})
-      : _bindings = bindings ?? GhitaNativeBindings.instance;
+  EngineService({GhitaNativeBindings? bindings, bool skipNativeInit = false})
+      : _bindings = bindings ?? (skipNativeInit ? null : _tryLoadBindings());
+
+  static GhitaNativeBindings? _tryLoadBindings() {
+    try {
+      return GhitaNativeBindings.instance;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Initialize the native engine asynchronously and start the preview tick loop.
   Future<void> initialize() async {
     if (isReady) return;
+    final bindings = _bindings;
+    if (bindings == null) return;
 
     try {
-      final ctx = _bindings.createEngine();
+      final ctx = bindings.createEngine();
       if (ctx == nullptr) return;
 
-      final initResult = _bindings.initEngine(ctx);
+      final initResult = bindings.initEngine(ctx);
       if (initResult != 0) return;
 
       _ctx = ctx;
 
-      final verPtr = _bindings.getVersion();
+      final verPtr = bindings.getVersion();
       if (verPtr != nullptr) {
         engineVersion = verPtr.toDartString();
       }
@@ -92,20 +102,23 @@ class EngineService {
   }
 
   void play() {
-    if (!isReady) return;
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return;
     _isPlaying = true;
-    _bindings.play(_ctx!);
+    bindings.play(_ctx!);
   }
 
   void pause() {
-    if (!isReady) return;
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return;
     _isPlaying = false;
-    _bindings.pause(_ctx!);
+    bindings.pause(_ctx!);
   }
 
   void seek(int positionMs) {
-    if (!isReady) return;
-    _bindings.seek(_ctx!, positionMs);
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return;
+    bindings.seek(_ctx!, positionMs);
     _positionMs = positionMs;
   }
 
@@ -113,8 +126,9 @@ class EngineService {
     if (val < 0.0) val = 0.0;
     if (val > 2.0) val = 2.0;
     _volume = val;
-    if (isReady) {
-      _bindings.setVolume(_ctx!, val);
+    final bindings = _bindings;
+    if (isReady && bindings != null) {
+      bindings.setVolume(_ctx!, val);
     }
   }
 
@@ -124,31 +138,36 @@ class EngineService {
     if (intensity > 1.0) intensity = 1.0;
     _activeFilterType = filterType;
     _filterIntensity = intensity;
-    if (isReady) {
-      _bindings.applyFilter(_ctx!, filterType, intensity);
+    final bindings = _bindings;
+    if (isReady && bindings != null) {
+      bindings.applyFilter(_ctx!, filterType, intensity);
     }
   }
 
   void loadMedia(String path) {
-    if (!isReady || path.isEmpty) return;
+    final bindings = _bindings;
+    if (!isReady || path.isEmpty || bindings == null) return;
     final pathPtr = path.toNativeUtf8();
     try {
-      _bindings.loadMedia(_ctx!, pathPtr);
+      bindings.loadMedia(_ctx!, pathPtr);
     } finally {
       calloc.free(pathPtr);
     }
+    // Refresh duration immediately so callers can read it right after load
+    _durationMs = bindings.getDurationMs(_ctx!);
     _positionMs = 0;
   }
 
   bool _tickFrame() {
-    if (!isRunning || !isReady || _framePointer == null) return false;
+    final bindings = _bindings;
+    if (!isRunning || !isReady || _framePointer == null || bindings == null) return false;
 
     try {
-      _isPlaying = _bindings.isPlaying(_ctx!);
-      _positionMs = _bindings.getPositionMs(_ctx!);
-      _durationMs = _bindings.getDurationMs(_ctx!);
+      _isPlaying = bindings.isPlaying(_ctx!);
+      _positionMs = bindings.getPositionMs(_ctx!);
+      _durationMs = bindings.getDurationMs(_ctx!);
 
-      final success = _bindings.renderFrameRgba(
+      final success = bindings.renderFrameRgba(
         _ctx!,
         _framePointer!,
         renderWidth,
@@ -180,8 +199,9 @@ class EngineService {
       calloc.free(_framePointer!);
       _framePointer = null;
     }
-    if (isReady) {
-      _bindings.destroyEngine(_ctx!);
+    final bindings = _bindings;
+    if (isReady && bindings != null) {
+      bindings.destroyEngine(_ctx!);
     }
     _ctx = null;
     _frameBytes = null;

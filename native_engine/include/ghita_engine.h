@@ -8,6 +8,17 @@
 #include <cstdint>
 #include <mutex>
 
+/// Represents a clip in the native timeline.
+struct NativeClip {
+    int id;
+    std::string filePath;
+    int64_t startMs;
+    int64_t durationMs;
+    int trackIndex;
+    int filterType;
+    float filterIntensity;
+};
+
 class GhitaEngine {
 public:
     GhitaEngine();
@@ -37,6 +48,19 @@ public:
 
     bool renderFrameRGBA(uint8_t* outBuffer, int width, int height);
 
+    // Timeline / Clip operations (v0.2.0)
+    int addClip(const std::string& filePath, int64_t startMs, int64_t durationMs, int trackIndex);
+    bool removeClip(int clipId);
+    int getClipCount() const;
+    bool setClipPosition(int clipId, int64_t startMs);
+    bool setClipFilter(int clipId, int filterType, float intensity);
+
+    // Export pipeline (v0.2.0)
+    bool startExport(const std::string& outputPath, int width, int height, int fps);
+    float getExportProgress() const;
+    bool isExporting() const;
+    void cancelExport();
+
     // Engine self-test (used by test runner)
     static bool selfTest();
 
@@ -58,8 +82,18 @@ private:
 
     std::chrono::high_resolution_clock::time_point m_lastTickTime;
 
+    // Timeline clips (v0.2.0)
+    std::vector<NativeClip> m_clips;
+    int m_nextClipId{1};
+
+    // Export state (v0.2.0)
+    std::atomic<bool> m_isExporting{false};
+    std::atomic<float> m_exportProgress{0.0f};
+    std::string m_exportOutputPath;
+
     void updateClock();
     void generateSyntheticFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs);
+    void recalculateDuration();
 };
 
 #endif // GHITA_ENGINE_H

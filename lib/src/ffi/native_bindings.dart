@@ -5,7 +5,9 @@ import 'package:ffi/ffi.dart';
 // Opaque struct pointer
 base class GhitaEngineContext extends Opaque {}
 
-// C Function Signatures & Dart Types
+// ========== C Function Signatures & Dart Types ==========
+
+// Lifecycle
 typedef CGhitaEngineCreate = Pointer<GhitaEngineContext> Function();
 typedef DartGhitaEngineCreate = Pointer<GhitaEngineContext> Function();
 
@@ -15,6 +17,7 @@ typedef DartGhitaEngineDestroy = void Function(Pointer<GhitaEngineContext> ctx);
 typedef CGhitaEngineInit = Int32 Function(Pointer<GhitaEngineContext> ctx);
 typedef DartGhitaEngineInit = int Function(Pointer<GhitaEngineContext> ctx);
 
+// Media
 typedef CGhitaEngineLoadMedia = Int32 Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> filePath);
 typedef DartGhitaEngineLoadMedia = int Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> filePath);
 
@@ -27,6 +30,7 @@ typedef DartGhitaEngineGetMediaWidth = int Function(Pointer<GhitaEngineContext> 
 typedef CGhitaEngineGetMediaHeight = Int32 Function(Pointer<GhitaEngineContext> ctx);
 typedef DartGhitaEngineGetMediaHeight = int Function(Pointer<GhitaEngineContext> ctx);
 
+// Playback
 typedef CGhitaEnginePlay = Void Function(Pointer<GhitaEngineContext> ctx);
 typedef DartGhitaEnginePlay = void Function(Pointer<GhitaEngineContext> ctx);
 
@@ -42,40 +46,97 @@ typedef DartGhitaEngineSeek = void Function(Pointer<GhitaEngineContext> ctx, int
 typedef CGhitaEngineGetPositionMs = Int64 Function(Pointer<GhitaEngineContext> ctx);
 typedef DartGhitaEngineGetPositionMs = int Function(Pointer<GhitaEngineContext> ctx);
 
+// Audio & FX
 typedef CGhitaEngineSetVolume = Void Function(Pointer<GhitaEngineContext> ctx, Float volume);
 typedef DartGhitaEngineSetVolume = void Function(Pointer<GhitaEngineContext> ctx, double volume);
 
 typedef CGhitaEngineApplyFilter = Void Function(Pointer<GhitaEngineContext> ctx, Int32 filterType, Float intensity);
 typedef DartGhitaEngineApplyFilter = void Function(Pointer<GhitaEngineContext> ctx, int filterType, double intensity);
 
+// Rendering
 typedef CGhitaEngineRenderFrameRgba = Bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer, Int32 width, Int32 height);
 typedef DartGhitaEngineRenderFrameRgba = bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer, int width, int height);
 
-// getVersion returns static char* valid for process lifetime (no free needed)
+// Version
 typedef CGhitaEngineGetVersion = Pointer<Utf8> Function();
 typedef DartGhitaEngineGetVersion = Pointer<Utf8> Function();
+
+// ========== Timeline / Clip (v0.2.0) ==========
+typedef CGhitaEngineAddClip = Int32 Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> filePath, Int64 startMs, Int64 durationMs, Int32 trackIndex);
+typedef DartGhitaEngineAddClip = int Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> filePath, int startMs, int durationMs, int trackIndex);
+
+typedef CGhitaEngineRemoveClip = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId);
+typedef DartGhitaEngineRemoveClip = int Function(Pointer<GhitaEngineContext> ctx, int clipId);
+
+typedef CGhitaEngineGetClipCount = Int32 Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineGetClipCount = int Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineSetClipPosition = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Int64 startMs);
+typedef DartGhitaEngineSetClipPosition = int Function(Pointer<GhitaEngineContext> ctx, int clipId, int startMs);
+
+typedef CGhitaEngineSetClipFilter = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Int32 filterType, Float intensity);
+typedef DartGhitaEngineSetClipFilter = int Function(Pointer<GhitaEngineContext> ctx, int clipId, int filterType, double intensity);
+
+// ========== Export Pipeline (v0.2.0) ==========
+typedef CGhitaEngineStartExport = Int32 Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> outputPath, Int32 width, Int32 height, Int32 fps);
+typedef DartGhitaEngineStartExport = int Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> outputPath, int width, int height, int fps);
+
+typedef CGhitaEngineGetExportProgress = Float Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineGetExportProgress = double Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineIsExporting = Bool Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineIsExporting = bool Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineCancelExport = Void Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineCancelExport = void Function(Pointer<GhitaEngineContext> ctx);
+
+// ========== Bindings Class ==========
 
 class GhitaNativeBindings {
   static final GhitaNativeBindings instance = GhitaNativeBindings._internal();
   late DynamicLibrary _lib;
   bool _initialized = false;
 
+  // Lifecycle
   late DartGhitaEngineCreate createEngine;
   late DartGhitaEngineDestroy destroyEngine;
   late DartGhitaEngineInit initEngine;
+
+  // Media
   late DartGhitaEngineLoadMedia loadMedia;
   late DartGhitaEngineGetDurationMs getDurationMs;
   late DartGhitaEngineGetMediaWidth getMediaWidth;
   late DartGhitaEngineGetMediaHeight getMediaHeight;
+
+  // Playback
   late DartGhitaEnginePlay play;
   late DartGhitaEnginePause pause;
   late DartGhitaEngineIsPlaying isPlaying;
   late DartGhitaEngineSeek seek;
   late DartGhitaEngineGetPositionMs getPositionMs;
+
+  // Audio & FX
   late DartGhitaEngineSetVolume setVolume;
   late DartGhitaEngineApplyFilter applyFilter;
+
+  // Rendering
   late DartGhitaEngineRenderFrameRgba renderFrameRgba;
+
+  // Version
   late DartGhitaEngineGetVersion getVersion;
+
+  // Timeline / Clip (v0.2.0)
+  late DartGhitaEngineAddClip addClip;
+  late DartGhitaEngineRemoveClip removeClip;
+  late DartGhitaEngineGetClipCount getClipCount;
+  late DartGhitaEngineSetClipPosition setClipPosition;
+  late DartGhitaEngineSetClipFilter setClipFilter;
+
+  // Export (v0.2.0)
+  late DartGhitaEngineStartExport startExport;
+  late DartGhitaEngineGetExportProgress getExportProgress;
+  late DartGhitaEngineIsExporting isExporting;
+  late DartGhitaEngineCancelExport cancelExport;
 
   GhitaNativeBindings._internal() {
     _loadLibrary();
@@ -105,6 +166,7 @@ class GhitaNativeBindings {
         'libghita_engine.dll',
         '${Directory.current.path}\\native_engine\\build\\libghita_engine.dll',
         '${Directory.current.path}\\build\\windows\\x64\\runner\\Debug\\ghita_engine.dll',
+        '${Directory.current.path}\\build\\windows\\x64\\runner\\Release\\ghita_engine.dll',
         '${Directory(Platform.resolvedExecutable).parent.path}\\ghita_engine.dll',
         '${Directory(Platform.resolvedExecutable).parent.path}\\libghita_engine.dll',
       ];
@@ -122,8 +184,8 @@ class GhitaNativeBindings {
       final candidates = <String>[
         'libghita_engine.dylib',
         'libghita_engine.so',
-        '${Directory.current.path}\\native_engine\\build\\libghita_engine.so',
-        '${Directory(Platform.resolvedExecutable).parent.path}\\libghita_engine.dylib',
+        '${Directory.current.path}/native_engine/build/libghita_engine.so',
+        '${Directory(Platform.resolvedExecutable).parent.path}/libghita_engine.dylib',
       ];
       for (final path in candidates) {
         try {
@@ -138,22 +200,45 @@ class GhitaNativeBindings {
   }
 
   void _bindFunctions() {
-    // Use typed lookupFunction<T, U>() — compatible with Dart SDK >= 3.12
+    // Lifecycle
     createEngine = _lib.lookupFunction<CGhitaEngineCreate, DartGhitaEngineCreate>('ghita_engine_create');
     destroyEngine = _lib.lookupFunction<CGhitaEngineDestroy, DartGhitaEngineDestroy>('ghita_engine_destroy');
     initEngine = _lib.lookupFunction<CGhitaEngineInit, DartGhitaEngineInit>('ghita_engine_init');
+
+    // Media
     loadMedia = _lib.lookupFunction<CGhitaEngineLoadMedia, DartGhitaEngineLoadMedia>('ghita_engine_load_media');
     getDurationMs = _lib.lookupFunction<CGhitaEngineGetDurationMs, DartGhitaEngineGetDurationMs>('ghita_engine_get_duration_ms');
     getMediaWidth = _lib.lookupFunction<CGhitaEngineGetMediaWidth, DartGhitaEngineGetMediaWidth>('ghita_engine_get_media_width');
     getMediaHeight = _lib.lookupFunction<CGhitaEngineGetMediaHeight, DartGhitaEngineGetMediaHeight>('ghita_engine_get_media_height');
+
+    // Playback
     play = _lib.lookupFunction<CGhitaEnginePlay, DartGhitaEnginePlay>('ghita_engine_play');
     pause = _lib.lookupFunction<CGhitaEnginePause, DartGhitaEnginePause>('ghita_engine_pause');
     isPlaying = _lib.lookupFunction<CGhitaEngineIsPlaying, DartGhitaEngineIsPlaying>('ghita_engine_is_playing');
     seek = _lib.lookupFunction<CGhitaEngineSeek, DartGhitaEngineSeek>('ghita_engine_seek');
     getPositionMs = _lib.lookupFunction<CGhitaEngineGetPositionMs, DartGhitaEngineGetPositionMs>('ghita_engine_get_position_ms');
+
+    // Audio & FX
     setVolume = _lib.lookupFunction<CGhitaEngineSetVolume, DartGhitaEngineSetVolume>('ghita_engine_set_volume');
     applyFilter = _lib.lookupFunction<CGhitaEngineApplyFilter, DartGhitaEngineApplyFilter>('ghita_engine_apply_filter');
+
+    // Rendering
     renderFrameRgba = _lib.lookupFunction<CGhitaEngineRenderFrameRgba, DartGhitaEngineRenderFrameRgba>('ghita_engine_render_frame_rgba');
+
+    // Version
     getVersion = _lib.lookupFunction<CGhitaEngineGetVersion, DartGhitaEngineGetVersion>('ghita_engine_get_version');
+
+    // Timeline / Clip (v0.2.0)
+    addClip = _lib.lookupFunction<CGhitaEngineAddClip, DartGhitaEngineAddClip>('ghita_engine_add_clip');
+    removeClip = _lib.lookupFunction<CGhitaEngineRemoveClip, DartGhitaEngineRemoveClip>('ghita_engine_remove_clip');
+    getClipCount = _lib.lookupFunction<CGhitaEngineGetClipCount, DartGhitaEngineGetClipCount>('ghita_engine_get_clip_count');
+    setClipPosition = _lib.lookupFunction<CGhitaEngineSetClipPosition, DartGhitaEngineSetClipPosition>('ghita_engine_set_clip_position');
+    setClipFilter = _lib.lookupFunction<CGhitaEngineSetClipFilter, DartGhitaEngineSetClipFilter>('ghita_engine_set_clip_filter');
+
+    // Export (v0.2.0)
+    startExport = _lib.lookupFunction<CGhitaEngineStartExport, DartGhitaEngineStartExport>('ghita_engine_start_export');
+    getExportProgress = _lib.lookupFunction<CGhitaEngineGetExportProgress, DartGhitaEngineGetExportProgress>('ghita_engine_get_export_progress');
+    isExporting = _lib.lookupFunction<CGhitaEngineIsExporting, DartGhitaEngineIsExporting>('ghita_engine_is_exporting');
+    cancelExport = _lib.lookupFunction<CGhitaEngineCancelExport, DartGhitaEngineCancelExport>('ghita_engine_cancel_export');
   }
 }

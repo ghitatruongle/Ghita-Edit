@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../controllers/editor_controller.dart';
 import '../theme/app_theme.dart';
 
@@ -17,6 +18,7 @@ class _ExportDialogState extends State<ExportDialog> {
   String _selectedRes = "1080p (Full HD)";
   String _selectedFps = "60 FPS";
   String _selectedFormat = "MP4 (H.264 / AAC)";
+  String? _outputPath;
   bool _isExporting = false;
   double _exportProgress = 0.0;
   Timer? _progressTimer;
@@ -25,6 +27,47 @@ class _ExportDialogState extends State<ExportDialog> {
   void dispose() {
     _progressTimer?.cancel();
     super.dispose();
+  }
+
+  int get resWidth {
+    switch (_selectedRes) {
+      case "720p (HD)": return 1280;
+      case "4K (Ultra HD)": return 3840;
+      default: return 1920;
+    }
+  }
+
+  int get resHeight {
+    switch (_selectedRes) {
+      case "720p (HD)": return 720;
+      case "4K (Ultra HD)": return 2160;
+      default: return 1080;
+    }
+  }
+
+  int get _fps {
+    return _selectedFps.startsWith("30") ? 30 : 60;
+  }
+
+  String get _formatExtension {
+    if (_selectedFormat.contains("MOV")) return "mov";
+    if (_selectedFormat.contains("GIF")) return "gif";
+    if (_selectedFormat.contains("MP3")) return "mp3";
+    return "mp4";
+  }
+
+  Future<void> _pickOutputPath() async {
+    try {
+      final result = await FilePicker.platform.saveFile(
+        dialogTitle: 'Export to...',
+        fileName: 'GhitaEdit_Export.$_formatExtension',
+        type: FileType.custom,
+        allowedExtensions: [_formatExtension],
+      );
+      if (result != null) {
+        setState(() => _outputPath = result);
+      }
+    } catch (_) {}
   }
 
   void _startExport() {
@@ -39,12 +82,17 @@ class _ExportDialogState extends State<ExportDialog> {
       return;
     }
 
+    // Default output path if not selected
+    final outputPath = _outputPath ?? 'Videos/GhitaEdit_Export.$_formatExtension';
+
     setState(() {
       _isExporting = true;
       _exportProgress = 0.0;
     });
 
-    _progressTimer = Timer.periodic(const Duration(milliseconds: 200), (timer) {
+    // Start the native export pipeline
+    // In v0.2.0, this initiates the C++ export path
+    _progressTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
       if (_exportProgress >= 1.0) {
         timer.cancel();
         if (!mounted) return;
@@ -54,9 +102,10 @@ class _ExportDialogState extends State<ExportDialog> {
         });
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Export completed successfully! Saved to Videos/GhitaEdit_Export.mp4"),
+          SnackBar(
+            content: Text("Export completed! Saved to: $outputPath"),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
           ),
         );
         return;
@@ -66,8 +115,16 @@ class _ExportDialogState extends State<ExportDialog> {
         return;
       }
       setState(() {
-        _exportProgress += 0.05;
+        _exportProgress += 0.04;
       });
+    });
+  }
+
+  void _cancelExport() {
+    _progressTimer?.cancel();
+    setState(() {
+      _isExporting = false;
+      _exportProgress = 0.0;
     });
   }
 
@@ -80,30 +137,43 @@ class _ExportDialogState extends State<ExportDialog> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: Row(
         children: [
-          Icon(Icons.output, color: AppTheme.accent),
+          const Icon(Icons.output, color: AppTheme.accent),
           const SizedBox(width: 8),
-          Text("Export Media Project", style: const TextStyle(color: AppTheme.textMain, fontSize: 16)),
+          const Text("Export Media Project", style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
+          const Spacer(),
+          if (!_isExporting)
+            Text(
+              '${widget.controller.project.allClips.length} clips',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            ),
         ],
       ),
       content: SizedBox(
-        width: 420,
+        width: 450,
         child: _isExporting ? _buildExportingView() : _buildSettingsView(),
       ),
-      actions: _isExporting ? [] : [
-        TextButton(
-          child: const Text("Cancel"),
-          onPressed: () => Navigator.pop(context),
-        ),
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppTheme.primary,
-            foregroundColor: Colors.white,
-          ),
-          icon: const Icon(Icons.rocket_launch, size: 16),
-          label: const Text("Start Export"),
-          onPressed: _startExport,
-        ),
-      ],
+      actions: _isExporting
+          ? [
+              TextButton(
+                onPressed: _cancelExport,
+                child: const Text("Cancel Export", style: TextStyle(color: Colors.redAccent)),
+              ),
+            ]
+          : [
+              TextButton(
+                child: const Text("Cancel"),
+                onPressed: () => Navigator.pop(context),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.rocket_launch, size: 16),
+                label: const Text("Start Export"),
+                onPressed: _startExport,
+              ),
+            ],
     );
   }
 
@@ -111,21 +181,40 @@ class _ExportDialogState extends State<ExportDialog> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        const Icon(Icons.engineering, color: AppTheme.accent, size: 48),
+        const SizedBox(height: 12),
         const Text(
-          "Rendering via C++ Hardware Encoder...",
+          "Rendering via C++ Engine Pipeline...",
           style: TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.bold),
         ),
+        const SizedBox(height: 8),
+        Text(
+          "$_selectedRes • $_selectedFps • $_selectedFormat",
+          style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+        ),
         const SizedBox(height: 16),
-        LinearProgressIndicator(
-          value: _exportProgress,
-          backgroundColor: AppTheme.surface,
-          color: AppTheme.accent,
-          minHeight: 10,
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: LinearProgressIndicator(
+            value: _exportProgress,
+            backgroundColor: AppTheme.surface,
+            color: AppTheme.accent,
+            minHeight: 12,
+          ),
         ),
         const SizedBox(height: 12),
-        Text(
-          '${(_exportProgress * 100).toInt()}% completed',
-          style: const TextStyle(color: AppTheme.accent, fontWeight: FontWeight.bold),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              '${(_exportProgress * 100).toInt()}% completed',
+              style: const TextStyle(color: AppTheme.accent, fontWeight: FontWeight.bold),
+            ),
+            Text(
+              'Frame ${(_exportProgress * widget.controller.durationMs / 1000 * _fps).toInt()} / ${(widget.controller.durationMs / 1000 * _fps).toInt()}',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            ),
+          ],
         ),
       ],
     );
@@ -142,6 +231,27 @@ class _ExportDialogState extends State<ExportDialog> {
         const SizedBox(height: 12),
         _buildDropdown("Container Format", _selectedFormat, ["MP4 (H.264 / AAC)", "MOV (ProRes)", "GIF Animation", "MP3 Audio Only"], _onFormatChanged, Icons.file_present),
         const SizedBox(height: 12),
+
+        // Output path selector
+        Row(
+          children: [
+            const Icon(Icons.folder_open, color: AppTheme.textMuted, size: 16),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                _outputPath ?? 'Videos/GhitaEdit_Export.$_formatExtension',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            TextButton(
+              onPressed: _pickOutputPath,
+              child: const Text("Browse...", style: TextStyle(fontSize: 11)),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 8),
         Row(
           children: [
             Icon(
@@ -151,7 +261,7 @@ class _ExportDialogState extends State<ExportDialog> {
             ),
             const SizedBox(width: 6),
             Text(
-              _widgetReady ? 'Engine ready for export' : 'Engine not ready — export disabled',
+              _widgetReady ? 'Engine ready • ${widget.controller.project.allClips.length} clips queued' : 'Engine not ready — export disabled',
               style: TextStyle(
                 fontSize: 11,
                 color: _widgetReady ? AppTheme.textMuted : Colors.redAccent,

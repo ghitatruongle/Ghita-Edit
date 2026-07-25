@@ -46,14 +46,14 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       final result = await FilePicker.platform.pickFiles(
         dialogTitle: 'Import Media File',
         type: FileType.custom,
-        allowedExtensions: ['mp4', 'mov', 'avi', 'mkv', 'mp3', 'wav', 'flac', 'png', 'jpg', 'jpeg'],
+        allowedExtensions: ['mp4', 'mov', 'avi', 'mkv', 'mp3', 'wav', 'flac', 'png', 'jpg', 'jpeg', 'webm', 'gif'],
       );
       if (result != null && mounted) {
-        widget.controller.loadMedia(result.files.single.path!);
+        widget.controller.importMedia(result.files.single.path!);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Media loaded into C++ Core Engine!'),
-            duration: const Duration(seconds: 2),
+          const SnackBar(
+            content: Text('Media imported to timeline!'),
+            duration: Duration(seconds: 2),
           ),
         );
       }
@@ -150,7 +150,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                   itemBuilder: (context, index) {
                     final item = _filteredMedia[index];
                     return GestureDetector(
-                      onTap: () => widget.controller.loadMedia(item["name"]!),
+                      onTap: () => widget.controller.importMedia(item["name"]!),
                       child: Container(
                         decoration: BoxDecoration(
                           color: AppTheme.card,

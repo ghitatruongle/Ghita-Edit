@@ -110,6 +110,50 @@ void test_load_media_mock() {
 void test_get_version_string() {
     const char* v = ghita_engine_get_version();
     EXPECT_TRUE(v != nullptr);
+    // v0.2.0 should be in the string
+    EXPECT_TRUE(std::string(v).find("0.2.0") != std::string::npos);
+}
+
+void test_clip_operations() {
+    GhitaEngine engine;
+    engine.initialize();
+
+    // Add clips
+    int id1 = engine.addClip("video1.mp4", 0, 5000, 0);
+    EXPECT_TRUE(id1 > 0);
+    EXPECT_EQ(engine.getClipCount(), 1);
+
+    int id2 = engine.addClip("video2.mp4", 5000, 3000, 0);
+    EXPECT_TRUE(id2 > 0);
+    EXPECT_EQ(engine.getClipCount(), 2);
+
+    // Move clip
+    EXPECT_TRUE(engine.setClipPosition(id1, 1000));
+
+    // Set clip filter
+    EXPECT_TRUE(engine.setClipFilter(id2, 2, 0.8f));
+
+    // Remove clip
+    EXPECT_TRUE(engine.removeClip(id1));
+    EXPECT_EQ(engine.getClipCount(), 1);
+
+    // Remove non-existent clip
+    EXPECT_FALSE(engine.removeClip(9999));
+}
+
+void test_export_lifecycle() {
+    GhitaEngine engine;
+    engine.initialize();
+
+    EXPECT_FALSE(engine.isExporting());
+    EXPECT_TRUE(engine.startExport("output.mp4", 1920, 1080, 60));
+    EXPECT_TRUE(engine.isExporting());
+
+    engine.cancelExport();
+    EXPECT_FALSE(engine.isExporting());
+
+    // Invalid export params
+    EXPECT_FALSE(engine.startExport("", 0, 0, 0));
 }
 
 int main() {
@@ -123,6 +167,8 @@ int main() {
     TEST(test_seek_bounds);
     TEST(test_load_media_mock);
     TEST(test_get_version_string);
+    TEST(test_clip_operations);
+    TEST(test_export_lifecycle);
 
     std::cout << "\n--- Result: " << g_passed << " passed, " << g_failed << " failed ---" << std::endl;
 

@@ -45,6 +45,19 @@ GHITA_API void ghita_engine_apply_filter(GhitaEngineContext* ctx, int filter_typ
 // Frame Rendering (Populates RGBA buffer for preview)
 GHITA_API bool ghita_engine_render_frame_rgba(GhitaEngineContext* ctx, uint8_t* out_buffer, int width, int height);
 
+// Timeline / Clip operations (v0.2.0)
+GHITA_API int ghita_engine_add_clip(GhitaEngineContext* ctx, const char* file_path, int64_t start_ms, int64_t duration_ms, int track_index);
+GHITA_API int ghita_engine_remove_clip(GhitaEngineContext* ctx, int clip_id);
+GHITA_API int ghita_engine_get_clip_count(GhitaEngineContext* ctx);
+GHITA_API int ghita_engine_set_clip_position(GhitaEngineContext* ctx, int clip_id, int64_t start_ms);
+GHITA_API int ghita_engine_set_clip_filter(GhitaEngineContext* ctx, int clip_id, int filter_type, float intensity);
+
+// Export pipeline (v0.2.0)
+GHITA_API int ghita_engine_start_export(GhitaEngineContext* ctx, const char* output_path, int width, int height, int fps);
+GHITA_API float ghita_engine_get_export_progress(GhitaEngineContext* ctx);
+GHITA_API bool ghita_engine_is_exporting(GhitaEngineContext* ctx);
+GHITA_API void ghita_engine_cancel_export(GhitaEngineContext* ctx);
+
 // Version info
 GHITA_API const char* ghita_engine_get_version(void);
 

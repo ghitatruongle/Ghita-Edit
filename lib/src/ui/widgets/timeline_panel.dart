@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../controllers/editor_controller.dart';
+import '../../models/clip.dart' as models;
+import '../../models/track.dart';
 import '../theme/app_theme.dart';
 
 class TimelinePanel extends StatefulWidget {
@@ -12,7 +14,9 @@ class TimelinePanel extends StatefulWidget {
 }
 
 class _TimelinePanelState extends State<TimelinePanel> {
-  double _zoomScale = 1.0; // pixels per second ratio factor
+  double _zoomScale = 1.0;
+  String? _draggingClipId;
+  int? _dragStartMs;
 
   @override
   Widget build(BuildContext context) {
@@ -24,55 +28,14 @@ class _TimelinePanelState extends State<TimelinePanel> {
       color: AppTheme.card,
       child: Column(
         children: [
-          // Timeline Control Toolbar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: const BoxDecoration(
-              color: AppTheme.surface,
-              border: Border(bottom: BorderSide(color: AppTheme.divider)),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.content_cut, size: 18, color: AppTheme.accent),
-                  tooltip: "Split Clip at Playhead",
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Split clip at ${currentPosSec.toStringAsFixed(2)}s')),
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
-                  tooltip: "Delete Selected Clip",
-                  onPressed: () {},
-                ),
-                const VerticalDivider(color: AppTheme.divider, indent: 8, endIndent: 8),
-                IconButton(
-                  icon: const Icon(Icons.zoom_out, size: 18, color: AppTheme.textMuted),
-                  onPressed: () => setState(() => _zoomScale = (_zoomScale - 0.2).clamp(0.5, 3.0)),
-                ),
-                Text(
-                  '${(_zoomScale * 100).toInt()}%',
-                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.zoom_in, size: 18, color: AppTheme.textMuted),
-                  onPressed: () => setState(() => _zoomScale = (_zoomScale + 0.2).clamp(0.5, 3.0)),
-                ),
-                const Spacer(),
-                const Icon(Icons.grid_on, size: 18, color: AppTheme.primaryLight),
-                const SizedBox(width: 4),
-                const Text("Snap ON", style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
-              ],
-            ),
-          ),
+          // Timeline Toolbar
+          _buildToolbar(ctrl, currentPosSec),
 
           // Interactive Timeline Area
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final timelineWidth = constraints.maxWidth - 120; // 120px for Track Headers
+                final timelineWidth = constraints.maxWidth - 120;
                 final pxPerSec = (timelineWidth / (totalDurationSec > 0 ? totalDurationSec : 60)) * _zoomScale;
                 final playheadX = currentPosSec * pxPerSec;
 
@@ -84,9 +47,9 @@ class _TimelinePanelState extends State<TimelinePanel> {
                       child: Column(
                         children: [
                           _buildTrackHeaderLabel("Timecode", Icons.access_time, isRuler: true),
-                          Expanded(child: _buildTrackHeaderLabel("Video Track 1", Icons.videocam)),
-                          Expanded(child: _buildTrackHeaderLabel("Text / Overlay", Icons.subtitles)),
-                          Expanded(child: _buildTrackHeaderLabel("Audio Track 1", Icons.graphic_eq)),
+                          ...ctrl.tracks.map((track) => Expanded(
+                            child: _buildTrackHeader(track, ctrl),
+                          )),
                         ],
                       ),
                     ),
@@ -95,18 +58,19 @@ class _TimelinePanelState extends State<TimelinePanel> {
                     Expanded(
                       child: GestureDetector(
                         onHorizontalDragUpdate: (details) {
-                          final newSec = (details.localPosition.dx / pxPerSec).clamp(0, totalDurationSec);
+                          if (_draggingClipId != null) return; // Don't seek while dragging
+                          final newSec = (details.localPosition.dx / pxPerSec).clamp(0.0, totalDurationSec);
                           ctrl.seek((newSec * 1000).toInt());
                         },
                         onTapDown: (details) {
-                          final newSec = (details.localPosition.dx / pxPerSec).clamp(0, totalDurationSec);
+                          final newSec = (details.localPosition.dx / pxPerSec).clamp(0.0, totalDurationSec);
                           ctrl.seek((newSec * 1000).toInt());
                         },
                         child: Stack(
                           children: [
                             Column(
                               children: [
-                                // Time Ruler Ticks
+                                // Time Ruler
                                 Container(
                                   height: 28,
                                   color: AppTheme.surface,
@@ -119,131 +83,35 @@ class _TimelinePanelState extends State<TimelinePanel> {
                                   ),
                                 ),
 
-                                // Video Track Lane
-                                Expanded(
-                                  child: Container(
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFF1B1D2C),
-                                      border: Border(bottom: BorderSide(color: AppTheme.divider)),
-                                    ),
-                                    child: Stack(
-                                      children: [
-                                        Positioned(
-                                          left: 0,
-                                          width: totalDurationSec * pxPerSec * 0.8,
-                                          top: 4,
-                                          bottom: 4,
-                                          child: Container(
-                                            decoration: BoxDecoration(
-                                              color: AppTheme.primary.withOpacity(0.8),
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(color: AppTheme.primaryLight),
-                                            ),
-                                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                                            child: Row(
-                                              children: [
-                                                const Icon(Icons.movie, size: 14, color: Colors.white),
-                                                const SizedBox(width: 6),
-                                                Expanded(
-                                                  child: Text(
-                                                    ctrl.currentMediaName,
-                                                    overflow: TextOverflow.ellipsis,
-                                                    style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 11,
-                                                      fontWeight: FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-
-                                // Overlay Track Lane
-                                Expanded(
-                                  child: Container(
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFF181A25),
-                                      border: Border(bottom: BorderSide(color: AppTheme.divider)),
-                                    ),
-                                    child: Stack(
-                                      children: [
-                                        Positioned(
-                                          left: 10 * pxPerSec,
-                                          width: 15 * pxPerSec,
-                                          top: 4,
-                                          bottom: 4,
-                                          child: Container(
-                                            decoration: BoxDecoration(
-                                              color: Colors.amber.shade800.withOpacity(0.8),
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(color: Colors.amberAccent),
-                                            ),
-                                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                                            child: const Center(
-                                              child: Text(
-                                                "Title Overlay",
-                                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-
-                                // Audio Track Lane
-                                Expanded(
-                                  child: Container(
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFF151722),
-                                    ),
-                                    child: Stack(
-                                      children: [
-                                        Positioned(
-                                          left: 0,
-                                          width: totalDurationSec * pxPerSec,
-                                          top: 4,
-                                          bottom: 4,
-                                          child: Container(
-                                            decoration: BoxDecoration(
-                                              color: AppTheme.accent.withOpacity(0.3),
-                                              borderRadius: BorderRadius.circular(6),
-                                              border: Border.all(color: AppTheme.accent),
-                                            ),
-                                            child: CustomPaint(
-                                              painter: AudioWaveformPainter(color: AppTheme.accent),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
+                                // Track Lanes with real clips
+                                ...ctrl.tracks.map((track) => Expanded(
+                                  child: _buildTrackLane(track, ctrl, pxPerSec, totalDurationSec),
+                                )),
                               ],
                             ),
 
-                            // Red Interactive Playhead Indicator Line
+                            // Playhead
                             Positioned(
-                              left: playheadX,
+                              left: playheadX.clamp(0, constraints.maxWidth - 120),
                               top: 0,
                               bottom: 0,
                               child: Container(
                                 width: 2,
                                 color: Colors.redAccent,
                                 child: Stack(
-                                  clipBehavior: Clip.none,
+                                  clipBehavior: Clip.none, // Flutter's Clip enum
                                   children: [
                                     Positioned(
-                                      top: -4,
+                                      top: -2,
                                       left: -5,
-                                      child: Icon(Icons.arrow_drop_down, color: Colors.redAccent, size: 14),
+                                      child: Container(
+                                        width: 12,
+                                        height: 12,
+                                        decoration: const BoxDecoration(
+                                          color: Colors.redAccent,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -259,6 +127,200 @@ class _TimelinePanelState extends State<TimelinePanel> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildToolbar(EditorController ctrl, double currentPosSec) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: const BoxDecoration(
+        color: AppTheme.surface,
+        border: Border(bottom: BorderSide(color: AppTheme.divider)),
+      ),
+      child: Row(
+        children: [
+          // Split button
+          _toolButton(Icons.content_cut, "Split at Playhead (S)", AppTheme.accent, ctrl.splitAtPlayhead),
+          _toolButton(Icons.delete_outline, "Delete Selected (Del)", Colors.redAccent, ctrl.deleteSelectedClip),
+
+          const VerticalDivider(color: AppTheme.divider, indent: 8, endIndent: 8),
+
+          // Zoom controls
+          IconButton(
+            icon: const Icon(Icons.zoom_out, size: 18, color: AppTheme.textMuted),
+            onPressed: () => setState(() => _zoomScale = (_zoomScale - 0.2).clamp(0.4, 4.0)),
+          ),
+          Text(
+            '${(_zoomScale * 100).toInt()}%',
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+          ),
+          IconButton(
+            icon: const Icon(Icons.zoom_in, size: 18, color: AppTheme.textMuted),
+            onPressed: () => setState(() => _zoomScale = (_zoomScale + 0.2).clamp(0.4, 4.0)),
+          ),
+
+          const Spacer(),
+
+          // Status info
+          Text(
+            '${ctrl.project.allClips.length} clips • ${(ctrl.durationMs / 1000).toStringAsFixed(1)}s',
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+          ),
+          const SizedBox(width: 12),
+          const Icon(Icons.grid_on, size: 18, color: AppTheme.primaryLight),
+          const SizedBox(width: 4),
+          const Text("Snap ON", style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+
+  Widget _toolButton(IconData icon, String tooltip, Color color, VoidCallback onPressed) {
+    return IconButton(
+      icon: Icon(icon, size: 18, color: color),
+      tooltip: tooltip,
+      onPressed: onPressed,
+    );
+  }
+
+  Widget _buildTrackHeader(Track track, EditorController ctrl) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: const BoxDecoration(
+        color: AppTheme.card,
+        border: Border(
+          right: BorderSide(color: AppTheme.divider),
+          bottom: BorderSide(color: AppTheme.divider),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(_iconForTrackType(track.type), size: 14, color: AppTheme.textMuted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              track.name,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppTheme.textMain, fontSize: 11),
+            ),
+          ),
+          // Mute/Lock buttons
+          GestureDetector(
+            onTap: () => setState(() => track.isMuted = !track.isMuted),
+            child: Icon(
+              track.isMuted ? Icons.volume_off : Icons.volume_up,
+              size: 12,
+              color: track.isMuted ? Colors.redAccent : AppTheme.textMuted,
+            ),
+          ),
+          const SizedBox(width: 4),
+          GestureDetector(
+            onTap: () => setState(() => track.isLocked = !track.isLocked),
+            child: Icon(
+              track.isLocked ? Icons.lock : Icons.lock_open,
+              size: 12,
+              color: track.isLocked ? Colors.amberAccent : AppTheme.textMuted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrackLane(Track track, EditorController ctrl, double pxPerSec, double totalDurationSec) {
+    final laneColor = _colorForTrackType(track.type);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: laneColor.withOpacity(0.05),
+        border: const Border(bottom: BorderSide(color: AppTheme.divider)),
+      ),
+      child: Stack(
+        children: [
+          // Render all clips in this track
+          ...track.clips.map((clip) => _buildClipWidget(clip, track, ctrl, pxPerSec)),
+
+          // Show "empty track" hint if no clips
+          if (track.clips.isEmpty)
+            Center(
+              child: Text(
+                "Drop media here or import file",
+                style: TextStyle(color: AppTheme.textMuted.withOpacity(0.5), fontSize: 10),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClipWidget(models.Clip clip, Track track, EditorController ctrl, double pxPerSec) {
+    final leftPx = (clip.timelineStartMs / 1000.0) * pxPerSec;
+    final widthPx = (clip.durationMs / 1000.0) * pxPerSec;
+    final clipColor = _colorForClipType(clip.type);
+
+    return Positioned(
+      left: leftPx,
+      width: widthPx.clamp(20, double.infinity),
+      top: 3,
+      bottom: 3,
+      child: GestureDetector(
+        onTap: () => ctrl.selectClip(clip.id),
+        onHorizontalDragStart: (_) {
+          _draggingClipId = clip.id;
+          _dragStartMs = clip.timelineStartMs; // Capture BEFORE mutation
+          ctrl.selectClip(clip.id);
+        },
+        onHorizontalDragUpdate: (details) {
+          if (track.isLocked) return;
+          final deltaMs = (details.delta.dx / pxPerSec * 1000).toInt();
+          final newStart = (clip.timelineStartMs + deltaMs).clamp(0, ctrl.durationMs);
+          clip.timelineStartMs = newStart;
+          setState(() {});
+        },
+        onHorizontalDragEnd: (_) {
+          if (_draggingClipId != null && _dragStartMs != null) {
+            // Only record command if position actually changed
+            if (clip.timelineStartMs != _dragStartMs) {
+              ctrl.moveClipFrom(track.id, clip.id, _dragStartMs!, clip.timelineStartMs);
+            }
+            _draggingClipId = null;
+            _dragStartMs = null;
+          }
+        },
+        child: Container(
+          decoration: BoxDecoration(
+            color: clip.isSelected ? clipColor.withOpacity(0.9) : clipColor.withOpacity(0.7),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: clip.isSelected ? Colors.white : clipColor,
+              width: clip.isSelected ? 2 : 1,
+            ),
+            boxShadow: clip.isSelected ? [
+              BoxShadow(color: clipColor.withOpacity(0.4), blurRadius: 8),
+            ] : null,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Row(
+            children: [
+              Icon(_iconForClipType(clip.type), size: 12, color: Colors.white),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  clip.displayName,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              if (clip.filterType > 0)
+                const Icon(Icons.auto_fix_high, size: 10, color: Colors.amberAccent),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -293,6 +355,42 @@ class _TimelinePanelState extends State<TimelinePanel> {
       ),
     );
   }
+
+  IconData _iconForTrackType(TrackType type) {
+    switch (type) {
+      case TrackType.video: return Icons.videocam;
+      case TrackType.overlay: return Icons.subtitles;
+      case TrackType.audio: return Icons.graphic_eq;
+    }
+  }
+
+  Color _colorForTrackType(TrackType type) {
+    switch (type) {
+      case TrackType.video: return AppTheme.primary;
+      case TrackType.overlay: return Colors.amber;
+      case TrackType.audio: return AppTheme.accent;
+    }
+  }
+
+  Color _colorForClipType(models.ClipType type) {
+    switch (type) {
+      case models.ClipType.video: return AppTheme.primary;
+      case models.ClipType.audio: return AppTheme.accent;
+      case models.ClipType.image: return Colors.teal;
+      case models.ClipType.text: return Colors.amber;
+      case models.ClipType.overlay: return Colors.orange;
+    }
+  }
+
+  IconData _iconForClipType(models.ClipType type) {
+    switch (type) {
+      case models.ClipType.video: return Icons.movie;
+      case models.ClipType.audio: return Icons.music_note;
+      case models.ClipType.image: return Icons.image;
+      case models.ClipType.text: return Icons.title;
+      case models.ClipType.overlay: return Icons.layers;
+    }
+  }
 }
 
 // Custom Painter for Timeline Ruler
@@ -310,17 +408,16 @@ class TimelineRulerPainter extends CustomPainter {
 
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
 
-    int stepSec = 5; // Tick every 5 seconds
-    if (pxPerSec < 10) stepSec = 10;
+    int stepSec = 5;
+    if (pxPerSec < 8) stepSec = 10;
+    if (pxPerSec < 4) stepSec = 30;
 
     for (int s = 0; s <= totalDurationSec; s += stepSec) {
       double x = s * pxPerSec;
       if (x > size.width) break;
 
-      // Draw tick mark
       canvas.drawLine(Offset(x, size.height - 8), Offset(x, size.height), paint);
 
-      // Draw label
       textPainter.text = TextSpan(
         text: '${s}s',
         style: const TextStyle(color: AppTheme.textMuted, fontSize: 9),
@@ -334,27 +431,4 @@ class TimelineRulerPainter extends CustomPainter {
   bool shouldRepaint(covariant TimelineRulerPainter oldDelegate) {
     return oldDelegate.pxPerSec != pxPerSec || oldDelegate.totalDurationSec != totalDurationSec;
   }
-}
-
-// Custom Painter for Audio Waveform
-class AudioWaveformPainter extends CustomPainter {
-  final Color color;
-
-  AudioWaveformPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color.withOpacity(0.7)
-      ..strokeWidth = 1.5;
-
-    double midY = size.height / 2;
-    for (double x = 0; x < size.width; x += 4) {
-      double h = ((x * 0.17) % 1.0) * (size.height * 0.7);
-      canvas.drawLine(Offset(x, midY - h / 2), Offset(x, midY + h / 2), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

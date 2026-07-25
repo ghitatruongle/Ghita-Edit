@@ -1,0 +1,57 @@
+{
+  "name": "Untitled Project",
+  "version": "0.2.0",
+  "createdAt": "2026-07-25T21:11:08.485565",
+  "modifiedAt": "2026-07-25T21:15:09.916347",
+  "tracks": [
+    {
+      "id": "track_video_1",
+      "name": "Video Track 1",
+      "type": 0,
+      "clips": [],
+      "isMuted": false,
+      "isLocked": false,
+      "isVisible": true,
+      "volume": 1.0
+    },
+    {
+      "id": "track_overlay_1",
+      "name": "Text / Overlay",
+      "type": 1,
+      "clips": [],
+      "isMuted": false,
+      "isLocked": false,
+      "isVisible": true,
+      "volume": 1.0
+    },
+    {
+      "id": "track_audio_1",
+      "name": "Audio Track 1",
+      "type": 2,
+      "clips": [
+        {
+          "id": "clip_1784988903423",
+          "sourceFilePath": "C:\\Users\\Acer\\Downloads\\Thoại 002.mp3",
+          "displayName": "Thoại 002.mp3",
+          "timelineStartMs": 0,
+          "durationMs": 10000,
+          "sourceInMs": 0,
+          "sourceOutMs": 10000,
+          "trackIndex": 2,
+          "filterType": 0,
+          "filterIntensity": 1.0,
+          "volume": 1.0,
+          "type": 1
+        }
+      ],
+      "isMuted": false,
+      "isLocked": false,
+      "isVisible": true,
+      "volume": 1.0
+    }
+  ],
+  "outputWidth": 1920,
+  "outputHeight": 1080,
+  "outputFps": 60,
+  "outputFormat": "mp4"
+}
