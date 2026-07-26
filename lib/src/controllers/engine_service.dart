@@ -23,6 +23,10 @@ class EngineService {
   bool get isRunning => _isRunning;
   String engineVersion = '';
 
+  // Public accessors for export dialog
+  Pointer<GhitaEngineContext> get ctx => _ctx ?? nullptr;
+  GhitaNativeBindings? get bindings => _bindings;
+
   // Properties sourced from native engine
   int _positionMs = 0;
   int get positionMs => _positionMs;
@@ -69,7 +73,11 @@ class EngineService {
       if (ctx == nullptr) return;
 
       final initResult = bindings.initEngine(ctx);
-      if (initResult != 0) return;
+      if (initResult != 0) {
+        // Clean up the context if init failed to prevent memory leak
+        bindings.destroyEngine(ctx);
+        return;
+      }
 
       _ctx = ctx;
 
@@ -123,12 +131,11 @@ class EngineService {
   }
 
   void setVolume(double val) {
-    if (val < 0.0) val = 0.0;
-    if (val > 2.0) val = 2.0;
-    _volume = val;
+    final clamped = val.clamp(0.0, 2.0);
+    _volume = clamped;
     final bindings = _bindings;
     if (isReady && bindings != null) {
-      bindings.setVolume(_ctx!, val);
+      bindings.setVolume(_ctx!, clamped);
     }
   }
 
@@ -156,6 +163,22 @@ class EngineService {
     // Refresh duration immediately so callers can read it right after load
     _durationMs = bindings.getDurationMs(_ctx!);
     _positionMs = 0;
+  }
+
+  /// Retrieve audio waveform samples from the native engine (v0.3.0).
+  Float32List getAudioWaveform(int count) {
+    final bindings = _bindings;
+    if (!isReady || bindings == null || count <= 0) return Float32List(0);
+    final ptr = calloc<Float>(count);
+    try {
+      final ok = bindings.getAudioWaveform(_ctx!, ptr, count);
+      if (ok) {
+        return Float32List.fromList(ptr.asTypedList(count));
+      }
+      return Float32List(0);
+    } finally {
+      calloc.free(ptr);
+    }
   }
 
   bool _tickFrame() {
@@ -199,12 +222,12 @@ class EngineService {
       calloc.free(_framePointer!);
       _framePointer = null;
     }
+    _frameBytes = null;
     final bindings = _bindings;
     if (isReady && bindings != null) {
       bindings.destroyEngine(_ctx!);
     }
     _ctx = null;
-    _frameBytes = null;
     engineVersion = '';
   }
 }

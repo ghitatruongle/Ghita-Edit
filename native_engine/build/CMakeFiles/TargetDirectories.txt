@@ -1,6 +1,0 @@
-E:/Ghita Edit/native_engine/build/CMakeFiles/ghita_engine.dir
-E:/Ghita Edit/native_engine/build/CMakeFiles/ghita_engine_static.dir
-E:/Ghita Edit/native_engine/build/CMakeFiles/native_engine_test.dir
-E:/Ghita Edit/native_engine/build/CMakeFiles/test.dir
-E:/Ghita Edit/native_engine/build/CMakeFiles/edit_cache.dir
-E:/Ghita Edit/native_engine/build/CMakeFiles/rebuild_cache.dir

@@ -1,0 +1,53 @@
+name: Ghita Edit CI / CD Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  flutter-analyze-and-test:
+    name: Flutter Linting & Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.x'
+          channel: 'stable'
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Analyze Project (Strict Linter Check)
+        run: flutter analyze --fatal-infos
+
+      - name: Run Test Suite
+        run: flutter test --coverage
+
+  build-native-engine-windows:
+    name: Build C++ Native Engine (Windows MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B native_engine/build -S native_engine -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build C++ Shared Library
+        run: cmake --build native_engine/build --config Release
+
+  build-native-engine-linux:
+    name: Build C++ Native Engine (Linux GCC)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B native_engine/build -S native_engine -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build C++ Shared Library
+        run: cmake --build native_engine/build --config Release

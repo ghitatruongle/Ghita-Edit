@@ -7,7 +7,7 @@ struct GhitaEngineContext {
 };
 
 // Static string is safe to return because it lives for the process lifetime
-static const char VERSION_STRING[] = "Ghita Core Engine v0.2.0 (C++/Flutter)";
+static const char VERSION_STRING[] = "Ghita Core Engine v0.3.0 (C++/Flutter)";
 
 extern "C" {
 
@@ -132,6 +132,11 @@ GHITA_API void ghita_engine_cancel_export(GhitaEngineContext* ctx) {
 // Returns a static pointer that lives for the process lifetime — safe for FFI
 GHITA_API const char* ghita_engine_get_version(void) {
     return VERSION_STRING;
+}
+
+GHITA_API bool ghita_engine_get_audio_waveform(GhitaEngineContext* ctx, float* out_samples, int sample_count) {
+    if (!ctx || !out_samples || sample_count <= 0) return false;
+    return ctx->engine.getAudioWaveform(out_samples, sample_count);
 }
 
 }

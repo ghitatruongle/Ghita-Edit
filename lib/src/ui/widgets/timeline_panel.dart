@@ -17,6 +17,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
   double _zoomScale = 1.0;
   String? _draggingClipId;
   int? _dragStartMs;
+  final Map<String, int> _tempClipPositions = {};
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +47,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
                       width: 120,
                       child: Column(
                         children: [
-                          _buildTrackHeaderLabel("Timecode", Icons.access_time, isRuler: true),
+                          _buildTrackHeaderLabel('Timecode', Icons.access_time, isRuler: true),
                           ...ctrl.tracks.map((track) => Expanded(
                             child: _buildTrackHeader(track, ctrl),
                           )),
@@ -141,8 +142,8 @@ class _TimelinePanelState extends State<TimelinePanel> {
       child: Row(
         children: [
           // Split button
-          _toolButton(Icons.content_cut, "Split at Playhead (S)", AppTheme.accent, ctrl.splitAtPlayhead),
-          _toolButton(Icons.delete_outline, "Delete Selected (Del)", Colors.redAccent, ctrl.deleteSelectedClip),
+          _toolButton(Icons.content_cut, 'Split at Playhead (S)', AppTheme.accent, ctrl.splitAtPlayhead),
+          _toolButton(Icons.delete_outline, 'Delete Selected (Del)', Colors.redAccent, ctrl.deleteSelectedClip),
 
           const VerticalDivider(color: AppTheme.divider, indent: 8, endIndent: 8),
 
@@ -170,7 +171,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
           const SizedBox(width: 12),
           const Icon(Icons.grid_on, size: 18, color: AppTheme.primaryLight),
           const SizedBox(width: 4),
-          const Text("Snap ON", style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+          const Text('Snap ON', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
         ],
       ),
     );
@@ -233,7 +234,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
 
     return Container(
       decoration: BoxDecoration(
-        color: laneColor.withOpacity(0.05),
+        color: laneColor.withValues(alpha: 0.05),
         border: const Border(bottom: BorderSide(color: AppTheme.divider)),
       ),
       child: Stack(
@@ -245,8 +246,8 @@ class _TimelinePanelState extends State<TimelinePanel> {
           if (track.clips.isEmpty)
             Center(
               child: Text(
-                "Drop media here or import file",
-                style: TextStyle(color: AppTheme.textMuted.withOpacity(0.5), fontSize: 10),
+                'Drop media here or import file',
+                style: TextStyle(color: AppTheme.textMuted.withValues(alpha: 0.5), fontSize: 10),
               ),
             ),
         ],
@@ -255,7 +256,8 @@ class _TimelinePanelState extends State<TimelinePanel> {
   }
 
   Widget _buildClipWidget(models.Clip clip, Track track, EditorController ctrl, double pxPerSec) {
-    final leftPx = (clip.timelineStartMs / 1000.0) * pxPerSec;
+    final displayStartMs = _tempClipPositions[clip.id] ?? clip.timelineStartMs;
+    final leftPx = (displayStartMs / 1000.0) * pxPerSec;
     final widthPx = (clip.durationMs / 1000.0) * pxPerSec;
     final clipColor = _colorForClipType(clip.type);
 
@@ -275,29 +277,32 @@ class _TimelinePanelState extends State<TimelinePanel> {
           if (track.isLocked) return;
           final deltaMs = (details.delta.dx / pxPerSec * 1000).toInt();
           final newStart = (clip.timelineStartMs + deltaMs).clamp(0, ctrl.durationMs);
-          clip.timelineStartMs = newStart;
+          // Use temporary state for visual feedback, don't mutate the model directly
+          _tempClipPositions[clip.id] = newStart;
           setState(() {});
         },
         onHorizontalDragEnd: (_) {
           if (_draggingClipId != null && _dragStartMs != null) {
+            final currentPos = _tempClipPositions[clip.id] ?? clip.timelineStartMs;
             // Only record command if position actually changed
-            if (clip.timelineStartMs != _dragStartMs) {
-              ctrl.moveClipFrom(track.id, clip.id, _dragStartMs!, clip.timelineStartMs);
+            if (currentPos != _dragStartMs) {
+              ctrl.moveClipFrom(track.id, clip.id, _dragStartMs!, currentPos);
             }
+            _tempClipPositions.remove(clip.id);
             _draggingClipId = null;
             _dragStartMs = null;
           }
         },
         child: Container(
           decoration: BoxDecoration(
-            color: clip.isSelected ? clipColor.withOpacity(0.9) : clipColor.withOpacity(0.7),
+            color: clip.isSelected ? clipColor.withValues(alpha: 0.9) : clipColor.withValues(alpha: 0.7),
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: clip.isSelected ? Colors.white : clipColor,
               width: clip.isSelected ? 2 : 1,
             ),
             boxShadow: clip.isSelected ? [
-              BoxShadow(color: clipColor.withOpacity(0.4), blurRadius: 8),
+              BoxShadow(color: clipColor.withValues(alpha: 0.4), blurRadius: 8),
             ] : null,
           ),
           padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -403,7 +408,7 @@ class TimelineRulerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = AppTheme.textMuted.withOpacity(0.5)
+      ..color = AppTheme.textMuted.withValues(alpha: 0.5)
       ..strokeWidth = 1.0;
 
     final textPainter = TextPainter(textDirection: TextDirection.ltr);

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static const String appVersion = 'v0.2.0+1';
+  static const String appVersion = 'v0.3.0+1';
 
   static const Color background = Color(0xFF0F1017);
   static const Color surface = Color(0xFF181A24);

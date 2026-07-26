@@ -17,11 +17,11 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
   String _searchQuery = '';
 
   final List<Map<String, String>> _sampleMedia = [
-    {"name": "Intro_Vlog_4K.mp4", "duration": "00:45", "type": "video"},
-    {"name": "Background_Music.mp3", "duration": "02:30", "type": "audio"},
-    {"name": "Cinematic_LUT_01.png", "duration": "Photo", "type": "image"},
-    {"name": "Sound_Effect_Whoosh.wav", "duration": "00:03", "type": "audio"},
-    {"name": "Overlay_Text_Title.png", "duration": "Text", "type": "text"},
+    {'name': 'Intro_Vlog_4K.mp4', 'duration': '00:45', 'type': 'video'},
+    {'name': 'Background_Music.mp3', 'duration': '02:30', 'type': 'audio'},
+    {'name': 'Cinematic_LUT_01.png', 'duration': 'Photo', 'type': 'image'},
+    {'name': 'Sound_Effect_Whoosh.wav', 'duration': '00:03', 'type': 'audio'},
+    {'name': 'Overlay_Text_Title.png', 'duration': 'Text', 'type': 'text'},
   ];
 
   List<Map<String, String>> get _filteredMedia => _sampleMedia.where((item) {
@@ -85,10 +85,10 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
               unselectedLabelColor: AppTheme.textMuted,
               labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
               tabs: const [
-                Tab(icon: Icon(Icons.folder, size: 18), text: "Media"),
-                Tab(icon: Icon(Icons.audiotrack, size: 18), text: "Audio"),
-                Tab(icon: Icon(Icons.auto_fix_high, size: 18), text: "Effects"),
-                Tab(icon: Icon(Icons.title, size: 18), text: "Text"),
+                Tab(icon: Icon(Icons.folder, size: 18), text: 'Media'),
+                Tab(icon: Icon(Icons.audiotrack, size: 18), text: 'Audio'),
+                Tab(icon: Icon(Icons.auto_fix_high, size: 18), text: 'Effects'),
+                Tab(icon: Icon(Icons.title, size: 18), text: 'Text'),
               ],
             ),
           ),
@@ -125,7 +125,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                     ),
                   ),
                   icon: const Icon(Icons.add, size: 18),
-                  label: const Text("Import File", style: TextStyle(fontSize: 12)),
+                  label: const Text('Import File', style: TextStyle(fontSize: 12)),
                   onPressed: _openFilePicker,
                 ),
               ],
@@ -150,7 +150,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                   itemBuilder: (context, index) {
                     final item = _filteredMedia[index];
                     return GestureDetector(
-                      onTap: () => widget.controller.importMedia(item["name"]!),
+                      onTap: () => widget.controller.importMedia(item['name']!),
                       child: Container(
                         decoration: BoxDecoration(
                           color: AppTheme.card,
@@ -161,9 +161,9 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              item["type"] == "video"
+                              item['type'] == 'video'
                                   ? Icons.movie
-                                  : item["type"] == "audio"
+                                  : item['type'] == 'audio'
                                       ? Icons.music_note
                                       : Icons.image,
                               color: AppTheme.accent,
@@ -173,7 +173,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                             Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 4.0),
                               child: Text(
-                                item["name"]!,
+                                item['name']!,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -184,7 +184,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                               ),
                             ),
                             Text(
-                              item["duration"]!,
+                              item['duration']!,
                               style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
                             ),
                           ],
@@ -198,9 +198,9 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                 ListView(
                   padding: const EdgeInsets.all(8),
                   children: [
-                    _buildPresetTile("Cinematic Bass Drop", "Audio FX", Icons.multitrack_audio),
-                    _buildPresetTile("Pop Background Beat", "Music", Icons.music_note),
-                    _buildPresetTile("Vlog Acoustic Guitar", "Music", Icons.audiotrack),
+                    _buildPresetTile('Cinematic Bass Drop', 'Audio FX', Icons.multitrack_audio),
+                    _buildPresetTile('Pop Background Beat', 'Music', Icons.music_note),
+                    _buildPresetTile('Vlog Acoustic Guitar', 'Music', Icons.audiotrack),
                   ],
                 ),
 
@@ -208,11 +208,11 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                 ListView(
                   padding: const EdgeInsets.all(8),
                   children: [
-                    _buildFilterTile("Original (No Filter)", 0, widget.controller),
-                    _buildFilterTile("Grayscale Filter", 1, widget.controller),
-                    _buildFilterTile("Warm Sepia Tone", 2, widget.controller),
-                    _buildFilterTile("Negative / Invert", 3, widget.controller),
-                    _buildFilterTile("Brightness", 4, widget.controller),
+                    _buildFilterTile('Original (No Filter)', 0, widget.controller),
+                    _buildFilterTile('Grayscale Filter', 1, widget.controller),
+                    _buildFilterTile('Warm Sepia Tone', 2, widget.controller),
+                    _buildFilterTile('Negative / Invert', 3, widget.controller),
+                    _buildFilterTile('Brightness', 4, widget.controller),
                   ],
                 ),
 
@@ -220,9 +220,9 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                 ListView(
                   padding: const EdgeInsets.all(8),
                   children: [
-                    _buildPresetTile("Subtitle Overlay", "Text", Icons.subtitles),
-                    _buildPresetTile("Title Banner 3D", "Title", Icons.title),
-                    _buildPresetTile("Lower Third Banner", "Graphics", Icons.featured_play_list),
+                    _buildPresetTile('Subtitle Overlay', 'Text', Icons.subtitles),
+                    _buildPresetTile('Title Banner 3D', 'Title', Icons.title),
+                    _buildPresetTile('Lower Third Banner', 'Graphics', Icons.featured_play_list),
                   ],
                 ),
               ],
@@ -250,7 +250,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
   Widget _buildFilterTile(String name, int type, EditorController ctrl) {
     bool selected = ctrl.activeFilterType == type;
     return Card(
-      color: selected ? AppTheme.primary.withOpacity(0.3) : AppTheme.card,
+      color: selected ? AppTheme.primary.withValues(alpha: 0.3) : AppTheme.card,
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),

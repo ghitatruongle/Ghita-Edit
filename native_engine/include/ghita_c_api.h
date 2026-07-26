@@ -61,6 +61,9 @@ GHITA_API void ghita_engine_cancel_export(GhitaEngineContext* ctx);
 // Version info
 GHITA_API const char* ghita_engine_get_version(void);
 
+// Audio Waveform (v0.3.0)
+GHITA_API bool ghita_engine_get_audio_waveform(GhitaEngineContext* ctx, float* out_samples, int sample_count);
+
 #ifdef __cplusplus
 }
 #endif

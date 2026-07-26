@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <chrono>
 
 namespace {
     struct Vec3 { uint8_t r, g, b; };
@@ -45,118 +46,17 @@ namespace {
     }
 }
 
-GhitaEngine::GhitaEngine() {
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
-    m_ready = false;
-}
+// ========== DECODER IMPLEMENTATIONS ==========
 
-GhitaEngine::~GhitaEngine() {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
-    m_isPlaying.store(false);
-    m_ready = false;
-}
-
-bool GhitaEngine::initialize() {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
-    if (m_ready.load()) return true;
-
-    m_isPlaying.store(false);
-    m_currentPosMs.store(0);
-    m_volume.store(1.0f);
-    m_filterIntensity.store(1.0f);
-    m_activeFilterType = 0;
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
-    m_ready = true;
-    return true;
-}
-
-bool GhitaEngine::loadMedia(const std::string& filePath) {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
-    m_loadedFilePath = filePath;
-    m_width.store(1280);
-    m_height.store(720);
+bool SyntheticMediaDecoder::open(const std::string& /*filePath*/) {
     m_durationMs = 60000;
-    m_currentPosMs.store(0);
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
     return true;
 }
 
-void GhitaEngine::play() {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
-    if (!m_ready.load()) return;
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
-    m_isPlaying.store(true);
-}
-
-void GhitaEngine::pause() {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
-    m_isPlaying.store(false);
-}
-
-bool GhitaEngine::isPlaying() const {
-    return m_isPlaying.load();
-}
-
-void GhitaEngine::seek(int64_t positionMs) {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
-    if (!m_ready.load()) return;
-    m_currentPosMs.store(std::clamp(positionMs, (int64_t)0, m_durationMs));
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
-}
-
-int64_t GhitaEngine::getPositionMs() const {
-    return m_currentPosMs.load();
-}
-
-int64_t GhitaEngine::getDurationMs() const {
-    return m_durationMs;
-}
-
-void GhitaEngine::setVolume(float volume) {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
-    m_volume.store(std::clamp(volume, 0.0f, 2.0f));
-}
-
-void GhitaEngine::applyFilter(int filterType, float intensity) {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
-    if (filterType >= 0 && filterType <= 4) {
-        m_activeFilterType = filterType;
-        m_filterIntensity.store(std::clamp(intensity, 0.0f, 1.0f));
-    }
-}
-
-void GhitaEngine::updateClock() {
-    if (!m_isPlaying.load()) return;
-
-    auto now = std::chrono::high_resolution_clock::now();
-    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastTickTime).count();
-    if (elapsedMs > 0) {
-        m_lastTickTime = now;
-        int64_t newPos = m_currentPosMs.load() + elapsedMs;
-        if (newPos >= m_durationMs) {
-            newPos = m_durationMs;
-            m_isPlaying.store(false);
-        }
-        m_currentPosMs.store(newPos);
-    }
-}
-
-bool GhitaEngine::renderFrameRGBA(uint8_t* outBuffer, int width, int height) {
+bool SyntheticMediaDecoder::decodeFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs, int filterType, float filterIntensity) {
     if (!outBuffer || width <= 0 || height <= 0) return false;
 
-    updateClock();
-    int64_t timeMs = m_currentPosMs.load();
-
-    generateSyntheticFrame(outBuffer, width, height, timeMs);
-    return true;
-}
-
-void GhitaEngine::generateSyntheticFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs) {
     float t = static_cast<float>(timeMs) / 1000.0f;
-
-    const int filterType = m_activeFilterType;
-    const float intensity = m_filterIntensity.load();
-
     const float cx = std::sin(t * 2.0f) * 0.35f + 0.5f;
     const float cy = std::cos(t * 2.5f) * 0.35f + 0.5f;
 
@@ -176,10 +76,10 @@ void GhitaEngine::generateSyntheticFrame(uint8_t* outBuffer, int width, int heig
             } else if (filterType != 0) {
                 Vec3 c;
                 switch (filterType) {
-                    case 1: c = applyGrayscale(r, g, b, intensity); break;
-                    case 2: c = applySepia(r, g, b, intensity); break;
-                    case 3: c = applyInvert(r, g, b, intensity); break;
-                    case 4: c = applyBrightness(r, g, b, intensity); break;
+                    case 1: c = applyGrayscale(r, g, b, filterIntensity); break;
+                    case 2: c = applySepia(r, g, b, filterIntensity); break;
+                    case 3: c = applyInvert(r, g, b, filterIntensity); break;
+                    case 4: c = applyBrightness(r, g, b, filterIntensity); break;
                     default: c = {r, g, b}; break;
                 }
                 r = c.r; g = c.g; b = c.b;
@@ -192,19 +92,161 @@ void GhitaEngine::generateSyntheticFrame(uint8_t* outBuffer, int width, int heig
             outBuffer[idx + 3] = 255;
         }
     }
+    return true;
 }
 
-// ========== TIMELINE / CLIP OPERATIONS (v0.2.0) ==========
+bool FFmpegMediaDecoderStub::open(const std::string& /*filePath*/) {
+    m_durationMs = 60000;
+    return true;
+}
+
+bool FFmpegMediaDecoderStub::decodeFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs, int filterType, float filterIntensity) {
+    // Stub delegates to synthetic decoder rendering for proof-of-concept
+    SyntheticMediaDecoder synth;
+    return synth.decodeFrame(outBuffer, width, height, timeMs, filterType, filterIntensity);
+}
+
+// ========== ENGINE CORE ==========
+
+GhitaEngine::GhitaEngine() {
+    m_lastTickTime = std::chrono::high_resolution_clock::now();
+    m_ready = false;
+    m_decoder = std::make_unique<SyntheticMediaDecoder>();
+}
+
+GhitaEngine::~GhitaEngine() {
+    cancelExport();
+    if (m_exportThread.joinable()) {
+        m_exportThread.join();
+    }
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    m_isPlaying.store(false);
+    m_ready = false;
+}
+
+bool GhitaEngine::initialize() {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    if (m_ready.load()) return true;
+
+    m_isPlaying.store(false);
+    m_currentPosMs.store(0);
+    m_volume.store(1.0f);
+    m_filterIntensity.store(1.0f);
+    m_activeFilterType = 0;
+    m_lastTickTime = std::chrono::high_resolution_clock::now();
+    m_ready = true;
+    return true;
+}
+
+bool GhitaEngine::loadMedia(const std::string& filePath) {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    m_loadedFilePath = filePath;
+    if (!m_decoder) {
+        m_decoder = std::make_unique<SyntheticMediaDecoder>();
+    }
+    m_decoder->open(filePath);
+    m_width.store(m_decoder->getWidth());
+    m_height.store(m_decoder->getHeight());
+    m_durationMs.store(m_decoder->getDurationMs());
+    m_currentPosMs.store(0);
+    m_lastTickTime = std::chrono::high_resolution_clock::now();
+    return true;
+}
+
+void GhitaEngine::play() {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    if (!m_ready.load()) return;
+    m_lastTickTime = std::chrono::high_resolution_clock::now();
+    m_isPlaying.store(true);
+}
+
+void GhitaEngine::pause() {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    m_isPlaying.store(false);
+}
+
+bool GhitaEngine::isPlaying() const {
+    return m_isPlaying.load();
+}
+
+void GhitaEngine::seek(int64_t positionMs) {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    if (!m_ready.load()) return;
+    m_currentPosMs.store(std::clamp(positionMs, (int64_t)0, m_durationMs.load()));
+    m_lastTickTime = std::chrono::high_resolution_clock::now();
+}
+
+int64_t GhitaEngine::getPositionMs() const {
+    return m_currentPosMs.load();
+}
+
+int64_t GhitaEngine::getDurationMs() const {
+    std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    return m_durationMs.load();
+}
+
+void GhitaEngine::setVolume(float volume) {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    m_volume.store(std::clamp(volume, 0.0f, 2.0f));
+}
+
+void GhitaEngine::applyFilter(int filterType, float intensity) {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    if (filterType >= 0 && filterType <= 4) {
+        m_activeFilterType = filterType;
+        m_filterIntensity.store(std::clamp(intensity, 0.0f, 1.0f));
+    }
+}
+
+int GhitaEngine::getActiveFilterType() const {
+    std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    return m_activeFilterType;
+}
+
+void GhitaEngine::updateClock() {
+    if (!m_isPlaying.load()) return;
+
+    auto now = std::chrono::high_resolution_clock::now();
+    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastTickTime).count();
+    if (elapsedMs > 0) {
+        m_lastTickTime = now;
+        int64_t newPos = m_currentPosMs.load() + elapsedMs;
+        const int64_t duration = m_durationMs.load();
+        if (newPos >= duration) {
+            newPos = duration;
+            m_isPlaying.store(false);
+        }
+        m_currentPosMs.store(newPos);
+    }
+}
+
+bool GhitaEngine::renderFrameRGBA(uint8_t* outBuffer, int width, int height) {
+    if (!outBuffer || width <= 0 || height <= 0) return false;
+
+    {
+        std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+        updateClock();
+    }
+    int64_t timeMs = m_currentPosMs.load();
+
+    std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    if (m_decoder) {
+        return m_decoder->decodeFrame(outBuffer, width, height, timeMs, m_activeFilterType, m_filterIntensity.load());
+    }
+    return false;
+}
+
+// ========== TIMELINE / CLIP OPERATIONS (v0.3.0) ==========
 
 int GhitaEngine::addClip(const std::string& filePath, int64_t startMs, int64_t durationMs, int trackIndex) {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     if (!m_ready.load()) return -1;
 
     NativeClip clip;
     clip.id = m_nextClipId++;
     clip.filePath = filePath;
     clip.startMs = std::max(startMs, (int64_t)0);
-    clip.durationMs = std::max(durationMs, (int64_t)100); // Min 100ms
+    clip.durationMs = std::max(durationMs, (int64_t)100);
     clip.trackIndex = std::clamp(trackIndex, 0, 2);
     clip.filterType = 0;
     clip.filterIntensity = 1.0f;
@@ -215,7 +257,7 @@ int GhitaEngine::addClip(const std::string& filePath, int64_t startMs, int64_t d
 }
 
 bool GhitaEngine::removeClip(int clipId) {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     for (auto it = m_clips.begin(); it != m_clips.end(); ++it) {
         if (it->id == clipId) {
             m_clips.erase(it);
@@ -227,12 +269,12 @@ bool GhitaEngine::removeClip(int clipId) {
 }
 
 int GhitaEngine::getClipCount() const {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
+    std::shared_lock<std::shared_mutex> lock(m_engineMutex);
     return static_cast<int>(m_clips.size());
 }
 
 bool GhitaEngine::setClipPosition(int clipId, int64_t startMs) {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     for (auto& clip : m_clips) {
         if (clip.id == clipId) {
             clip.startMs = std::max(startMs, (int64_t)0);
@@ -244,7 +286,7 @@ bool GhitaEngine::setClipPosition(int clipId, int64_t startMs) {
 }
 
 bool GhitaEngine::setClipFilter(int clipId, int filterType, float intensity) {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     for (auto& clip : m_clips) {
         if (clip.id == clipId) {
             clip.filterType = std::clamp(filterType, 0, 4);
@@ -255,33 +297,82 @@ bool GhitaEngine::setClipFilter(int clipId, int filterType, float intensity) {
     return false;
 }
 
+bool GhitaEngine::getAudioWaveform(float* outSamples, int sampleCount) {
+    if (!outSamples || sampleCount <= 0) return false;
+    std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    for (int i = 0; i < sampleCount; ++i) {
+        float phase = static_cast<float>(i) / static_cast<float>(sampleCount);
+        outSamples[i] = std::abs(std::sin(phase * 12.566f) * 0.8f + std::sin(phase * 45.0f) * 0.2f) * m_volume.load();
+    }
+    return true;
+}
+
 void GhitaEngine::recalculateDuration() {
-    int64_t maxEnd = 60000; // Default minimum 60s
+    int64_t maxEnd = 60000;
     for (const auto& clip : m_clips) {
         int64_t clipEnd = clip.startMs + clip.durationMs;
         if (clipEnd > maxEnd) maxEnd = clipEnd;
     }
-    m_durationMs = maxEnd;
+    m_durationMs.store(maxEnd);
 }
 
-// ========== EXPORT PIPELINE (v0.2.0) ==========
+// ========== ASYNC EXPORT PIPELINE (v0.3.0) ==========
 
 bool GhitaEngine::startExport(const std::string& outputPath, int width, int height, int fps) {
-    std::lock_guard<std::mutex> lock(m_engineMutex);
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     if (!m_ready.load() || m_isExporting.load()) return false;
     if (outputPath.empty() || width <= 0 || height <= 0 || fps <= 0) return false;
 
+    if (m_exportThread.joinable()) {
+        m_exportThread.join();
+    }
+
     m_exportOutputPath = outputPath;
     m_isExporting.store(true);
+    m_cancelExportFlag.store(false);
     m_exportProgress.store(0.0f);
 
-    // TODO: In a real implementation, this would spawn a thread that:
-    // 1. Opens FFmpeg encoder (libavcodec)
-    // 2. Iterates through timeline frames at the given FPS
-    // 3. Renders each frame via renderFrameRGBA
-    // 4. Encodes and writes to output file
-    // For now, simulate progress advancement per tick
+    try {
+        m_exportThread = std::thread([this, outputPath, width, height, fps]() {
+            runExportLoop(outputPath, width, height, fps);
+        });
+    } catch (...) {
+        m_isExporting.store(false);
+        return false;
+    }
     return true;
+}
+
+void GhitaEngine::runExportLoop(std::string /*outputPath*/, int width, int height, int fps) {
+    const int totalFrames = static_cast<int>((m_durationMs.load() / 1000.0f) * fps);
+    if (totalFrames <= 0) {
+        m_isExporting.store(false);
+        m_exportProgress.store(1.0f);
+        return;
+    }
+
+    std::vector<uint8_t> frameBuffer(width * height * 4);
+    SyntheticMediaDecoder decoder;
+
+    for (int frame = 0; frame < totalFrames; ++frame) {
+        if (m_cancelExportFlag.load()) {
+            break;
+        }
+
+        int64_t frameTimeMs = static_cast<int64_t>((static_cast<float>(frame) / fps) * 1000.0f);
+        decoder.decodeFrame(frameBuffer.data(), width, height, frameTimeMs, m_activeFilterType, m_filterIntensity.load());
+
+        // Simulate frame encoding work
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+        float progress = static_cast<float>(frame + 1) / static_cast<float>(totalFrames);
+        m_exportProgress.store(progress);
+    }
+
+    m_isExporting.store(false);
+    if (!m_cancelExportFlag.load()) {
+        m_exportProgress.store(1.0f);
+    }
 }
 
 float GhitaEngine::getExportProgress() const {
@@ -293,11 +384,15 @@ bool GhitaEngine::isExporting() const {
 }
 
 void GhitaEngine::cancelExport() {
-    m_isExporting.store(false);
-    m_exportProgress.store(0.0f);
+    if (m_isExporting.load()) {
+        m_cancelExportFlag.store(true);
+        if (m_exportThread.joinable() && std::this_thread::get_id() != m_exportThread.get_id()) {
+            m_exportThread.join();
+        }
+    }
 }
 
-// ========== SELF TEST ==========
+// ========== SELF TEST (v0.3.0) ==========
 
 bool GhitaEngine::selfTest() {
     GhitaEngine engine;
@@ -316,7 +411,11 @@ bool GhitaEngine::selfTest() {
     engine.applyFilter(1, 1.0f);
     if (engine.getActiveFilterType() != 1) return false;
 
-    // v0.2.0 clip tests
+    // v0.3.0 waveform test
+    float samples[10] = {};
+    if (!engine.getAudioWaveform(samples, 10)) return false;
+
+    // v0.3.0 clip tests
     int id = engine.addClip("test.mp4", 0, 5000, 0);
     if (id < 0) return false;
     if (engine.getClipCount() != 1) return false;

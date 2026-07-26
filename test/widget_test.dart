@@ -25,9 +25,9 @@ void main() {
       expect(labelSmall.fontSize, equals(10));
     });
 
-    test('appVersion string matches v0.2.0 convention', () {
+    test('appVersion string matches v0.3.0 convention', () {
       expect(AppTheme.appVersion, startsWith('v'));
-      expect(AppTheme.appVersion, contains('0.2.0'));
+      expect(AppTheme.appVersion, contains('0.3.0'));
     });
   });
 

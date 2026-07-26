@@ -18,7 +18,7 @@ class InspectorPanel extends StatelessWidget {
       child: ListView(
         children: [
           const Text(
-            "PROPERTIES INSPECTOR",
+            'PROPERTIES INSPECTOR',
             style: TextStyle(
               color: AppTheme.textMuted,
               fontSize: 11,
@@ -38,7 +38,7 @@ class InspectorPanel extends StatelessWidget {
 
           const SizedBox(height: 16),
           const Text(
-            "ACTIVE FILTER & FX",
+            'ACTIVE FILTER & FX',
             style: TextStyle(
               color: AppTheme.textMuted,
               fontSize: 11,
@@ -52,7 +52,7 @@ class InspectorPanel extends StatelessWidget {
 
           const SizedBox(height: 16),
           const Text(
-            "AUDIO MIXER & GAIN",
+            'AUDIO MIXER & GAIN',
             style: TextStyle(
               color: AppTheme.textMuted,
               fontSize: 11,
@@ -101,17 +101,17 @@ class InspectorPanel extends StatelessWidget {
           ),
           if (clip != null) ...[
             const Divider(color: AppTheme.divider, height: 16),
-            _buildMetaRow("Type", clip.type.name.toUpperCase()),
-            _buildMetaRow("Timeline Start", _formatMs(clip.timelineStartMs)),
-            _buildMetaRow("Duration", _formatMs(clip.durationMs)),
-            _buildMetaRow("Source In", _formatMs(clip.sourceInMs)),
-            _buildMetaRow("Source Out", _formatMs(clip.sourceOutMs)),
-            _buildMetaRow("Track", 'Track ${clip.trackIndex + 1}'),
-            _buildMetaRow("Filter", _getFilterName(clip.filterType)),
+            _buildMetaRow('Type', clip.type.name.toUpperCase()),
+            _buildMetaRow('Timeline Start', _formatMs(clip.timelineStartMs)),
+            _buildMetaRow('Duration', _formatMs(clip.durationMs)),
+            _buildMetaRow('Source In', _formatMs(clip.sourceInMs)),
+            _buildMetaRow('Source Out', _formatMs(clip.sourceOutMs)),
+            _buildMetaRow('Track', 'Track ${clip.trackIndex + 1}'),
+            _buildMetaRow('Filter', _getFilterName(clip.filterType)),
           ] else ...[
             const Divider(color: AppTheme.divider, height: 16),
-            _buildMetaRow("Hint", "Click a clip on the timeline"),
-            _buildMetaRow("Engine", controller.engineVersion),
+            _buildMetaRow('Hint', 'Click a clip on the timeline'),
+            _buildMetaRow('Engine', controller.engineVersion),
           ],
         ],
       ),
@@ -143,11 +143,11 @@ class InspectorPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          _buildMetaRow("Version", project.version),
-          _buildMetaRow("Clips", '${project.allClips.length}'),
-          _buildMetaRow("Tracks", '${project.tracks.length}'),
-          _buildMetaRow("Duration", _formatMs(project.totalDurationMs)),
-          _buildMetaRow("Output", '${project.outputWidth}x${project.outputHeight} @ ${project.outputFps}fps'),
+          _buildMetaRow('Version', project.version),
+          _buildMetaRow('Clips', '${project.allClips.length}'),
+          _buildMetaRow('Tracks', '${project.tracks.length}'),
+          _buildMetaRow('Duration', _formatMs(project.totalDurationMs)),
+          _buildMetaRow('Output', '${project.outputWidth}x${project.outputHeight} @ ${project.outputFps}fps'),
         ],
       ),
     );
@@ -181,7 +181,7 @@ class InspectorPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          const Text("Filter Intensity", style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+          const Text('Filter Intensity', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
           Slider(
             value: controller.filterIntensity,
             min: 0.0,
@@ -193,11 +193,11 @@ class InspectorPanel extends StatelessWidget {
           Wrap(
             spacing: 4,
             children: [
-              _filterChip("None", 0),
-              _filterChip("Gray", 1),
-              _filterChip("Sepia", 2),
-              _filterChip("Invert", 3),
-              _filterChip("Bright", 4),
+              _filterChip('None', 0),
+              _filterChip('Gray', 1),
+              _filterChip('Sepia', 2),
+              _filterChip('Invert', 3),
+              _filterChip('Bright', 4),
             ],
           ),
         ],
@@ -212,7 +212,7 @@ class InspectorPanel extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: isActive ? AppTheme.primary.withOpacity(0.3) : AppTheme.surface,
+          color: isActive ? AppTheme.primary.withValues(alpha: 0.3) : AppTheme.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: isActive ? AppTheme.accent : AppTheme.divider),
         ),
@@ -242,7 +242,7 @@ class InspectorPanel extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text("Master Volume", style: TextStyle(color: AppTheme.textMain, fontSize: 12)),
+              const Text('Master Volume', style: TextStyle(color: AppTheme.textMain, fontSize: 12)),
               Text(
                 '${(controller.volume * 100).toInt()}%',
                 style: const TextStyle(color: AppTheme.accent, fontWeight: FontWeight.bold),
@@ -263,11 +263,11 @@ class InspectorPanel extends StatelessWidget {
 
   String _getFilterName(int type) {
     switch (type) {
-      case 1: return "Grayscale Shader";
-      case 2: return "Warm Sepia Shader";
-      case 3: return "Invert Color Shader";
-      case 4: return "Brightness Boost";
-      default: return "Original (Pass-through)";
+      case 1: return 'Grayscale Shader';
+      case 2: return 'Warm Sepia Shader';
+      case 3: return 'Invert Color Shader';
+      case 4: return 'Brightness Boost';
+      default: return 'Original (Pass-through)';
     }
   }
 
@@ -279,7 +279,7 @@ class InspectorPanel extends StatelessWidget {
     if (minutes > 0) {
       return '${minutes}m ${secs}s';
     }
-    return '${secs}.${(millis ~/ 100)}s';
+    return '$secs.${(millis ~/ 100)}s';
   }
 
   Widget _buildMetaRow(String label, String value) {

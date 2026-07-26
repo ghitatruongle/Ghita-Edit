@@ -90,6 +90,10 @@ typedef DartGhitaEngineIsExporting = bool Function(Pointer<GhitaEngineContext> c
 typedef CGhitaEngineCancelExport = Void Function(Pointer<GhitaEngineContext> ctx);
 typedef DartGhitaEngineCancelExport = void Function(Pointer<GhitaEngineContext> ctx);
 
+// Audio Waveform (v0.3.0)
+typedef CGhitaEngineGetAudioWaveform = Bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Float> outSamples, Int32 sampleCount);
+typedef DartGhitaEngineGetAudioWaveform = bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Float> outSamples, int sampleCount);
+
 // ========== Bindings Class ==========
 
 class GhitaNativeBindings {
@@ -137,6 +141,9 @@ class GhitaNativeBindings {
   late DartGhitaEngineGetExportProgress getExportProgress;
   late DartGhitaEngineIsExporting isExporting;
   late DartGhitaEngineCancelExport cancelExport;
+
+  // Audio Waveform (v0.3.0)
+  late DartGhitaEngineGetAudioWaveform getAudioWaveform;
 
   GhitaNativeBindings._internal() {
     _loadLibrary();
@@ -240,5 +247,8 @@ class GhitaNativeBindings {
     getExportProgress = _lib.lookupFunction<CGhitaEngineGetExportProgress, DartGhitaEngineGetExportProgress>('ghita_engine_get_export_progress');
     isExporting = _lib.lookupFunction<CGhitaEngineIsExporting, DartGhitaEngineIsExporting>('ghita_engine_is_exporting');
     cancelExport = _lib.lookupFunction<CGhitaEngineCancelExport, DartGhitaEngineCancelExport>('ghita_engine_cancel_export');
+
+    // Audio Waveform (v0.3.0)
+    getAudioWaveform = _lib.lookupFunction<CGhitaEngineGetAudioWaveform, DartGhitaEngineGetAudioWaveform>('ghita_engine_get_audio_waveform');
   }
 }

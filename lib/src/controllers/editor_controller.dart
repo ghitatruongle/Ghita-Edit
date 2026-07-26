@@ -26,6 +26,7 @@ class EditorController extends ChangeNotifier {
   late Project project;
 
   // --- Engine State ---
+  EngineService get engineService => _engine;
   bool get isEngineReady => _engine.isReady;
   String get engineVersion => _engine.engineVersion;
 
@@ -74,17 +75,20 @@ class EditorController extends ChangeNotifier {
     if (_disposed) return;
     try {
       await _engine.initialize();
+      if (_disposed) return;
       if (!isEngineReady) {
         _statusMessage = 'Native engine unavailable (Demo Mode)';
         notifyListeners();
         return;
       }
-      _statusMessage = 'Engine ready • v0.2.0';
+      _statusMessage = 'Engine ready • v0.3.0';
       _startAutoSave();
       notifyListeners();
     } catch (e) {
-      _statusMessage = 'Error: $e';
-      notifyListeners();
+      if (!_disposed) {
+        _statusMessage = 'Error: $e';
+        notifyListeners();
+      }
     }
   }
 
@@ -454,7 +458,11 @@ class EditorController extends ChangeNotifier {
       return true;
     }
     if (key == LogicalKeyboardKey.keyK) {
-      if (_isPlaying) pause(); else play();
+      if (_isPlaying) {
+        pause();
+      } else {
+        play();
+      }
       return true;
     }
     if (key == LogicalKeyboardKey.keyL) {
@@ -507,7 +515,11 @@ class EditorController extends ChangeNotifier {
       if (!_disposed && project.allClips.isNotEmpty) {
         final dir = await _autoSaveBaseDir();
         if (!_disposed) {
-          projectService.autoSave(project, dir);
+          try {
+            await projectService.autoSave(project, dir);
+          } catch (e) {
+            debugPrint('[EditorController] Auto-save failed: $e');
+          }
         }
       }
     });

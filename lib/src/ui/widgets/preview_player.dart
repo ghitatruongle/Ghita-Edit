@@ -1,4 +1,3 @@
-
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../../controllers/editor_controller.dart';
@@ -80,7 +79,7 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.5),
+                        color: Colors.black.withValues(alpha: 0.5),
                         blurRadius: 16,
                         spreadRadius: 2,
                       ),
@@ -102,7 +101,7 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                                   CircularProgressIndicator(color: AppTheme.accent),
                                   SizedBox(height: 12),
                                   Text(
-                                    "Rendering C++ Native Canvas...",
+                                    'Rendering C++ Native Canvas...',
                                     style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
                                   ),
                                 ],
@@ -119,7 +118,7 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.7),
+                      color: Colors.black.withValues(alpha: 0.7),
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(color: AppTheme.divider),
                     ),
@@ -136,7 +135,7 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          ctrl.isPlaying ? "PLAYING 60FPS" : "PAUSED",
+                          ctrl.isPlaying ? 'PLAYING 60FPS' : 'PAUSED',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10,

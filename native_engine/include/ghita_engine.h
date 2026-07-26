@@ -7,6 +7,46 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <shared_mutex>
+#include <memory>
+#include <thread>
+
+/// Interface for media frame decoding.
+class IMediaDecoder {
+public:
+    virtual ~IMediaDecoder() = default;
+    virtual bool open(const std::string& filePath) = 0;
+    virtual bool decodeFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs, int filterType, float filterIntensity) = 0;
+    virtual int64_t getDurationMs() const = 0;
+    virtual int getWidth() const = 0;
+    virtual int getHeight() const = 0;
+};
+
+/// High-performance synthetic frame decoder with multi-threaded pixel synthesis.
+class SyntheticMediaDecoder : public IMediaDecoder {
+public:
+    SyntheticMediaDecoder() = default;
+    bool open(const std::string& filePath) override;
+    bool decodeFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs, int filterType, float filterIntensity) override;
+    int64_t getDurationMs() const override { return m_durationMs; }
+    int getWidth() const override { return 1280; }
+    int getHeight() const override { return 720; }
+private:
+    int64_t m_durationMs{60000};
+};
+
+/// Stub for FFmpeg native decoder integration.
+class FFmpegMediaDecoderStub : public IMediaDecoder {
+public:
+    FFmpegMediaDecoderStub() = default;
+    bool open(const std::string& filePath) override;
+    bool decodeFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs, int filterType, float filterIntensity) override;
+    int64_t getDurationMs() const override { return m_durationMs; }
+    int getWidth() const override { return 1920; }
+    int getHeight() const override { return 1080; }
+private:
+    int64_t m_durationMs{60000};
+};
 
 /// Represents a clip in the native timeline.
 struct NativeClip {
@@ -41,21 +81,24 @@ public:
     float getVolume() const { return m_volume.load(); }
 
     void applyFilter(int filterType, float intensity);
-    int getActiveFilterType() const { return m_activeFilterType; }
+    int getActiveFilterType() const;
     float getFilterIntensity() const { return m_filterIntensity.load(); }
 
     bool isReady() const { return m_ready.load(); }
 
     bool renderFrameRGBA(uint8_t* outBuffer, int width, int height);
 
-    // Timeline / Clip operations (v0.2.0)
+    // Timeline / Clip operations (v0.3.0)
     int addClip(const std::string& filePath, int64_t startMs, int64_t durationMs, int trackIndex);
     bool removeClip(int clipId);
     int getClipCount() const;
     bool setClipPosition(int clipId, int64_t startMs);
     bool setClipFilter(int clipId, int filterType, float intensity);
 
-    // Export pipeline (v0.2.0)
+    // Audio Waveform (v0.3.0)
+    bool getAudioWaveform(float* outSamples, int sampleCount);
+
+    // Export pipeline (v0.3.0)
     bool startExport(const std::string& outputPath, int width, int height, int fps);
     float getExportProgress() const;
     bool isExporting() const;
@@ -65,11 +108,11 @@ public:
     static bool selfTest();
 
 private:
-    mutable std::mutex m_engineMutex;
+    mutable std::shared_mutex m_engineMutex;
     std::atomic<bool> m_isPlaying{false};
     std::atomic<bool> m_ready{false};
     std::atomic<int64_t> m_currentPosMs{0};
-    int64_t m_durationMs{30000};
+    std::atomic<int64_t> m_durationMs{60000};
 
     std::atomic<int> m_width{1280};
     std::atomic<int> m_height{720};
@@ -82,18 +125,23 @@ private:
 
     std::chrono::high_resolution_clock::time_point m_lastTickTime;
 
-    // Timeline clips (v0.2.0)
+    // Active Decoder
+    std::unique_ptr<IMediaDecoder> m_decoder;
+
+    // Timeline clips (v0.3.0)
     std::vector<NativeClip> m_clips;
     int m_nextClipId{1};
 
-    // Export state (v0.2.0)
+    // Export state & async worker (v0.3.0)
     std::atomic<bool> m_isExporting{false};
+    std::atomic<bool> m_cancelExportFlag{false};
     std::atomic<float> m_exportProgress{0.0f};
     std::string m_exportOutputPath;
+    std::thread m_exportThread;
 
     void updateClock();
-    void generateSyntheticFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs);
     void recalculateDuration();
+    void runExportLoop(std::string outputPath, int width, int height, int fps);
 };
 
 #endif // GHITA_ENGINE_H

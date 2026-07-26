@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:ffi/ffi.dart';
 import '../../controllers/editor_controller.dart';
 import '../theme/app_theme.dart';
 
@@ -15,9 +16,9 @@ class ExportDialog extends StatefulWidget {
 }
 
 class _ExportDialogState extends State<ExportDialog> {
-  String _selectedRes = "1080p (Full HD)";
-  String _selectedFps = "60 FPS";
-  String _selectedFormat = "MP4 (H.264 / AAC)";
+  String _selectedRes = '1080p (Full HD)';
+  String _selectedFps = '60 FPS';
+  String _selectedFormat = 'MP4 (H.264 / AAC)';
   String? _outputPath;
   bool _isExporting = false;
   double _exportProgress = 0.0;
@@ -31,29 +32,29 @@ class _ExportDialogState extends State<ExportDialog> {
 
   int get resWidth {
     switch (_selectedRes) {
-      case "720p (HD)": return 1280;
-      case "4K (Ultra HD)": return 3840;
+      case '720p (HD)': return 1280;
+      case '4K (Ultra HD)': return 3840;
       default: return 1920;
     }
   }
 
   int get resHeight {
     switch (_selectedRes) {
-      case "720p (HD)": return 720;
-      case "4K (Ultra HD)": return 2160;
+      case '720p (HD)': return 720;
+      case '4K (Ultra HD)': return 2160;
       default: return 1080;
     }
   }
 
   int get _fps {
-    return _selectedFps.startsWith("30") ? 30 : 60;
+    return _selectedFps.startsWith('30') ? 30 : 60;
   }
 
   String get _formatExtension {
-    if (_selectedFormat.contains("MOV")) return "mov";
-    if (_selectedFormat.contains("GIF")) return "gif";
-    if (_selectedFormat.contains("MP3")) return "mp3";
-    return "mp4";
+    if (_selectedFormat.contains('MOV')) return 'mov';
+    if (_selectedFormat.contains('GIF')) return 'gif';
+    if (_selectedFormat.contains('MP3')) return 'mp3';
+    return 'mp4';
   }
 
   Future<void> _pickOutputPath() async {
@@ -75,7 +76,7 @@ class _ExportDialogState extends State<ExportDialog> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("C++ Engine is not ready yet."),
+          content: Text('C++ Engine is not ready yet.'),
           backgroundColor: Colors.redAccent,
         ),
       );
@@ -90,12 +91,56 @@ class _ExportDialogState extends State<ExportDialog> {
       _exportProgress = 0.0;
     });
 
-    // Start the native export pipeline
-    // In v0.2.0, this initiates the C++ export path
+    // Start the native export pipeline via FFI
+    final engineService = widget.controller.engineService;
+    if (!engineService.isReady) {
+      setState(() => _isExporting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Native engine not available.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    // Call native startExport
+    final result = engineService.bindings!.startExport(
+      engineService.ctx,
+      outputPath.toNativeUtf8(),
+      resWidth,
+      resHeight,
+      _fps,
+    );
+
+    if (result != 0) {
+      setState(() => _isExporting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Export failed to start.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    // Poll native export progress
     _progressTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
-      if (_exportProgress >= 1.0) {
+      if (!mounted) {
         timer.cancel();
-        if (!mounted) return;
+        engineService.bindings!.cancelExport(engineService.ctx);
+        return;
+      }
+
+      final isExporting = engineService.bindings!.isExporting(engineService.ctx);
+      final progress = engineService.bindings!.getExportProgress(engineService.ctx);
+
+      setState(() {
+        _exportProgress = progress.clamp(0.0, 1.0);
+      });
+
+      if (!isExporting || _exportProgress >= 1.0) {
+        timer.cancel();
         setState(() {
           _isExporting = false;
           _exportProgress = 1.0;
@@ -103,20 +148,12 @@ class _ExportDialogState extends State<ExportDialog> {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Export completed! Saved to: $outputPath"),
+            content: Text('Export completed! Saved to: $outputPath'),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
           ),
         );
-        return;
       }
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      setState(() {
-        _exportProgress += 0.04;
-      });
     });
   }
 
@@ -139,7 +176,7 @@ class _ExportDialogState extends State<ExportDialog> {
         children: [
           const Icon(Icons.output, color: AppTheme.accent),
           const SizedBox(width: 8),
-          const Text("Export Media Project", style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
+          const Text('Export Media Project', style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
           const Spacer(),
           if (!_isExporting)
             Text(
@@ -156,12 +193,12 @@ class _ExportDialogState extends State<ExportDialog> {
           ? [
               TextButton(
                 onPressed: _cancelExport,
-                child: const Text("Cancel Export", style: TextStyle(color: Colors.redAccent)),
+                child: const Text('Cancel Export', style: TextStyle(color: Colors.redAccent)),
               ),
             ]
           : [
               TextButton(
-                child: const Text("Cancel"),
+                child: const Text('Cancel'),
                 onPressed: () => Navigator.pop(context),
               ),
               ElevatedButton.icon(
@@ -170,7 +207,7 @@ class _ExportDialogState extends State<ExportDialog> {
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.rocket_launch, size: 16),
-                label: const Text("Start Export"),
+                label: const Text('Start Export'),
                 onPressed: _startExport,
               ),
             ],
@@ -184,12 +221,12 @@ class _ExportDialogState extends State<ExportDialog> {
         const Icon(Icons.engineering, color: AppTheme.accent, size: 48),
         const SizedBox(height: 12),
         const Text(
-          "Rendering via C++ Engine Pipeline...",
+          'Rendering via C++ Engine Pipeline...',
           style: TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
         Text(
-          "$_selectedRes • $_selectedFps • $_selectedFormat",
+          '$_selectedRes • $_selectedFps • $_selectedFormat',
           style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
         ),
         const SizedBox(height: 16),
@@ -225,11 +262,11 @@ class _ExportDialogState extends State<ExportDialog> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildDropdown("Resolution", _selectedRes, ["720p (HD)", "1080p (Full HD)", "4K (Ultra HD)"], _onResolutionChanged, Icons.video_settings),
+        _buildDropdown('Resolution', _selectedRes, ['720p (HD)', '1080p (Full HD)', '4K (Ultra HD)'], _onResolutionChanged, Icons.video_settings),
         const SizedBox(height: 12),
-        _buildDropdown("Frame Rate", _selectedFps, ["30 FPS", "60 FPS"], _onFpsChanged, Icons.movie),
+        _buildDropdown('Frame Rate', _selectedFps, ['30 FPS', '60 FPS'], _onFpsChanged, Icons.movie),
         const SizedBox(height: 12),
-        _buildDropdown("Container Format", _selectedFormat, ["MP4 (H.264 / AAC)", "MOV (ProRes)", "GIF Animation", "MP3 Audio Only"], _onFormatChanged, Icons.file_present),
+        _buildDropdown('Container Format', _selectedFormat, ['MP4 (H.264 / AAC)', 'MOV (ProRes)', 'GIF Animation', 'MP3 Audio Only'], _onFormatChanged, Icons.file_present),
         const SizedBox(height: 12),
 
         // Output path selector
@@ -246,7 +283,7 @@ class _ExportDialogState extends State<ExportDialog> {
             ),
             TextButton(
               onPressed: _pickOutputPath,
-              child: const Text("Browse...", style: TextStyle(fontSize: 11)),
+              child: const Text('Browse...', style: TextStyle(fontSize: 11)),
             ),
           ],
         ),

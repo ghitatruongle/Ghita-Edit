@@ -24,7 +24,7 @@ class Project {
   Project({
     required this.name,
     this.filePath = '',
-    this.version = '0.2.0',
+    this.version = '0.3.0',
     DateTime? createdAt,
     DateTime? modifiedAt,
     List<Track>? tracks,
@@ -123,7 +123,7 @@ class Project {
 
   factory Project.fromJson(Map<String, dynamic> json) => Project(
         name: json['name'] as String? ?? 'Untitled',
-        version: json['version'] as String? ?? '0.2.0',
+        version: json['version'] as String? ?? '0.3.0',
         createdAt: json['createdAt'] != null
             ? DateTime.parse(json['createdAt'] as String)
             : null,

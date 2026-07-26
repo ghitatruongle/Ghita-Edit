@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../controllers/editor_controller.dart';
 import '../theme/app_theme.dart';
@@ -93,26 +92,21 @@ class _EditorViewState extends State<EditorView> {
   }
 
   Widget _loadingShell() {
-    return MaterialApp(
-      title: 'Ghita Edit',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
-      home: Scaffold(
-        backgroundColor: AppTheme.background,
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                _controller.statusMessage,
-                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
-              ),
-            ],
-          ),
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _controller.statusMessage,
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
+            ),
+          ],
         ),
       ),
     );
@@ -143,7 +137,7 @@ class _EditorViewState extends State<EditorView> {
               ),
               const SizedBox(width: 10),
               const Text(
-                "GHITA EDIT",
+                'GHITA EDIT',
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w900,
@@ -160,7 +154,7 @@ class _EditorViewState extends State<EditorView> {
                   border: Border.all(color: AppTheme.divider),
                 ),
                 child: Text(
-                  "C++ ENGINE ${AppTheme.appVersion}",
+                  'C++ ENGINE ${AppTheme.appVersion}',
                   style: const TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -172,34 +166,34 @@ class _EditorViewState extends State<EditorView> {
           const SizedBox(width: 12),
 
           // Working Menus
-          _buildPopupMenu("File", [
-            _MenuItem("New Project", Icons.note_add, () => _controller.newProject()),
-            _MenuItem("Open Project...", Icons.folder_open, _openProject),
-            _MenuItem("Save (Ctrl+S)", Icons.save, () => _saveProject(context)),
-            _MenuItem("Save As...", Icons.save_as, () => _saveProjectAs(context)),
-            _MenuItem("Import Media...", Icons.video_file, _importMedia),
+          _buildPopupMenu('File', [
+            _MenuItem('New Project', Icons.note_add, () => _controller.newProject()),
+            _MenuItem('Open Project...', Icons.folder_open, _openProject),
+            _MenuItem('Save (Ctrl+S)', Icons.save, () => _saveProject(context)),
+            _MenuItem('Save As...', Icons.save_as, () => _saveProjectAs(context)),
+            _MenuItem('Import Media...', Icons.video_file, _importMedia),
           ]),
-          _buildPopupMenu("Edit", [
-            _MenuItem("Undo (Ctrl+Z)", Icons.undo, _controller.canUndo ? _controller.undo : null),
-            _MenuItem("Redo (Ctrl+Shift+Z)", Icons.redo, _controller.canRedo ? _controller.redo : null),
-            _MenuItem("Copy (Ctrl+C)", Icons.copy, () => _controller.copySelectedClip()),
-            _MenuItem("Paste (Ctrl+V)", Icons.paste, _controller.hasClipboard ? _controller.pasteClip : null),
-            _MenuItem("Delete (Del)", Icons.delete, () => _controller.deleteSelectedClip()),
+          _buildPopupMenu('Edit', [
+            _MenuItem('Undo (Ctrl+Z)', Icons.undo, _controller.canUndo ? _controller.undo : null),
+            _MenuItem('Redo (Ctrl+Shift+Z)', Icons.redo, _controller.canRedo ? _controller.redo : null),
+            _MenuItem('Copy (Ctrl+C)', Icons.copy, () => _controller.copySelectedClip()),
+            _MenuItem('Paste (Ctrl+V)', Icons.paste, _controller.hasClipboard ? _controller.pasteClip : null),
+            _MenuItem('Delete (Del)', Icons.delete, () => _controller.deleteSelectedClip()),
           ]),
-          _buildPopupMenu("Track", [
-            _MenuItem("Split at Playhead (S)", Icons.content_cut, () => _controller.splitAtPlayhead()),
-            _MenuItem("Deselect All", Icons.deselect, () => _controller.deselectAll()),
+          _buildPopupMenu('Track', [
+            _MenuItem('Split at Playhead (S)', Icons.content_cut, () => _controller.splitAtPlayhead()),
+            _MenuItem('Deselect All', Icons.deselect, () => _controller.deselectAll()),
           ]),
-          _buildPopupMenu("Effects", [
-            _MenuItem("No Filter", Icons.filter_none, () => _controller.setFilter(0, 1.0)),
-            _MenuItem("Grayscale", Icons.gradient, () => _controller.setFilter(1, 1.0)),
-            _MenuItem("Sepia", Icons.filter_vintage, () => _controller.setFilter(2, 1.0)),
-            _MenuItem("Invert", Icons.invert_colors, () => _controller.setFilter(3, 1.0)),
-            _MenuItem("Brightness+", Icons.brightness_6, () => _controller.setFilter(4, 0.5)),
+          _buildPopupMenu('Effects', [
+            _MenuItem('No Filter', Icons.filter_none, () => _controller.setFilter(0, 1.0)),
+            _MenuItem('Grayscale', Icons.gradient, () => _controller.setFilter(1, 1.0)),
+            _MenuItem('Sepia', Icons.filter_vintage, () => _controller.setFilter(2, 1.0)),
+            _MenuItem('Invert', Icons.invert_colors, () => _controller.setFilter(3, 1.0)),
+            _MenuItem('Brightness+', Icons.brightness_6, () => _controller.setFilter(4, 0.5)),
           ]),
-          _buildPopupMenu("Help", [
-            _MenuItem("Keyboard Shortcuts", Icons.keyboard, () => _showShortcutsDialog(context)),
-            _MenuItem("About Ghita Edit", Icons.info_outline, () => _showAboutDialog(context)),
+          _buildPopupMenu('Help', [
+            _MenuItem('Keyboard Shortcuts', Icons.keyboard, () => _showShortcutsDialog(context)),
+            _MenuItem('About Ghita Edit', Icons.info_outline, () => _showAboutDialog(context)),
           ]),
 
           const Spacer(),
@@ -222,7 +216,7 @@ class _EditorViewState extends State<EditorView> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: _controller.isEngineReady ? Colors.green.withOpacity(0.15) : Colors.amber.withOpacity(0.15),
+              color: _controller.isEngineReady ? Colors.green.withValues(alpha: 0.15) : Colors.amber.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: _controller.isEngineReady ? Colors.greenAccent : Colors.amberAccent,
@@ -237,7 +231,7 @@ class _EditorViewState extends State<EditorView> {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  _controller.isEngineReady ? "C++ FFI Active" : "Initializing...",
+                  _controller.isEngineReady ? 'C++ FFI Active' : 'Initializing...',
                   style: TextStyle(
                     color: _controller.isEngineReady ? Colors.greenAccent : Colors.amberAccent,
                     fontSize: 10,
@@ -260,7 +254,7 @@ class _EditorViewState extends State<EditorView> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
             icon: const Icon(Icons.file_upload_outlined, size: 16),
-            label: const Text("Export", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            label: const Text('Export', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
             onPressed: () => showDialog(
               context: context,
               builder: (_) => ExportDialog(controller: _controller),
@@ -332,7 +326,7 @@ class _EditorViewState extends State<EditorView> {
 
   Future<void> _saveProject(BuildContext context) async {
     final success = await _controller.quickSave();
-    if (!success && mounted) {
+    if (!success && context.mounted) {
       _saveProjectAs(context);
     }
   }
@@ -361,7 +355,7 @@ class _EditorViewState extends State<EditorView> {
           children: [
             Icon(Icons.keyboard, color: AppTheme.accent),
             SizedBox(width: 8),
-            Text("Keyboard Shortcuts", style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
+            Text('Keyboard Shortcuts', style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
           ],
         ),
         content: SizedBox(
@@ -370,23 +364,23 @@ class _EditorViewState extends State<EditorView> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _shortcutRow("Space", "Play / Pause"),
-              _shortcutRow("S", "Split clip at playhead"),
-              _shortcutRow("Delete", "Delete selected clip"),
-              _shortcutRow("Ctrl+Z", "Undo"),
-              _shortcutRow("Ctrl+Shift+Z / Ctrl+Y", "Redo"),
-              _shortcutRow("Ctrl+S", "Quick Save"),
-              _shortcutRow("Ctrl+C / Ctrl+V", "Copy / Paste clip"),
-              _shortcutRow("J / K / L", "Shuttle: -5s / Play-Pause / +5s"),
-              _shortcutRow("\u2190 / \u2192", "Seek -1s / +1s"),
-              _shortcutRow("Home / End", "Go to start / end"),
+              _shortcutRow('Space', 'Play / Pause'),
+              _shortcutRow('S', 'Split clip at playhead'),
+              _shortcutRow('Delete', 'Delete selected clip'),
+              _shortcutRow('Ctrl+Z', 'Undo'),
+              _shortcutRow('Ctrl+Shift+Z / Ctrl+Y', 'Redo'),
+              _shortcutRow('Ctrl+S', 'Quick Save'),
+              _shortcutRow('Ctrl+C / Ctrl+V', 'Copy / Paste clip'),
+              _shortcutRow('J / K / L', 'Shuttle: -5s / Play-Pause / +5s'),
+              _shortcutRow('\u2190 / \u2192', 'Seek -1s / +1s'),
+              _shortcutRow('Home / End', 'Go to start / end'),
             ],
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("Close"),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -424,24 +418,24 @@ class _EditorViewState extends State<EditorView> {
           children: [
             Icon(Icons.movie_edit, color: AppTheme.primary),
             SizedBox(width: 8),
-            Text("About Ghita Edit", style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
+            Text('About Ghita Edit', style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("Version: ${AppTheme.appVersion}", style: const TextStyle(color: AppTheme.textMain)),
+            Text('Version: ${AppTheme.appVersion}', style: const TextStyle(color: AppTheme.textMain)),
             const SizedBox(height: 8),
-            const Text("Cross-platform multimedia editor with native C++ engine.", style: TextStyle(color: AppTheme.textMuted, fontSize: 12)),
+            const Text('Cross-platform multimedia editor with native C++ engine.', style: TextStyle(color: AppTheme.textMuted, fontSize: 12)),
             const SizedBox(height: 8),
-            Text("Engine: ${_controller.engineVersion}", style: const TextStyle(color: AppTheme.accent, fontSize: 11)),
+            Text('Engine: ${_controller.engineVersion}', style: const TextStyle(color: AppTheme.accent, fontSize: 11)),
             const SizedBox(height: 4),
-            Text("Clips: ${_controller.project.allClips.length} | Tracks: ${_controller.tracks.length}", style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+            Text('Clips: ${_controller.project.allClips.length} | Tracks: ${_controller.tracks.length}', style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close")),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
         ],
       ),
     );
