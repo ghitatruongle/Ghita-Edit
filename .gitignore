@@ -1,54 +1,87 @@
-# Miscellaneous
+# Miscellaneous & OS
 *.class
 *.log
 *.pyc
 *.swp
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
 .atom/
 .build/
 .buildlog/
 .history
 .svn/
 .swiftpm/
-migrate_working_dir/
 
-# IntelliJ related
+# App & Project-Specific Temporary Files
+.ghita_autosave/
+migrate_working_dir/
+/noibo/
+assets/logos/
+
+# IntelliJ / IDEs / VS Code / Visual Studio
 *.iml
 *.ipr
 *.iws
 .idea/
-
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
 #.vscode/
 
-# Flutter/Dart/Pub related
+# Flutter / Dart / Pub
 **/doc/api/
-**/ios/Flutter/.last_build_id
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
+.packages
 .pub-cache/
 .pub/
-/build/
-native_engine/build/
+**/build/
 /coverage/
 
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
+# Android
+**/android/.gradle/
+**/android/local.properties
+**/android/captures/
+**/android/.cxx/
+**/android/GeneratedPluginRegistrant.java
 /android/app/debug
 /android/app/profile
 /android/app/release
+key.properties
+**/*.keystore
+**/*.jks
 
-# Local internal directory
-/noibo/
+# iOS / macOS
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/app.fltparam
+**/ios/DerivedData/
+**/ios/Pods/
+**/ios/.symlinks/
 
-# Windows MSVC intermediate files
+# Windows MSVC & NDK Native Intermediate / Output Build Files
+windows/flutter/ephemeral/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeLists.txt.user
+*.[Cc]ache
+!*.[Cc]ache/
+x64/
+x86/
+ARM/
+ARM64/
 *.obj
 *.exp
 *.ilk
@@ -58,13 +91,13 @@ app.*.map.json
 *.tlh
 *.tmp
 *.sdf
-*.suo
-*.user
-
-# Android NDK intermediate build files
 *.o
 *.a
 *.so
 *.dll
 *.dylib
 *.exe
+
+# Symbolication & Obfuscation
+app.*.symbols
+app.*.map.json

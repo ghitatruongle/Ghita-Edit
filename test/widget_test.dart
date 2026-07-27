@@ -33,6 +33,11 @@ void main() {
 
   group('EditorView rendering', () {
     testWidgets('renders loading shell when engine not ready', (tester) async {
+      // Provide a wide enough surface to prevent RenderFlex overflows during tests
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
       await tester.pumpWidget(
         const MaterialApp(
           home: EditorView(),
@@ -47,6 +52,10 @@ void main() {
     });
 
     testWidgets('renders full editor layout after init', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
       await tester.pumpWidget(
         const MaterialApp(
           home: EditorView(),
@@ -62,6 +71,10 @@ void main() {
     });
 
     testWidgets('menu labels are present when engine ready', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
       await tester.pumpWidget(
         const MaterialApp(
           home: EditorView(),
@@ -77,6 +90,10 @@ void main() {
 
   group('EditorView animation smoke test', () {
     testWidgets('animates multiple frames without exception', (tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
       await tester.pumpWidget(
         const MaterialApp(
           home: EditorView(),

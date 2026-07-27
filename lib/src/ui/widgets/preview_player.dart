@@ -161,24 +161,24 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
             child: Row(
               children: [
                 // Timecode Display
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppTheme.background,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '${_formatTime(ctrl.positionMs)} / ${_formatTime(ctrl.durationMs)}',
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      color: AppTheme.accent,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppTheme.background,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '${_formatTime(ctrl.positionMs)} / ${_formatTime(ctrl.durationMs)}',
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        color: AppTheme.accent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ),
-
-                const Spacer(),
 
                 // Playback Transport Controls
                 IconButton(
@@ -198,10 +198,11 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                   onPressed: () => ctrl.seek(ctrl.positionMs + 10000),
                 ),
 
-                const Spacer(),
+                const SizedBox(width: 8),
 
                 // Volume slider
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       ctrl.volume == 0 ? Icons.volume_off : Icons.volume_up,
