@@ -102,16 +102,16 @@ void test_load_media_mock() {
     GhitaEngine engine;
     engine.initialize();
     engine.loadMedia("/fake/path/video.mp4");
-    EXPECT_EQ(engine.getWidth(), 1280);
-    EXPECT_EQ(engine.getHeight(), 720);
+    EXPECT_EQ(engine.getWidth(), 1920);
+    EXPECT_EQ(engine.getHeight(), 1080);
     EXPECT_EQ(engine.getDurationMs(), int64_t(60000));
 }
 
 void test_get_version_string() {
     const char* v = ghita_engine_get_version();
     EXPECT_TRUE(v != nullptr);
-    // v0.3.0 should be in the string
-    EXPECT_TRUE(std::string(v).find("0.3.0") != std::string::npos);
+    // v0.3.1 should be in the string
+    EXPECT_TRUE(std::string(v).find("0.3.1") != std::string::npos);
 }
 
 void test_clip_operations() {
@@ -156,6 +156,62 @@ void test_export_lifecycle() {
     EXPECT_FALSE(engine.startExport("", 0, 0, 0));
 }
 
+void test_frame_snapping_and_transitions() {
+    GhitaEngine engine;
+    engine.initialize();
+
+    engine.setFrameSnappingFps(60);
+    EXPECT_EQ(engine.getFrameSnappingFps(), 60);
+
+    int id = engine.addClip("sample.mp4", 0, 4000, 0);
+    EXPECT_TRUE(id > 0);
+    EXPECT_TRUE(engine.setClipTransition(id, TransitionType::FadeIn, 800));
+
+    int w = 0, h = 0;
+    uint8_t* ptr = engine.getFrameDirectBufferPointer(&w, &h);
+    EXPECT_TRUE(ptr != nullptr);
+    EXPECT_TRUE(w > 0);
+    EXPECT_TRUE(h > 0);
+}
+
+void test_concurrency_stress() {
+    GhitaEngine engine;
+    engine.initialize();
+
+    std::vector<std::thread> workers;
+    std::atomic<bool> stopFlag{false};
+
+    // Thread 1: Render loop
+    workers.emplace_back([&]() {
+        std::vector<uint8_t> buf(128 * 64 * 4);
+        while (!stopFlag.load()) {
+            engine.renderFrameRGBA(buf.data(), 128, 64);
+            std::this_thread::yield();
+        }
+    });
+
+    // Thread 2: Timeline modification loop
+    workers.emplace_back([&]() {
+        for (int i = 0; i < 20; ++i) {
+            int id = engine.addClip("clip.mp4", i * 100, 500, 0);
+            engine.seek(i * 50);
+            engine.setVolume(1.0f + (i % 5) * 0.1f);
+            if (id > 0) engine.removeClip(id);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    for (int i = 0; i < 20; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    stopFlag.store(true);
+    for (auto& t : workers) {
+        if (t.joinable()) t.join();
+    }
+
+    EXPECT_TRUE(engine.isReady());
+}
+
 int main() {
     std::cout << "=== Ghita Native Engine Self-Test ===" << std::endl;
 
@@ -169,6 +225,8 @@ int main() {
     TEST(test_get_version_string);
     TEST(test_clip_operations);
     TEST(test_export_lifecycle);
+    TEST(test_frame_snapping_and_transitions);
+    TEST(test_concurrency_stress);
 
     std::cout << "\n--- Result: " << g_passed << " passed, " << g_failed << " failed ---" << std::endl;
 

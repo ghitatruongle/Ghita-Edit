@@ -7,7 +7,7 @@ struct GhitaEngineContext {
 };
 
 // Static string is safe to return because it lives for the process lifetime
-static const char VERSION_STRING[] = "Ghita Core Engine v0.3.0 (C++/Flutter)";
+static const char VERSION_STRING[] = "Ghita Core Engine v0.3.1 (C++/Flutter)";
 
 extern "C" {
 
@@ -139,4 +139,24 @@ GHITA_API bool ghita_engine_get_audio_waveform(GhitaEngineContext* ctx, float* o
     return ctx->engine.getAudioWaveform(out_samples, sample_count);
 }
 
+GHITA_API void ghita_engine_set_snapping_fps(GhitaEngineContext* ctx, int fps) {
+    if (ctx) ctx->engine.setFrameSnappingFps(fps);
 }
+
+GHITA_API int ghita_engine_get_snapping_fps(GhitaEngineContext* ctx) {
+    if (!ctx) return 30;
+    return ctx->engine.getFrameSnappingFps();
+}
+
+GHITA_API bool ghita_engine_set_clip_transition(GhitaEngineContext* ctx, int clip_id, int transition_type, int duration_ms) {
+    if (!ctx) return false;
+    return ctx->engine.setClipTransition(clip_id, static_cast<TransitionType>(transition_type), duration_ms);
+}
+
+GHITA_API uint8_t* ghita_engine_get_direct_buffer(GhitaEngineContext* ctx, int* out_width, int* out_height) {
+    if (!ctx) return nullptr;
+    return ctx->engine.getFrameDirectBufferPointer(out_width, out_height);
+}
+
+}
+

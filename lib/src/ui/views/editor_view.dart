@@ -125,15 +125,24 @@ class _EditorViewState extends State<EditorView> {
           // Logo + Branding
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [AppTheme.primary, AppTheme.accent],
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset(
+                  'assets/logo.png',
+                  width: 28,
+                  height: 28,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [AppTheme.primary, AppTheme.accent],
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.movie_edit, color: Colors.white, size: 18),
                   ),
-                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.movie_edit, color: Colors.white, size: 18),
               ),
               const SizedBox(width: 10),
               const Text(

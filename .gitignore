@@ -1,7 +1,13 @@
-# Miscellaneous & OS
+# ==============================================================================
+# Ghita Edit — Official .gitignore Configuration (v0.3.1)
+# Cross-Platform Multimedia Editor (Flutter + C++20 Native Engine)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. OS & System Miscellaneous Files
+# ------------------------------------------------------------------------------
 *.class
 *.log
-*.pyc
 *.swp
 .DS_Store
 .DS_Store?
@@ -11,20 +17,38 @@
 ehthumbs.db
 Thumbs.db
 Desktop.ini
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
+*.stackdump
 
-# App & Project-Specific Temporary Files
+# Java / JVM Crash Dumps
+hs_err_pid*.log
+replay_pid*.log
+flutter_*.log
+
+# ------------------------------------------------------------------------------
+# 2. App-Specific & Local Workspaces / Autosaves
+# ------------------------------------------------------------------------------
 .ghita_autosave/
+.zcode/
+.history/
 migrate_working_dir/
 /noibo/
 assets/logos/
+assets/logo_concept*.png
+*.ghita
+*.ghita.json
 
-# IntelliJ / IDEs / VS Code / Visual Studio
+# Exported Media Test Files (Generated during export tests)
+native_engine/*.mp4
+native_engine/*.mov
+native_engine/*.avi
+native_engine/*.mkv
+native_engine/*.webm
+native_engine/*.wav
+native_engine/*.mp3
+
+# ------------------------------------------------------------------------------
+# 3. IDEs, Editors & Project Settings
+# ------------------------------------------------------------------------------
 *.iml
 *.ipr
 *.iws
@@ -34,33 +58,53 @@ assets/logos/
 *.suo
 *.userosscache
 *.sln.docstates
-#.vscode/
+.vscode/
+.atom/
+.build/
+.buildlog/
+.svn/
+.swiftpm/
 
-# Flutter / Dart / Pub
-**/doc/api/
+# ------------------------------------------------------------------------------
+# 4. Flutter / Dart / Pub Package Manager
+# ------------------------------------------------------------------------------
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
 .pub-cache/
 .pub/
+build/
 **/build/
-/coverage/
+coverage/
+**/doc/api/
 
-# Android
+# Explicitly preserve required static assets
+!assets/
+!assets/logo.png
+
+# ------------------------------------------------------------------------------
+# 5. Android Native & NDK Build System
+# ------------------------------------------------------------------------------
 **/android/.gradle/
 **/android/local.properties
 **/android/captures/
 **/android/.cxx/
 **/android/GeneratedPluginRegistrant.java
-/android/app/debug
-/android/app/profile
-/android/app/release
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+
+# Android Signing Credentials & Keys
 key.properties
 **/*.keystore
 **/*.jks
+**/*.p12
+**/*.pem
 
-# iOS / macOS
+# ------------------------------------------------------------------------------
+# 6. iOS & macOS Native Environments
+# ------------------------------------------------------------------------------
 **/ios/Flutter/.last_build_id
 **/ios/Flutter/Flutter.framework
 **/ios/Flutter/Flutter.podspec
@@ -69,20 +113,32 @@ key.properties
 **/ios/DerivedData/
 **/ios/Pods/
 **/ios/.symlinks/
+**/macos/Pods/
 
-# Windows MSVC & NDK Native Intermediate / Output Build Files
-windows/flutter/ephemeral/
+# ------------------------------------------------------------------------------
+# 7. C++20 Native Engine (CMake, MSVC, NDK, GCC, Clang Build Outputs)
+# ------------------------------------------------------------------------------
+native_engine/build/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 CMakeLists.txt.user
 *.[Cc]ache
 !*.[Cc]ache/
+
+# Platform Architecture Output Directories
 x64/
 x86/
 ARM/
 ARM64/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+
+# Compiled Object Files & Intermediate Artifacts
 *.obj
+*.o
 *.exp
 *.ilk
 *.pdb
@@ -90,14 +146,20 @@ ARM64/
 *.tli
 *.tlh
 *.tmp
+*.temp
 *.sdf
-*.o
 *.a
+*.lib
+
+# Output Executables & Shared Dynamic Libraries
 *.so
 *.dll
 *.dylib
 *.exe
 
-# Symbolication & Obfuscation
+# ------------------------------------------------------------------------------
+# 8. Symbolication & Obfuscation Maps
+# ------------------------------------------------------------------------------
 app.*.symbols
 app.*.map.json
+
