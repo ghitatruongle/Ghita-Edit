@@ -278,6 +278,7 @@ uint8_t* GhitaEngine::getFrameDirectBufferPointer(int* outWidth, int* outHeight)
     std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     const int w = m_width.load();
     const int h = m_height.load();
+    if (w <= 0 || h <= 0) return nullptr;
     if (outWidth) *outWidth = w;
     if (outHeight) *outHeight = h;
     
@@ -445,7 +446,7 @@ void GhitaEngine::runExportLoop(std::string outputPath, int width, int height, i
         decoder.decodeFrame(frameBuffer.data(), width, height, frameTimeMs, m_activeFilterType, m_filterIntensity.load());
 
         if (outFile) {
-            fwrite(frameBuffer.data(), 1, std::min<size_t>(frameBuffer.size(), 1024), outFile.get());
+            fwrite(frameBuffer.data(), 1, frameBuffer.size(), outFile.get());
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(2));

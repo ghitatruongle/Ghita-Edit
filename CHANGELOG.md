@@ -1,6 +1,6 @@
 # Ghita Edit — Changelog
 
-## v0.4.0 (in development)
+## v0.4.0+4
 - 🔒 Fixed critical FFI error handling — missing native functions throw descriptive exceptions instead of crashing silently
 - 🔒 Added dispose guard in EngineService and EditorController to prevent double-free memory issues
 - 🔒 Added path validation in importMedia to prevent potential path traversal attacks

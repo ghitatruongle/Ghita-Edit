@@ -3,9 +3,9 @@
 
 const kAppName = 'Ghita Edit';
 const kMajorVersion = 0;
-const kMinorVersion = 3;
-const kPatchVersion = 7;
-const kBuildNumber = 3;
+const kMinorVersion = 4;
+const kPatchVersion = 0;
+const kBuildNumber = 4;
 
 /// Flutter/Dart app version string (e.g., '0.3.1+2')
 String get flutterVersion => '$kMajorVersion.$kMinorVersion.$kPatchVersion+$kBuildNumber';

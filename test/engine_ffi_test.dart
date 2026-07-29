@@ -290,7 +290,7 @@ void main() {
       controller.importMedia('test.mp4');
       final json = controller.project.toJsonString();
       expect(json.contains('test.mp4'), isTrue);
-      expect(json.contains('0.3.7'), isTrue);
+      expect(json.contains('0.4.0'), isTrue);
     });
 
     test('project deserializes from JSON', () {

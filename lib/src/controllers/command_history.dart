@@ -23,14 +23,14 @@ class AddClipCommand extends EditCommand {
 
   @override
   void execute(Project project) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
-    track.addClipAt(clip, positionMs);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    track?.addClipAt(clip, positionMs);
   }
 
   @override
   void undo(Project project) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
-    track.removeClip(clip.id);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    track?.removeClip(clip.id);
   }
 }
 
@@ -48,14 +48,14 @@ class DeleteClipCommand extends EditCommand {
   @override
   void execute(Project project) {
     _originalPosition = clip.timelineStartMs;
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
-    track.removeClip(clip.id);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    track?.removeClip(clip.id);
   }
 
   @override
   void undo(Project project) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
-    track.addClipAt(clip, _originalPosition);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    track?.addClipAt(clip, _originalPosition);
   }
 }
 
@@ -73,15 +73,18 @@ class SplitClipCommand extends EditCommand {
 
   @override
   void execute(Project project) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
-    final clip = track.clips.firstWhere((c) => c.id == clipId);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
+    final clip = track.clips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
     _originalClip = clip.copyWith();
     track.splitClipAt(positionMs);
   }
 
   @override
   void undo(Project project) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
     // Remove the split parts and restore original
     track.clips.removeWhere((c) => c.id == '${clipId}_L' || c.id == '${clipId}_R');
     track.clips.add(_originalClip);
@@ -104,7 +107,8 @@ class MoveClipCommand extends EditCommand {
 
   @override
   void execute(Project project) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
     final idx = track.clips.indexWhere((c) => c.id == clipId);
     if (idx == -1) return;
     _oldStartMs = explicitOldStartMs ?? track.clips[idx].timelineStartMs;
@@ -113,8 +117,8 @@ class MoveClipCommand extends EditCommand {
 
   @override
   void undo(Project project) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
-    track.moveClip(clipId, _oldStartMs);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    track?.moveClip(clipId, _oldStartMs);
   }
 }
 
@@ -133,7 +137,8 @@ class ChangeFilterCommand extends EditCommand {
 
   @override
   void execute(Project project) {
-    final clip = project.allClips.firstWhere((c) => c.id == clipId);
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
     _oldFilterType = clip.filterType;
     _oldIntensity = clip.filterIntensity;
     clip.filterType = newFilterType;
@@ -142,7 +147,8 @@ class ChangeFilterCommand extends EditCommand {
 
   @override
   void undo(Project project) {
-    final clip = project.allClips.firstWhere((c) => c.id == clipId);
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
     clip.filterType = _oldFilterType;
     clip.filterIntensity = _oldIntensity;
   }
@@ -171,8 +177,10 @@ class TrimClipCommand extends EditCommand {
 
   @override
   void execute(Project project) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
-    final clip = track.clips.firstWhere((c) => c.id == clipId);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
+    final clip = track.clips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
     _oldStartMs = clip.timelineStartMs;
     _oldDurationMs = clip.durationMs;
     _oldSourceInMs = clip.sourceInMs;
@@ -187,8 +195,10 @@ class TrimClipCommand extends EditCommand {
 
   @override
   void undo(Project project) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
-    final clip = track.clips.firstWhere((c) => c.id == clipId);
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
+    final clip = track.clips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
     clip.timelineStartMs = _oldStartMs;
     clip.durationMs = _oldDurationMs;
     clip.sourceInMs = _oldSourceInMs;

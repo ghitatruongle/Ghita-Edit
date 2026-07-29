@@ -214,9 +214,9 @@ class EngineService {
   }
 
   bool _tickFrame() {
-    _checkDisposed();
+    if (_disposed || !_isRunning || !isReady || _framePointer == null) return false;
     final bindings = _bindings;
-    if (!isRunning || !isReady || _framePointer == null || bindings == null) return false;
+    if (bindings == null) return false;
 
     try {
       _isPlaying = bindings.isPlaying(_ctx!);
