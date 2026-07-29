@@ -138,73 +138,13 @@ struct NativeClip {
  */
 class GhitaEngine {
 public:
-    // Rule of Five: Explicitly declare all special member functions to prevent undefined behavior
-    GhitaEngine() = default;
+    GhitaEngine();
     
-    // Delete copy operations (unique_ptr<m_decoder> makes copying invalid)
+    // GhitaEngine manages atomic variables, shared_mutex, and thread resources, so copying and moving are deleted
     GhitaEngine(const GhitaEngine&) = delete;
     GhitaEngine& operator=(const GhitaEngine&) = delete;
-    
-    // Move operations — safe and necessary
-    GhitaEngine(GhitaEngine&& other) noexcept 
-        : m_engineMutex(std::move(other.m_engineMutex)),
-          m_isPlaying(std::move(other.m_isPlaying)),
-          m_ready(std::move(other.m_ready)),
-          m_currentPosMs(std::move(other.m_currentPosMs)),
-          m_durationMs(std::move(other.m_durationMs)),
-          m_width(std::move(other.m_width)),
-          m_height(std::move(other.m_height)),
-          m_loadedFilePath(std::move(other.m_loadedFilePath)),
-          m_volume(std::move(other.m_volume)),
-          m_snappingFps(std::move(other.m_snappingFps)),
-          m_activeFilterType(other.m_activeFilterType),
-          m_filterIntensity(std::move(other.m_filterIntensity)),
-          m_lastTickTime(other.m_lastTickTime),
-          m_decoder(std::move(other.m_decoder)),
-          m_directFrameBuffer(std::move(other.m_directFrameBuffer)),
-          m_clips(std::move(other.m_clips)),
-          m_nextClipId(other.m_nextClipId),
-          m_isExporting(std::move(other.m_isExporting)),
-          m_cancelExportFlag(std::move(other.m_cancelExportFlag)),
-          m_exportProgress(std::move(other.m_exportProgress)),
-          m_exportOutputPath(std::move(other.m_exportOutputPath)),
-          m_exportThread(std::move(other.m_exportThread)) {}
-    
-    GhitaEngine& operator=(GhitaEngine&& other) noexcept {
-        if (this != &other) {
-            // Cleanup existing resources first
-            cancelExport();
-            if (m_exportThread.joinable()) {
-                m_exportThread.join();
-            }
-            
-            // Move assign all members
-            m_engineMutex = std::move(other.m_engineMutex);
-            m_isPlaying = std::move(other.m_isPlaying);
-            m_ready = std::move(other.m_ready);
-            m_currentPosMs = std::move(other.m_currentPosMs);
-            m_durationMs = std::move(other.m_durationMs);
-            m_width = std::move(other.m_width);
-            m_height = std::move(other.m_height);
-            m_loadedFilePath = std::move(other.m_loadedFilePath);
-            m_volume = std::move(other.m_volume);
-            m_snappingFps = std::move(other.m_snappingFps);
-            m_activeFilterType = other.m_activeFilterType;
-            m_filterIntensity = std::move(other.m_filterIntensity);
-            m_lastTickTime = other.m_lastTickTime;
-            m_decoder = std::move(other.m_decoder);
-            m_directFrameBuffer = std::move(other.m_directFrameBuffer);
-            m_clips = std::move(other.m_clips);
-            m_nextClipId = other.m_nextClipId;
-            m_isExporting = std::move(other.m_isExporting);
-            m_cancelExportFlag = std::move(other.m_cancelExportFlag);
-            m_exportProgress = std::move(other.m_exportProgress);
-            m_exportOutputPath = std::move(other.m_exportOutputPath);
-            m_exportThread = std::move(other.m_exportThread);
-        }
-        return *this;
-    }
-    
+    GhitaEngine(GhitaEngine&&) = delete;
+    GhitaEngine& operator=(GhitaEngine&&) = delete;
     ~GhitaEngine();
 
     /** @brief Initializes the engine state and clock. */

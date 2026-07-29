@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../models/clip.dart';
+import '../models/track.dart';
 import '../models/project.dart';
 
 /// Abstract command for undo/redo operations.
@@ -192,6 +193,53 @@ class TrimClipCommand extends EditCommand {
     clip.durationMs = _oldDurationMs;
     clip.sourceInMs = _oldSourceInMs;
     clip.sourceOutMs = _oldSourceOutMs;
+  }
+}
+
+/// Command: Add a track dynamically (v0.3.5).
+class AddTrackCommand extends EditCommand {
+  final Track track;
+
+  AddTrackCommand({required this.track});
+
+  @override
+  String get description => 'Add track "${track.name}"';
+
+  @override
+  void execute(Project project) {
+    project.addTrack(track);
+  }
+
+  @override
+  void undo(Project project) {
+    project.removeTrack(track.id);
+  }
+}
+
+/// Command: Remove a track dynamically (v0.3.5).
+class RemoveTrackCommand extends EditCommand {
+  final Track track;
+  late int _originalIndex;
+
+  RemoveTrackCommand({required this.track});
+
+  @override
+  String get description => 'Remove track "${track.name}"';
+
+  @override
+  void execute(Project project) {
+    _originalIndex = project.tracks.indexWhere((t) => t.id == track.id);
+    project.removeTrack(track.id);
+  }
+
+  @override
+  void undo(Project project) {
+    if (_originalIndex >= 0 && _originalIndex <= project.tracks.length) {
+      project.tracks.insert(_originalIndex, track);
+      project.markModified();
+    } else {
+      project.addTrack(track);
+    }
   }
 }
 

@@ -110,8 +110,8 @@ void test_load_media_mock() {
 void test_get_version_string() {
     const char* v = ghita_engine_get_version();
     EXPECT_TRUE(v != nullptr);
-    // v0.3.1 should be in the string
-    EXPECT_TRUE(std::string(v).find("0.3.1") != std::string::npos);
+    // v0.3.7 should be in the string
+    EXPECT_TRUE(std::string(v).find("0.3.7") != std::string::npos);
 }
 
 void test_clip_operations() {

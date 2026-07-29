@@ -10,6 +10,7 @@ import 'project_service.dart';
 import '../models/project.dart';
 import '../models/clip.dart';
 import '../models/track.dart';
+import '../core/version.dart';
 
 /// Orchestrates UI state, project model, undo/redo, and native engine.
 /// This is the central state manager for the entire editor.
@@ -81,7 +82,7 @@ class EditorController extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      _statusMessage = 'Engine ready • v0.3.0';
+      _statusMessage = 'Engine ready • v$flutterVersion';
       _startAutoSave();
       notifyListeners();
     } catch (e) {
@@ -256,6 +257,31 @@ class EditorController extends ChangeNotifier {
     final cmd = DeleteClipCommand(trackId: track.id, clip: sel);
     commandHistory.execute(cmd, project);
     _statusMessage = 'Deleted: ${sel.displayName}';
+    notifyListeners();
+  }
+
+  /// Add a new track dynamically (v0.3.5).
+  void addNewTrack(String name, TrackType type) {
+    if (_disposed) return;
+    final newTrack = Track(
+      id: 'track_${type.name}_${DateTime.now().millisecondsSinceEpoch}',
+      name: name,
+      type: type,
+    );
+    final cmd = AddTrackCommand(track: newTrack);
+    commandHistory.execute(cmd, project);
+    _statusMessage = 'Added track: $name';
+    notifyListeners();
+  }
+
+  /// Remove a track dynamically by ID (v0.3.5).
+  void removeTrack(String trackId) {
+    if (_disposed) return;
+    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
+    if (track.id.isEmpty) return;
+    final cmd = RemoveTrackCommand(track: track);
+    commandHistory.execute(cmd, project);
+    _statusMessage = 'Removed track: ${track.name}';
     notifyListeners();
   }
 

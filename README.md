@@ -1,4 +1,4 @@
-# Ghita Edit — v0.3.0
+# Ghita Edit — v0.3.7
 
 A cross-platform multimedia editor suite built with **Flutter** and a native **C++20 rendering engine** connected via Dart FFI.
 

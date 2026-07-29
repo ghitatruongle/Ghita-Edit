@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'track.dart';
 import 'clip.dart';
+import '../core/version.dart';
 
 /// Represents an entire Ghita Edit project — serializable to/from JSON.
 class Project {
@@ -24,7 +25,7 @@ class Project {
   Project({
     required this.name,
     this.filePath = '',
-    this.version = '0.3.0',
+    String? version,
     DateTime? createdAt,
     DateTime? modifiedAt,
     List<Track>? tracks,
@@ -33,7 +34,8 @@ class Project {
     this.outputFps = 60,
     this.outputFormat = 'mp4',
     this.playheadMs = 0,
-  })  : createdAt = createdAt ?? DateTime.now(),
+  })  : version = version ?? flutterVersion,
+        createdAt = createdAt ?? DateTime.now(),
         modifiedAt = modifiedAt ?? DateTime.now(),
         tracks = tracks ?? _defaultTracks();
 
@@ -89,6 +91,25 @@ class Project {
       }
     }
     return null;
+  }
+
+  /// Dynamically add a new track to the project (v0.3.5).
+  void addTrack(Track track) {
+    if (!tracks.any((t) => t.id == track.id)) {
+      tracks.add(track);
+      markModified();
+    }
+  }
+
+  /// Dynamically remove a track by ID (v0.3.5).
+  bool removeTrack(String trackId) {
+    final index = tracks.indexWhere((t) => t.id == trackId);
+    if (index != -1) {
+      tracks.removeAt(index);
+      markModified();
+      return true;
+    }
+    return false;
   }
 
   /// Delete the selected clip(s).

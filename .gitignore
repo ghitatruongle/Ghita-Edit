@@ -1,14 +1,16 @@
 # ==============================================================================
-# Ghita Edit — Official .gitignore Configuration (v0.3.1)
-# Cross-Platform Multimedia Editor (Flutter + C++20 Native Engine)
+# Ghita Edit — Enterprise .gitignore Configuration (v0.3.5+3)
+# Cross-Platform Multimedia Editor (Flutter 3.27+ & C++20 Native Engine)
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
 # 1. OS & System Miscellaneous Files
 # ------------------------------------------------------------------------------
 *.class
-*.log
 *.swp
+*.bak
+*.tmp
+*.temp
 .DS_Store
 .DS_Store?
 ._*
@@ -18,14 +20,19 @@ ehthumbs.db
 Thumbs.db
 Desktop.ini
 *.stackdump
+*.directory
 
-# Java / JVM Crash Dumps
+# ------------------------------------------------------------------------------
+# 2. Java / JVM / Flutter Crash Dumps & Diagnostic Logs
+# ------------------------------------------------------------------------------
+*.log
 hs_err_pid*.log
 replay_pid*.log
 flutter_*.log
+*.log.tags
 
 # ------------------------------------------------------------------------------
-# 2. App-Specific & Local Workspaces / Autosaves
+# 3. App-Specific, Local Workspaces, Internal Docs & Autosaves
 # ------------------------------------------------------------------------------
 .ghita_autosave/
 .zcode/
@@ -36,37 +43,50 @@ assets/logos/
 assets/logo_concept*.png
 *.ghita
 *.ghita.json
+extracted_*.png
+test_*.png
+*.png.tmp
 
-# Exported Media Test Files (Generated during export tests)
-native_engine/*.mp4
-native_engine/*.mov
-native_engine/*.avi
-native_engine/*.mkv
-native_engine/*.webm
-native_engine/*.wav
-native_engine/*.mp3
+# AI Coding Assistant & Agent Scratch Workspaces
+.antigravityignore
+.brain/
+.agents/
+.gemini/
+.claude/
+.cursor/
+.copilot/
+scratch/
 
 # ------------------------------------------------------------------------------
-# 3. IDEs, Editors & Project Settings
+# 4. IDEs, Code Editors & Project Workspace Settings
 # ------------------------------------------------------------------------------
+# JetBrains (IntelliJ IDEA, CLion, Android Studio)
 *.iml
 *.ipr
 *.iws
 .idea/
+.idea_modules/
+
+# Visual Studio & VS Code
 .vs/
+.vscode/
 *.user
 *.suo
 *.userosscache
 *.sln.docstates
-.vscode/
+*.vcxproj.user
+*.vcxproj.filters
+*.VC.db
+*.VC.opendb
+
+# Xcode, Eclipse, Sublime, Atom
 .atom/
-.build/
 .buildlog/
 .svn/
 .swiftpm/
 
 # ------------------------------------------------------------------------------
-# 4. Flutter / Dart / Pub Package Manager
+# 5. Flutter / Dart / Pub Package Toolchain
 # ------------------------------------------------------------------------------
 .dart_tool/
 .flutter-plugins
@@ -78,13 +98,14 @@ build/
 **/build/
 coverage/
 **/doc/api/
+*.pub
 
 # Explicitly preserve required static assets
 !assets/
 !assets/logo.png
 
 # ------------------------------------------------------------------------------
-# 5. Android Native & NDK Build System
+# 6. Android Native & NDK Build System
 # ------------------------------------------------------------------------------
 **/android/.gradle/
 **/android/local.properties
@@ -94,8 +115,9 @@ coverage/
 /android/app/debug/
 /android/app/profile/
 /android/app/release/
+/android/app/src/main/jniLibs/
 
-# Android Signing Credentials & Keys
+# Android Signing Credentials & Keystores (Never commit to Git)
 key.properties
 **/*.keystore
 **/*.jks
@@ -103,7 +125,7 @@ key.properties
 **/*.pem
 
 # ------------------------------------------------------------------------------
-# 6. iOS & macOS Native Environments
+# 7. iOS & macOS Native Environments
 # ------------------------------------------------------------------------------
 **/ios/Flutter/.last_build_id
 **/ios/Flutter/Flutter.framework
@@ -116,17 +138,24 @@ key.properties
 **/macos/Pods/
 
 # ------------------------------------------------------------------------------
-# 7. C++20 Native Engine (CMake, MSVC, NDK, GCC, Clang Build Outputs)
+# 8. C++20 Native Engine (CMake, MSVC, NDK, GCC, Clang Build Outputs)
 # ------------------------------------------------------------------------------
 native_engine/build/
+native_engine/build_*/
+native_engine/out/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 CMakeLists.txt.user
+CMakePresets.json.user
+CMakeUserPresets.json
+compile_commands.json
+.ninja_deps
+.ninja_log
 *.[Cc]ache
 !*.[Cc]ache/
 
-# Platform Architecture Output Directories
+# Platform Architecture & Build Output Directories
 x64/
 x86/
 ARM/
@@ -145,8 +174,6 @@ MinSizeRel/
 *.tlb
 *.tli
 *.tlh
-*.tmp
-*.temp
 *.sdf
 *.a
 *.lib
@@ -158,8 +185,47 @@ MinSizeRel/
 *.exe
 
 # ------------------------------------------------------------------------------
-# 8. Symbolication & Obfuscation Maps
+# 9. Exported Media Test Files (Generated during export & render tests)
+# ------------------------------------------------------------------------------
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.gif
+*.aac
+*.flac
+*.raw
+*.mp4.tmp
+output.mp4
+
+# ------------------------------------------------------------------------------
+# 10. Symbolication & Obfuscation Maps
 # ------------------------------------------------------------------------------
 app.*.symbols
 app.*.map.json
 
+# ==============================================================================
+# SAFEGUARDS: Explicitly Protect All Source Code Extensions
+# Guarantee that no developer source files are ever accidentally ignored
+# ==============================================================================
+!*.dart
+!*.cpp
+!*.h
+!*.c
+!*.hpp
+!*.kt
+!*.java
+!*.gradle
+!*.kts
+!*.xml
+!*.yaml
+!*.yml
+!*.md
+!*.sh
+!*.bat
+!*.ico
+!*.rc
+!.github/

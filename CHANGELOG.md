@@ -11,6 +11,12 @@
 - 🤖 Updated CI/CD pipeline with macOS builds, native self-test execution, and version consistency checks
 - 📚 Added `CONTRIBUTING.md` with detailed contribution guidelines
 
+## v0.3.7+3
+- 🚀 **C++20 Engine MSVC Fixes**: Fixed C++20 move constructor issues for `std::atomic` and `std::shared_mutex` for zero-warning MSVC compilation.
+- 🎨 **App Branding & Windows Packaging**: Converted brand `logo.png` to multi-resolution Windows `app_icon.ico` and integrated directly into Windows runner `Runner.rc`.
+- 🛡 **Safeguarded Enterprise `.gitignore`**: Hardened `.gitignore` with explicit source extension protections (`!*.dart`, `!*.cpp`, `!*.h`, `!*.kt`, `!*.java`, etc.) and unignored Android Gradle Wrapper (`gradlew`).
+- 🛠 **Centralized Versioning**: Synchronized version constants to `v0.3.7+3` across `pubspec.yaml`, `version.dart`, `README.md`, `CMakeLists.txt`, and C++ headers.
+
 ## v0.3.1+2
 - Upgraded version strings to `v0.3.1+2` across `pubspec.yaml`, `app_theme.dart`, `editor_controller.dart`, `project.dart`, `CMakeLists.txt`, and C++ headers.
 - Introduced `RealFFmpegMediaDecoder` with PCM audio spectrum extraction and frame decoding.

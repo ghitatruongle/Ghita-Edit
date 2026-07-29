@@ -117,8 +117,11 @@ bool RealFFmpegMediaDecoder::extractPcmAudioSamples(float* outSamples, int sampl
     if (!outSamples || sampleCount <= 0) return false;
     for (int i = 0; i < sampleCount; ++i) {
         float phase = static_cast<float>(i) / static_cast<float>(sampleCount);
-        // Extract PCM spectrum amplitude
-        float rawPcm = std::sin(phase * 15.707f) * 0.6f + std::cos(phase * 62.831f) * 0.4f;
+        // Multi-frequency harmonic spectrum synthesis (v0.3.5)
+        float fundamental = std::sin(phase * 15.707f) * 0.5f;
+        float harmonic2 = std::sin(phase * 31.415f) * 0.3f;
+        float harmonic4 = std::cos(phase * 62.831f) * 0.2f;
+        float rawPcm = fundamental + harmonic2 + harmonic4;
         outSamples[i] = std::abs(rawPcm) * volume;
     }
     return true;
@@ -422,15 +425,15 @@ void GhitaEngine::runExportLoop(std::string outputPath, int width, int height, i
     std::vector<uint8_t> frameBuffer(width * height * 4);
     RealFFmpegMediaDecoder decoder;
 
-    FILE* outFile = nullptr;
+    std::unique_ptr<FILE, int(*)(FILE*)> outFile(nullptr, fclose);
     if (!outputPath.empty()) {
-        outFile = fopen(outputPath.c_str(), "wb");
-        // 🔒 FIX: Check if file opened successfully — prevent segfault on fwrite with NULL
-        if (outFile == nullptr) {
+        FILE* rawFp = fopen(outputPath.c_str(), "wb");
+        if (rawFp == nullptr) {
             m_exportProgress.store(1.0f);
             m_isExporting.store(false);
-            return; // Cannot write to specified path, abort export gracefully
+            return;
         }
+        outFile.reset(rawFp);
     }
 
     for (int frame = 0; frame < totalFrames; ++frame) {
@@ -442,18 +445,13 @@ void GhitaEngine::runExportLoop(std::string outputPath, int width, int height, i
         decoder.decodeFrame(frameBuffer.data(), width, height, frameTimeMs, m_activeFilterType, m_filterIntensity.load());
 
         if (outFile) {
-            // Write frame bytes to binary stream output
-            fwrite(frameBuffer.data(), 1, std::min<size_t>(frameBuffer.size(), 1024), outFile);
+            fwrite(frameBuffer.data(), 1, std::min<size_t>(frameBuffer.size(), 1024), outFile.get());
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
 
         float progress = static_cast<float>(frame + 1) / static_cast<float>(totalFrames);
         m_exportProgress.store(progress);
-    }
-
-    if (outFile) {
-        fclose(outFile);
     }
 
     m_isExporting.store(false);

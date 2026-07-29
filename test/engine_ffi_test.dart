@@ -290,7 +290,7 @@ void main() {
       controller.importMedia('test.mp4');
       final json = controller.project.toJsonString();
       expect(json.contains('test.mp4'), isTrue);
-      expect(json.contains('0.3.0'), isTrue);
+      expect(json.contains('0.3.7'), isTrue);
     });
 
     test('project deserializes from JSON', () {
@@ -299,6 +299,23 @@ void main() {
       final loaded = Project.fromJsonString(json);
       expect(loaded.allClips.length, equals(1));
       expect(loaded.allClips.first.displayName, equals('test.mp4'));
+    });
+
+    test('dynamic track add and remove work with undo/redo', () {
+      expect(controller.project.tracks.length, equals(3));
+      controller.addNewTrack('Extra Audio', TrackType.audio);
+      expect(controller.project.tracks.length, equals(4));
+      expect(controller.project.tracks.last.name, equals('Extra Audio'));
+
+      final addedTrackId = controller.project.tracks.last.id;
+      controller.undo();
+      expect(controller.project.tracks.length, equals(3));
+
+      controller.redo();
+      expect(controller.project.tracks.length, equals(4));
+
+      controller.removeTrack(addedTrackId);
+      expect(controller.project.tracks.length, equals(3));
     });
   });
 

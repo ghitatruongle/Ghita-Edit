@@ -7,7 +7,7 @@ struct GhitaEngineContext {
 };
 
 // Static string is safe to return because it lives for the process lifetime
-static const char VERSION_STRING[] = "Ghita Core Engine v0.3.1 (C++/Flutter)";
+static const char VERSION_STRING[] = "Ghita Core Engine v0.3.7 (C++/Flutter)";
 
 extern "C" {
 
