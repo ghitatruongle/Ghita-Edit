@@ -25,7 +25,15 @@ jobs:
       - name: Analyze Project (Strict Linter Check)
         run: flutter analyze --fatal-infos
 
-      - name: Run Test Suite
+      - name: Build C++ Native Engine (Linux)
+        run: |
+          cmake -B native_engine/build -S native_engine -DCMAKE_BUILD_TYPE=Release
+          cmake --build native_engine/build --config Release
+
+      - name: Run Native C++ Self Test
+        run: ./native_engine/build/native_engine_test
+
+      - name: Run Flutter Test Suite
         run: flutter test --coverage
 
   build-native-engine-windows:
