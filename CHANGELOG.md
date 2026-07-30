@@ -1,5 +1,38 @@
 # Ghita Edit — Changelog
 
+## v0.4.5+5 (2026-07-30) — FFmpeg Integration & Export, UI Overhaul, Cross-Platform
+- 🎬 **Phase 0: Version bump** — Centralized version updated to v0.4.5+5 across all 10 files
+- 🚀 **Phase 1: Real FFmpeg Integration** — Replaced synthetic decoder with actual FFmpeg decoding pipeline (`avformat`, `avcodec`, `swscale`, `swresample`)
+  - Real video/audio file decoding via `RealFFmpegMediaDecoder`
+  - True PCM audio waveform extraction from actual media files
+  - New C API: `ghita_engine_get_media_info` returning JSON metadata (codec, bitrate, resolution)
+  - Graceful fallback to synthetic decoder when FFmpeg unavailable
+  - CMake FFmpeg detection with vcpkg/prebuilt fallback on Windows
+- 📹 **Phase 2: Real Video Export** — Replaced raw RGBA export with FFmpeg encoding pipeline
+  - H.264 (`libx264`), H.265 (`libx265`), VP9 codec support
+  - AAC audio encoding via `libfdk_aac` / native FFmpeg AAC
+  - New C APIs for codec selection, bitrate control, file size estimation
+  - Cancellation-safe export with mid-stream cleanup
+  - UI: codec dropdown, bitrate slider, include-audio toggle, ETA display
+- 🎨 **Phase 3: Editor & UI Improvements**
+  - Real audio waveform visualization with zoom-dependent detail
+  - Snap-to-grid with toggle button, multi-select clips (Ctrl/Cmd+click, Shift-range)
+  - Drag-drop clips between tracks, smooth scroll-zoom
+  - 6 new filters: Blur (Gaussian), Edge Detect (Sobel), Color Grading (3×3 matrix), Adjust (BCSH), Pixelate/Mosaic
+  - 5 new transitions: Slide, Wipe, Zoom, Dissolve, Radial
+  - Dynamic filter list via `ghita_engine_get_available_filters()` API
+  - Basic keyframe animation system (position, opacity, filter intensity, scale)
+  - Frame caching & thread pool for rendering performance
+- 💻 **Phase 4: Cross-Platform & Stability**
+  - macOS CI build job + native engine compilation via Homebrew FFmpeg
+  - macOS Flutter runner with `.dylib` FFI paths
+  - iOS basic support: `.framework` build script, arm64 FFmpeg
+  - Thread safety audit: shared_mutex review, atomic memory ordering fixes
+  - AddressSanitizer-enabled CI builds for memory leak detection
+  - Stress tests: concurrent 100+ thread read/write, frame buffer overflow, export lifecycle
+  - Comprehensive Dart tests: export validation, multi-selection, snap-to-grid, keyframes
+  - Documentation: README, CONTRIBUTING.md updated with FFmpeg/macOS build instructions
+
 ## v0.4.0+4
 - 🔒 Fixed critical FFI error handling — missing native functions throw descriptive exceptions instead of crashing silently
 - 🔒 Added dispose guard in EngineService and EditorController to prevent double-free memory issues

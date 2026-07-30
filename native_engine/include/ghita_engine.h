@@ -10,6 +10,18 @@
 #include <shared_mutex>
 #include <memory>
 #include <thread>
+#include <sstream>
+
+#ifdef GHITA_HAS_FFMPEG
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+#include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
+#include <libswresample/swresample.h>
+}
+#endif
 
 /**
  * @brief Transition effects supported for timeline clips.
@@ -18,7 +30,51 @@ enum class TransitionType {
     None = 0,
     FadeIn = 1,
     FadeOut = 2,
-    Crossfade = 3
+    Crossfade = 3,
+    // v0.4.5 new transitions
+    Slide = 4,
+    Wipe = 5,
+    Zoom = 6,
+    Dissolve = 7,
+    Radial = 8
+};
+
+/**
+ * @brief Media metadata structure returned by getMediaInfo.
+ */
+struct MediaInfo {
+    std::string filePath;
+    int64_t durationMs{0};
+    int width{0};
+    int height{0};
+    double fps{0.0};
+    int64_t bitrate{0};
+    std::string videoCodec;
+    std::string audioCodec;
+    int audioSampleRate{0};
+    int audioChannels{0};
+    bool hasVideo{false};
+    bool hasAudio{false};
+
+    /** Serialize to JSON string. */
+    std::string toJson() const {
+        std::ostringstream json;
+        json << "{"
+             << "\"filePath\":\"" << filePath << "\","
+             << "\"durationMs\":" << durationMs << ","
+             << "\"width\":" << width << ","
+             << "\"height\":" << height << ","
+             << "\"fps\":" << fps << ","
+             << "\"bitrate\":" << bitrate << ","
+             << "\"videoCodec\":\"" << videoCodec << "\","
+             << "\"audioCodec\":\"" << audioCodec << "\","
+             << "\"audioSampleRate\":" << audioSampleRate << ","
+             << "\"audioChannels\":" << audioChannels << ","
+             << "\"hasVideo\":" << (hasVideo ? "true" : "false") << ","
+             << "\"hasAudio\":" << (hasAudio ? "true" : "false")
+             << "}";
+        return json.str();
+    }
 };
 
 /**
@@ -54,6 +110,11 @@ public:
      * @brief Returns native media height in pixels.
      */
     virtual int getHeight() const = 0;
+
+    /**
+     * @brief Returns detailed media info.
+     */
+    virtual MediaInfo getMediaInfo() const = 0;
 };
 
 /**
@@ -67,37 +128,74 @@ public:
     int64_t getDurationMs() const override { return m_durationMs; }
     int getWidth() const override { return 1280; }
     int getHeight() const override { return 720; }
+    MediaInfo getMediaInfo() const override;
 private:
     int64_t m_durationMs{60000};
+    std::string m_filePath;
 };
 
 /**
- * @brief Production-ready FFmpeg media decoder pipeline integration framework.
- * Resolves media container format, extracts PCM audio spectrum, and produces decoded RGBA frames.
+ * @brief Production-ready FFmpeg media decoder with actual video/audio decoding.
+ *
+ * Uses libavformat for container parsing, libavcodec for decoding,
+ * libswscale for RGB conversion, and libswresample for PCM extraction.
+ * Gracefully falls back to SyntheticMediaDecoder when FFmpeg is unavailable.
  */
 class RealFFmpegMediaDecoder : public IMediaDecoder {
 public:
-    RealFFmpegMediaDecoder() = default;
+    RealFFmpegMediaDecoder();
+    ~RealFFmpegMediaDecoder() override;
+
     bool open(const std::string& filePath) override;
     bool decodeFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs, int filterType, float filterIntensity) override;
     int64_t getDurationMs() const override { return m_durationMs; }
     int getWidth() const override { return m_width; }
     int getHeight() const override { return m_height; }
+    MediaInfo getMediaInfo() const override;
 
     /**
      * @brief Extract decoded PCM audio samples for real waveform visualizer.
      */
     bool extractPcmAudioSamples(float* outSamples, int sampleCount, float volume);
 
+    /**
+     * @brief Returns true if FFmpeg is actually being used (not fallback).
+     */
+    bool hasFFmpeg() const { return m_hasFFmpeg; }
+
 private:
     int64_t m_durationMs{60000};
     int m_width{1920};
     int m_height{1080};
     std::string m_filePath;
+    bool m_hasFFmpeg{false};
+    MediaInfo m_mediaInfo;
+
+#ifdef GHITA_HAS_FFMPEG
+    // FFmpeg contexts
+    AVFormatContext* m_formatCtx{nullptr};
+    AVCodecContext* m_videoCodecCtx{nullptr};
+    AVCodecContext* m_audioCodecCtx{nullptr};
+    SwsContext* m_swsCtx{nullptr};
+    SwrContext* m_swrCtx{nullptr};
+
+    int m_videoStreamIdx{-1};
+    int m_audioStreamIdx{-1};
+    AVPacket* m_packet{nullptr};
+    AVFrame* m_frame{nullptr};
+    AVFrame* m_rgbFrame{nullptr};
+    uint8_t* m_rgbBuffer{nullptr};
+    int m_rgbBufferSize{0};
+
+    bool initFFmpegContexts();
+    void destroyFFmpegContexts();
+    bool decodeVideoFrameAt(int64_t timeMs, uint8_t* outBuffer, int width, int height, int filterType, float filterIntensity);
+    bool decodeAudioSamples(float* outSamples, int sampleCount, float volume);
+#endif
 };
 
 /**
- * @brief Legacy stub for FFmpeg native decoder integration.
+ * @brief Legacy stub for FFmpeg native decoder integration (kept for ABI compatibility).
  */
 class FFmpegMediaDecoderStub : public IMediaDecoder {
 public:
@@ -107,8 +205,17 @@ public:
     int64_t getDurationMs() const override { return m_durationMs; }
     int getWidth() const override { return 1920; }
     int getHeight() const override { return 1080; }
+    MediaInfo getMediaInfo() const override;
 private:
     int64_t m_durationMs{60000};
+};
+
+/**
+ * @brief Keyframe for animation curves.
+ */
+struct Keyframe {
+    int64_t timeMs{0};
+    float value{0.0f};
 };
 
 /**
@@ -131,6 +238,7 @@ struct NativeClip {
     int filterType;
     float filterIntensity;
     NativeTransition transition;
+    std::vector<Keyframe> keyframes; // v0.4.5: keyframe animation
 };
 
 /**
@@ -201,6 +309,12 @@ public:
     /** @brief Returns direct memory buffer pointer for zero-copy GPU texture sharing. */
     uint8_t* getFrameDirectBufferPointer(int* outWidth, int* outHeight);
 
+    /** @brief Returns media info as JSON string (v0.4.5). */
+    std::string getMediaInfoJson() const;
+
+    /** @brief Returns list of available filters as JSON string (v0.4.5). */
+    std::string getAvailableFiltersJson() const;
+
     // Frame Snapping (v0.4.0)
     void setFrameSnappingFps(int fps);
     int getFrameSnappingFps() const { return m_snappingFps.load(); }
@@ -213,17 +327,42 @@ public:
     bool setClipFilter(int clipId, int filterType, float intensity);
     bool setClipTransition(int clipId, TransitionType type, int durationMs);
 
+    // v0.4.5: Keyframe animation
+    bool addClipKeyframe(int clipId, int64_t timeMs, float value);
+    bool clearClipKeyframes(int clipId);
+
     // Audio Waveform
     bool getAudioWaveform(float* outSamples, int sampleCount);
 
-    // Export pipeline
+    // Export pipeline (v0.4.0 API — extended in v0.4.5 with codec params)
     bool startExport(const std::string& outputPath, int width, int height, int fps);
     float getExportProgress() const;
     bool isExporting() const;
     void cancelExport();
 
+    // v0.4.5 Export enhancements
+    bool startExportEx(const std::string& outputPath, int width, int height, int fps,
+                       const std::string& codec, int64_t bitrate, bool includeAudio);
+    int64_t getExportFileSize() const { return m_exportFileSize.load(); }
+
     // Engine self-test (used by test runner)
     static bool selfTest();
+
+    /** @brief Filter indices for runtime filter selection. */
+    enum FilterType {
+        FILTER_NONE = 0,
+        FILTER_GRAYSCALE = 1,
+        FILTER_SEPIA = 2,
+        FILTER_INVERT = 3,
+        FILTER_BRIGHTNESS = 4,
+        // v0.4.5 new filters
+        FILTER_BLUR = 5,
+        FILTER_EDGE_DETECT = 6,
+        FILTER_COLOR_GRADING = 7,
+        FILTER_ADJUST = 8,
+        FILTER_PIXELATE = 9,
+        FILTER_MOSAIC = 10
+    };
 
 private:
     mutable std::shared_mutex m_engineMutex;
@@ -256,12 +395,15 @@ private:
     std::atomic<bool> m_isExporting{false};
     std::atomic<bool> m_cancelExportFlag{false};
     std::atomic<float> m_exportProgress{0.0f};
+    std::atomic<int64_t> m_exportFileSize{0};
     std::string m_exportOutputPath;
     std::thread m_exportThread;
 
     void updateClock();
     void recalculateDuration();
     void runExportLoop(std::string outputPath, int width, int height, int fps);
+    void runExportLoopEx(std::string outputPath, int width, int height, int fps,
+                         std::string codec, int64_t bitrate, bool includeAudio);
 };
 
 #endif // GHITA_ENGINE_H

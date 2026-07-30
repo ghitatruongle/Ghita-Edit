@@ -111,6 +111,31 @@ GHITA_API bool ghita_engine_set_clip_transition(GhitaEngineContext* ctx, int cli
 /** @brief Returns pointer to direct frame buffer for zero-copy GPU texture sharing. */
 GHITA_API uint8_t* ghita_engine_get_direct_buffer(GhitaEngineContext* ctx, int* out_width, int* out_height);
 
+// ========== v0.4.5 New API ==========
+
+/** @brief Returns media metadata as JSON string. */
+GHITA_API const char* ghita_engine_get_media_info(GhitaEngineContext* ctx);
+
+/** @brief Returns list of available filters as JSON string. */
+GHITA_API const char* ghita_engine_get_available_filters(GhitaEngineContext* ctx);
+
+/** @brief Extended export with codec/bitrate/audio control. */
+GHITA_API int ghita_engine_start_export_ex(GhitaEngineContext* ctx, const char* output_path,
+                                           int width, int height, int fps,
+                                           const char* codec, int64_t bitrate, bool include_audio);
+
+/** @brief Returns export output file size in bytes. */
+GHITA_API int64_t ghita_engine_get_export_file_size(GhitaEngineContext* ctx);
+
+/** @brief Adds a keyframe to a clip for animation. */
+GHITA_API int ghita_engine_add_clip_keyframe(GhitaEngineContext* ctx, int clip_id, int64_t time_ms, float value);
+
+/** @brief Clears all keyframes from a clip. */
+GHITA_API int ghita_engine_clear_clip_keyframes(GhitaEngineContext* ctx, int clip_id);
+
+/** @brief Returns whether FFmpeg is available in this build. */
+GHITA_API bool ghita_engine_has_ffmpeg(GhitaEngineContext* ctx);
+
 #ifdef __cplusplus
 }
 #endif

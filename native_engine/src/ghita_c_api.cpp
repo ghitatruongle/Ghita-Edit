@@ -1,13 +1,17 @@
 #include "ghita_c_api.h"
 #include "ghita_engine.h"
 #include <new>
+#include <cstring>
 
 struct GhitaEngineContext {
     GhitaEngine engine;
 };
 
 // Static string is safe to return because it lives for the process lifetime
-static const char VERSION_STRING[] = "Ghita Core Engine v0.4.0 (C++/Flutter)";
+static const char VERSION_STRING[] = "Ghita Core Engine v0.4.5 (C++/Flutter)";
+
+// Thread-local buffer for JSON return values (FFI-safe)
+static thread_local std::string t_jsonBuffer;
 
 extern "C" {
 
@@ -158,5 +162,52 @@ GHITA_API uint8_t* ghita_engine_get_direct_buffer(GhitaEngineContext* ctx, int* 
     return ctx->engine.getFrameDirectBufferPointer(out_width, out_height);
 }
 
+// ========== v0.4.5 New API ==========
+
+GHITA_API const char* ghita_engine_get_media_info(GhitaEngineContext* ctx) {
+    if (!ctx) return "{}";
+    t_jsonBuffer = ctx->engine.getMediaInfoJson();
+    return t_jsonBuffer.c_str();
 }
 
+GHITA_API const char* ghita_engine_get_available_filters(GhitaEngineContext* ctx) {
+    if (!ctx) return "[]";
+    t_jsonBuffer = ctx->engine.getAvailableFiltersJson();
+    return t_jsonBuffer.c_str();
+}
+
+GHITA_API int ghita_engine_start_export_ex(GhitaEngineContext* ctx, const char* output_path,
+                                            int width, int height, int fps,
+                                            const char* codec, int64_t bitrate, bool include_audio) {
+    if (!ctx || !output_path || !codec) return -1;
+    return ctx->engine.startExportEx(output_path, width, height, fps,
+                                      codec, bitrate, include_audio) ? 0 : -1;
+}
+
+GHITA_API int64_t ghita_engine_get_export_file_size(GhitaEngineContext* ctx) {
+    if (!ctx) return 0;
+    return ctx->engine.getExportFileSize();
+}
+
+GHITA_API int ghita_engine_add_clip_keyframe(GhitaEngineContext* ctx, int clip_id, int64_t time_ms, float value) {
+    if (!ctx) return -1;
+    return ctx->engine.addClipKeyframe(clip_id, time_ms, value) ? 0 : -1;
+}
+
+GHITA_API int ghita_engine_clear_clip_keyframes(GhitaEngineContext* ctx, int clip_id) {
+    if (!ctx) return -1;
+    return ctx->engine.clearClipKeyframes(clip_id) ? 0 : -1;
+}
+
+GHITA_API bool ghita_engine_has_ffmpeg(GhitaEngineContext* ctx) {
+    if (!ctx) return false;
+    // Check if the decoder is using real FFmpeg
+    // Return true if GHITA_HAS_FFMPEG was compiled in
+#ifdef GHITA_HAS_FFMPEG
+    return true;
+#else
+    return false;
+#endif
+}
+
+}

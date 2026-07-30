@@ -15,7 +15,7 @@ static int g_failed = 0;
 
 #define TEST(name) \
     do { \
-        std::cout << "Running " << name << "..." << std::flush; \
+        std::cout << "Running " << #name << "..." << std::flush; \
         try { \
             name(); \
             std::cout << " [PASS]" << std::endl; \
@@ -110,8 +110,8 @@ void test_load_media_mock() {
 void test_get_version_string() {
     const char* v = ghita_engine_get_version();
     EXPECT_TRUE(v != nullptr);
-    // v0.4.0 should be in the string
-    EXPECT_TRUE(std::string(v).find("0.4.0") != std::string::npos);
+    // v0.4.5 should be in the string
+    EXPECT_TRUE(std::string(v).find("0.4.5") != std::string::npos);
 }
 
 void test_clip_operations() {
@@ -212,6 +212,99 @@ void test_concurrency_stress() {
     EXPECT_TRUE(engine.isReady());
 }
 
+// ========== v0.4.5 New Tests ==========
+
+void test_keyframe_operations() {
+    GhitaEngine engine;
+    engine.initialize();
+
+    int id = engine.addClip("test.mp4", 0, 10000, 0);
+    EXPECT_TRUE(id > 0);
+
+    // Add keyframes
+    EXPECT_TRUE(engine.addClipKeyframe(id, 0, 0.0f));
+    EXPECT_TRUE(engine.addClipKeyframe(id, 5000, 0.5f));
+    EXPECT_TRUE(engine.addClipKeyframe(id, 10000, 1.0f));
+
+    // Clear keyframes
+    EXPECT_TRUE(engine.clearClipKeyframes(id));
+
+    // Non-existent clip
+    EXPECT_FALSE(engine.addClipKeyframe(999, 0, 0.0f));
+}
+
+void test_media_info_json() {
+    GhitaEngine engine;
+    engine.initialize();
+    engine.loadMedia("test.mp4");
+
+    std::string infoJson = engine.getMediaInfoJson();
+    EXPECT_TRUE(!infoJson.empty());
+    EXPECT_TRUE(infoJson.find("durationMs") != std::string::npos);
+    EXPECT_TRUE(infoJson.find("hasVideo") != std::string::npos);
+}
+
+void test_available_filters_json() {
+    GhitaEngine engine;
+    engine.initialize();
+
+    std::string filtersJson = engine.getAvailableFiltersJson();
+    EXPECT_TRUE(!filtersJson.empty());
+    EXPECT_TRUE(filtersJson.find("Grayscale") != std::string::npos);
+    EXPECT_TRUE(filtersJson.find("Blur") != std::string::npos);
+    EXPECT_TRUE(filtersJson.find("Edge Detect") != std::string::npos);
+    // v0.4.5 new filters
+    EXPECT_TRUE(filtersJson.find("Color Grading") != std::string::npos);
+    EXPECT_TRUE(filtersJson.find("Pixelate") != std::string::npos);
+}
+
+void test_new_filters() {
+    GhitaEngine engine;
+    engine.initialize();
+    std::vector<uint8_t> buf(64 * 32 * 4, 128);
+
+    // Test all new filter types (5-10)
+    for (int f = 5; f <= 10; ++f) {
+        engine.applyFilter(f, 0.5f);
+        EXPECT_EQ(engine.getActiveFilterType(), f);
+        // Render with filter should not crash
+        bool ok = engine.renderFrameRGBA(buf.data(), 64, 32);
+        EXPECT_TRUE(ok);
+    }
+    engine.applyFilter(0, 1.0f);
+}
+
+void test_extended_export() {
+    GhitaEngine engine;
+    engine.initialize();
+
+    // Test extended export with codec params
+    engine.loadMedia("test.mp4");
+    EXPECT_TRUE(engine.startExportEx("test_out.mp4", 640, 360, 30, "h264", 5000000, true));
+    EXPECT_TRUE(engine.isExporting());
+    engine.cancelExport();
+    EXPECT_FALSE(engine.isExporting());
+
+    // Invalid params
+    EXPECT_FALSE(engine.startExportEx("", 0, 0, 0, "", 0, false));
+}
+
+void test_new_transition_types() {
+    GhitaEngine engine;
+    engine.initialize();
+
+    int id = engine.addClip("sample.mp4", 0, 4000, 0);
+    EXPECT_TRUE(id > 0);
+
+    // Test new transition types (4-8: Slide, Wipe, Zoom, Dissolve, Radial)
+    EXPECT_TRUE(engine.setClipTransition(id, TransitionType::Slide, 500));
+    EXPECT_TRUE(engine.setClipTransition(id, TransitionType::Wipe, 500));
+    EXPECT_TRUE(engine.setClipTransition(id, TransitionType::Zoom, 500));
+    EXPECT_TRUE(engine.setClipTransition(id, TransitionType::Dissolve, 500));
+    EXPECT_TRUE(engine.setClipTransition(id, TransitionType::Radial, 500));
+    EXPECT_TRUE(engine.setClipTransition(id, TransitionType::None, 0));
+}
+
 int main() {
     std::cout << "=== Ghita Native Engine Self-Test ===" << std::endl;
 
@@ -227,6 +320,14 @@ int main() {
     TEST(test_export_lifecycle);
     TEST(test_frame_snapping_and_transitions);
     TEST(test_concurrency_stress);
+
+    // v0.4.5 new tests
+    TEST(test_keyframe_operations);
+    TEST(test_media_info_json);
+    TEST(test_available_filters_json);
+    TEST(test_new_filters);
+    TEST(test_extended_export);
+    TEST(test_new_transition_types);
 
     std::cout << "\n--- Result: " << g_passed << " passed, " << g_failed << " failed ---" << std::endl;
 

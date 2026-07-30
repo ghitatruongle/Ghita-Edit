@@ -11,6 +11,8 @@ class InspectorPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedClip = controller.selectedClip;
+    final engineService = controller.engineService;
+    final filters = engineService.availableFilters;
 
     return Container(
       color: AppTheme.surface,
@@ -37,8 +39,10 @@ class InspectorPanel extends StatelessWidget {
           _buildProjectInfoCard(),
 
           const SizedBox(height: 16),
+
+          // v0.4.5: Filters (dynamic from engine)
           const Text(
-            'ACTIVE FILTER & FX',
+            'FILTERS & FX',
             style: TextStyle(
               color: AppTheme.textMuted,
               fontSize: 11,
@@ -47,8 +51,23 @@ class InspectorPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
+          _buildFilterCard(filters),
 
-          _buildFilterCard(),
+          // v0.4.5: Transition selector (when clip selected)
+          if (selectedClip != null) ...[
+            const SizedBox(height: 16),
+            const Text(
+              'CLIP TRANSITION',
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.0,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _buildTransitionCard(selectedClip),
+          ],
 
           const SizedBox(height: 16),
           const Text(
@@ -61,8 +80,12 @@ class InspectorPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-
           _buildAudioMixerCard(),
+
+          const SizedBox(height: 16),
+
+          // v0.4.5: Engine info
+          _buildEngineInfoCard(),
         ],
       ),
     );
@@ -153,7 +176,8 @@ class InspectorPanel extends StatelessWidget {
     );
   }
 
-  Widget _buildFilterCard() {
+  // v0.4.5: Dynamic filter card from engine
+  Widget _buildFilterCard(List<Map<String, dynamic>> filters) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -189,16 +213,128 @@ class InspectorPanel extends StatelessWidget {
             activeColor: AppTheme.primaryLight,
             onChanged: (val) => controller.setFilter(controller.activeFilterType, val),
           ),
-          // Quick filter buttons
+          // v0.4.5: Dynamic filter chips from engine
           Wrap(
             spacing: 4,
+            runSpacing: 4,
+            children: filters.isNotEmpty
+                ? filters.map((f) {
+                    final id = f['id'] as int? ?? 0;
+                    final name = f['name'] as String? ?? 'Unknown';
+                    return _filterChip(name, id);
+                  }).toList()
+                : [
+                    // Fallback static list
+                    _filterChip('None', 0),
+                    _filterChip('Gray', 1),
+                    _filterChip('Sepia', 2),
+                    _filterChip('Invert', 3),
+                    _filterChip('Bright', 4),
+                    _filterChip('Blur', 5),
+                    _filterChip('Edge', 6),
+                    _filterChip('Grade', 7),
+                    _filterChip('Adjust', 8),
+                    _filterChip('Pixel', 9),
+                    _filterChip('Mosaic', 10),
+                  ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // v0.4.5: Transition selector
+  Widget _buildTransitionCard(Clip clip) {
+    final transitions = [
+      'None', 'Fade In', 'Fade Out', 'Crossfade',
+      'Slide', 'Wipe', 'Zoom', 'Dissolve', 'Radial',
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              _filterChip('None', 0),
-              _filterChip('Gray', 1),
-              _filterChip('Sepia', 2),
-              _filterChip('Invert', 3),
-              _filterChip('Bright', 4),
+              const Icon(Icons.animation, color: AppTheme.primaryLight, size: 16),
+              const SizedBox(width: 6),
+              const Text('Transition', style: TextStyle(color: AppTheme.textMain, fontSize: 12, fontWeight: FontWeight.bold)),
             ],
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: 'None',
+              isExpanded: true,
+              dropdownColor: AppTheme.surface,
+              style: const TextStyle(color: AppTheme.textMain, fontSize: 12),
+              items: transitions.map((t) =>
+                DropdownMenuItem(value: t, child: Text(t))).toList(),
+              onChanged: (val) {
+                // Apply transition to selected clip via controller
+                if (val != null) {
+                  final idx = transitions.indexOf(val);
+                  controller.setClipTransition(clip.id, idx, 500);
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Icon(Icons.timer, color: AppTheme.textMuted, size: 14),
+              const SizedBox(width: 4),
+              const Text('500ms', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // v0.4.5: Engine info with FFmpeg status
+  Widget _buildEngineInfoCard() {
+    final hasFFmpeg = controller.engineService.ffmpegAvailable;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                hasFFmpeg ? Icons.memory : Icons.developer_mode,
+                color: hasFFmpeg ? Colors.green : AppTheme.textMuted,
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                hasFFmpeg ? 'FFmpeg Accelerated' : 'Demo Mode (Synthetic)',
+                style: TextStyle(
+                  color: hasFFmpeg ? Colors.green : AppTheme.textMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            controller.engineVersion.isNotEmpty
+                ? controller.engineVersion
+                : 'Engine not loaded',
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
           ),
         ],
       ),
@@ -263,10 +399,16 @@ class InspectorPanel extends StatelessWidget {
 
   String _getFilterName(int type) {
     switch (type) {
-      case 1: return 'Grayscale Shader';
-      case 2: return 'Warm Sepia Shader';
-      case 3: return 'Invert Color Shader';
-      case 4: return 'Brightness Boost';
+      case 1: return 'Grayscale';
+      case 2: return 'Sepia';
+      case 3: return 'Invert';
+      case 4: return 'Brightness';
+      case 5: return 'Blur';
+      case 6: return 'Edge Detect';
+      case 7: return 'Color Grading';
+      case 8: return 'Adjust (BCSH)';
+      case 9: return 'Pixelate';
+      case 10: return 'Mosaic';
       default: return 'Original (Pass-through)';
     }
   }

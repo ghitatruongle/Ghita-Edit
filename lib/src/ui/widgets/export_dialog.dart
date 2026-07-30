@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:ffi/ffi.dart';
 import '../../controllers/editor_controller.dart';
 import '../theme/app_theme.dart';
 
@@ -18,11 +17,16 @@ class ExportDialog extends StatefulWidget {
 class _ExportDialogState extends State<ExportDialog> {
   String _selectedRes = '1080p (Full HD)';
   String _selectedFps = '60 FPS';
-  String _selectedFormat = 'MP4 (H.264 / AAC)';
+  String _selectedFormat = 'MP4';
+  String _selectedCodec = 'H.264';
+  double _bitrateMbps = 10.0;
+  bool _includeAudio = true;
   String? _outputPath;
   bool _isExporting = false;
   double _exportProgress = 0.0;
+  int _exportFileSizeBytes = 0;
   Timer? _progressTimer;
+  DateTime? _exportStartTime;
 
   @override
   void dispose() {
@@ -51,10 +55,38 @@ class _ExportDialogState extends State<ExportDialog> {
   }
 
   String get _formatExtension {
-    if (_selectedFormat.contains('MOV')) return 'mov';
-    if (_selectedFormat.contains('GIF')) return 'gif';
-    if (_selectedFormat.contains('MP3')) return 'mp3';
+    if (_selectedFormat == 'MOV') return 'mov';
+    if (_selectedFormat == 'GIF') return 'gif';
+    if (_selectedFormat == 'MP3') return 'mp3';
     return 'mp4';
+  }
+
+  String get _nativeCodecName {
+    switch (_selectedCodec) {
+      case 'H.265': return 'h265';
+      case 'VP9': return 'vp9';
+      default: return 'h264';
+    }
+  }
+
+  String get _estimatedFileSize {
+    // Rough estimate: bitrate * duration / 8
+    final totalSeconds = widget.controller.durationMs ~/ 1000;
+    if (totalSeconds <= 0) return 'Unknown';
+    final bits = _bitrateMbps * 1000000 * totalSeconds;
+    final bytes = bits ~/ 8;
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
+  String get _elapsedTime {
+    if (_exportStartTime == null) return '--:--';
+    final elapsed = DateTime.now().difference(_exportStartTime!);
+    if (elapsed.inHours > 0) {
+      return '${elapsed.inHours}:${elapsed.inMinutes.remainder(60).toString().padLeft(2, '0')}:${elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+    }
+    return '${elapsed.inMinutes}:${elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
   }
 
   Future<void> _pickOutputPath() async {
@@ -83,15 +115,15 @@ class _ExportDialogState extends State<ExportDialog> {
       return;
     }
 
-    // Default output path if not selected
     final outputPath = _outputPath ?? 'Videos/GhitaEdit_Export.$_formatExtension';
 
     setState(() {
       _isExporting = true;
       _exportProgress = 0.0;
+      _exportFileSizeBytes = 0;
+      _exportStartTime = DateTime.now();
     });
 
-    // Start the native export pipeline via FFI
     final engineService = widget.controller.engineService;
     if (!engineService.isReady) {
       setState(() => _isExporting = false);
@@ -104,16 +136,18 @@ class _ExportDialogState extends State<ExportDialog> {
       return;
     }
 
-    // Call native startExport
-    final result = engineService.bindings!.startExport(
-      engineService.ctx,
-      outputPath.toNativeUtf8(),
+    // v0.4.5: Use extended export with codec/bitrate/audio
+    final result = engineService.startExportEx(
+      outputPath,
       resWidth,
       resHeight,
       _fps,
+      _nativeCodecName,
+      (_bitrateMbps * 1000000).toInt(),
+      _includeAudio,
     );
 
-    if (result != 0) {
+    if (!result) {
       setState(() => _isExporting = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -125,18 +159,23 @@ class _ExportDialogState extends State<ExportDialog> {
     }
 
     // Poll native export progress
+    final bindings = engineService.bindings;
+    final ctx = engineService.ctx;
+
     _progressTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
       if (!mounted) {
         timer.cancel();
-        engineService.bindings!.cancelExport(engineService.ctx);
+        bindings?.cancelExport(ctx);
         return;
       }
 
-      final isExporting = engineService.bindings!.isExporting(engineService.ctx);
-      final progress = engineService.bindings!.getExportProgress(engineService.ctx);
+      final isExporting = bindings!.isExporting(ctx);
+      final progress = bindings.getExportProgress(ctx);
+      final fileSize = engineService.getExportFileSize();
 
       setState(() {
         _exportProgress = progress.clamp(0.0, 1.0);
+        _exportFileSizeBytes = fileSize;
       });
 
       if (!isExporting || _exportProgress >= 1.0) {
@@ -159,6 +198,8 @@ class _ExportDialogState extends State<ExportDialog> {
 
   void _cancelExport() {
     _progressTimer?.cancel();
+    final engineService = widget.controller.engineService;
+    engineService.bindings?.cancelExport(engineService.ctx);
     setState(() {
       _isExporting = false;
       _exportProgress = 0.0;
@@ -166,6 +207,16 @@ class _ExportDialogState extends State<ExportDialog> {
   }
 
   bool get _widgetReady => widget.controller.isEngineReady;
+
+  // v0.4.5: Codec options by format
+  List<String> get _codecOptions {
+    switch (_selectedFormat) {
+      case 'MOV': return ['H.264', 'ProRes'];
+      case 'GIF': return ['GIF'];
+      case 'MP3': return ['MP3'];
+      default: return ['H.264', 'H.265', 'VP9'];
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -186,7 +237,7 @@ class _ExportDialogState extends State<ExportDialog> {
         ],
       ),
       content: SizedBox(
-        width: 450,
+        width: 480,
         child: _isExporting ? _buildExportingView() : _buildSettingsView(),
       ),
       actions: _isExporting
@@ -226,7 +277,7 @@ class _ExportDialogState extends State<ExportDialog> {
         ),
         const SizedBox(height: 8),
         Text(
-          '$_selectedRes • $_selectedFps • $_selectedFormat',
+          '$_selectedRes • $_selectedFps • $_selectedCodec',
           style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
         ),
         const SizedBox(height: 16),
@@ -248,9 +299,24 @@ class _ExportDialogState extends State<ExportDialog> {
               style: const TextStyle(color: AppTheme.accent, fontWeight: FontWeight.bold),
             ),
             Text(
+              'Elapsed: $_elapsedTime',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
               'Frame ${(_exportProgress * widget.controller.durationMs / 1000 * _fps).toInt()} / ${(widget.controller.durationMs / 1000 * _fps).toInt()}',
               style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
             ),
+            if (_exportFileSizeBytes > 0)
+              Text(
+                'File size: ${(_exportFileSizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+              ),
           ],
         ),
       ],
@@ -258,67 +324,146 @@ class _ExportDialogState extends State<ExportDialog> {
   }
 
   Widget _buildSettingsView() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildDropdown('Resolution', _selectedRes, ['720p (HD)', '1080p (Full HD)', '4K (Ultra HD)'], _onResolutionChanged, Icons.video_settings),
-        const SizedBox(height: 12),
-        _buildDropdown('Frame Rate', _selectedFps, ['30 FPS', '60 FPS'], _onFpsChanged, Icons.movie),
-        const SizedBox(height: 12),
-        _buildDropdown('Container Format', _selectedFormat, ['MP4 (H.264 / AAC)', 'MOV (ProRes)', 'GIF Animation', 'MP3 Audio Only'], _onFormatChanged, Icons.file_present),
-        const SizedBox(height: 12),
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildDropdown('Resolution', _selectedRes,
+              ['720p (HD)', '1080p (Full HD)', '4K (Ultra HD)'], _onResolutionChanged, Icons.video_settings),
+          const SizedBox(height: 10),
+          _buildDropdown('Frame Rate', _selectedFps,
+              ['30 FPS', '60 FPS'], _onFpsChanged, Icons.movie),
+          const SizedBox(height: 10),
+          _buildDropdown('Container Format', _selectedFormat,
+              ['MP4', 'MOV', 'GIF', 'MP3'], _onFormatChanged, Icons.file_present),
 
-        // Output path selector
-        Row(
-          children: [
-            const Icon(Icons.folder_open, color: AppTheme.textMuted, size: 16),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                _outputPath ?? 'Videos/GhitaEdit_Export.$_formatExtension',
+          // v0.4.5: Codec selector
+          if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+            const SizedBox(height: 10),
+            _buildDropdown('Video Codec', _selectedCodec,
+                _codecOptions, _onCodecChanged, Icons.code),
+          ],
+
+          // v0.4.5: Bitrate slider
+          if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+            const SizedBox(height: 10),
+            _buildSlider('Bitrate: ${_bitrateMbps.toStringAsFixed(0)} Mbps',
+                _bitrateMbps, 1.0, 50.0, _onBitrateChanged),
+          ],
+
+          // v0.4.5: Include audio toggle
+          if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.audiotrack, color: AppTheme.textMuted, size: 16),
+                const SizedBox(width: 6),
+                const Text('Include Audio', style: TextStyle(color: AppTheme.textMain, fontSize: 13)),
+                const Spacer(),
+                Switch(
+                  value: _includeAudio,
+                  onChanged: (v) => setState(() => _includeAudio = v),
+                  activeThumbColor: AppTheme.primary,
+                ),
+              ],
+            ),
+          ],
+
+          const SizedBox(height: 6),
+
+          // Estimated file size
+          Row(
+            children: [
+              const Icon(Icons.storage, color: AppTheme.textMuted, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                'Estimated size: $_estimatedFileSize',
                 style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
-                overflow: TextOverflow.ellipsis,
               ),
-            ),
-            TextButton(
-              onPressed: _pickOutputPath,
-              child: const Text('Browse...', style: TextStyle(fontSize: 11)),
-            ),
-          ],
-        ),
+            ],
+          ),
 
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Icon(
-              _widgetReady ? Icons.check_circle_outline : Icons.error_outline,
-              color: _widgetReady ? Colors.green : Colors.redAccent,
-              size: 16,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              _widgetReady ? 'Engine ready • ${widget.controller.project.allClips.length} clips queued' : 'Engine not ready — export disabled',
-              style: TextStyle(
-                fontSize: 11,
-                color: _widgetReady ? AppTheme.textMuted : Colors.redAccent,
+          const SizedBox(height: 8),
+
+          // Output path selector
+          Row(
+            children: [
+              const Icon(Icons.folder_open, color: AppTheme.textMuted, size: 16),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _outputPath ?? 'Videos/GhitaEdit_Export.$_formatExtension',
+                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-            ),
-          ],
-        ),
-      ],
+              TextButton(
+                onPressed: _pickOutputPath,
+                child: const Text('Browse...', style: TextStyle(fontSize: 11)),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(
+                _widgetReady ? Icons.check_circle_outline : Icons.error_outline,
+                color: _widgetReady ? Colors.green : Colors.redAccent,
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _widgetReady
+                    ? 'Engine ready • ${widget.controller.project.allClips.length} clips queued'
+                    : 'Engine not ready — export disabled',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: _widgetReady ? AppTheme.textMuted : Colors.redAccent,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
   void _onResolutionChanged(String? val) { if (val != null) setState(() => _selectedRes = val); }
   void _onFpsChanged(String? val) { if (val != null) setState(() => _selectedFps = val); }
-  void _onFormatChanged(String? val) { if (val != null) setState(() => _selectedFormat = val); }
+  void _onFormatChanged(String? val) {
+    if (val != null) {
+      setState(() {
+        _selectedFormat = val;
+        // Auto-select codec based on format
+        if (val == 'GIF') {
+          _selectedCodec = 'GIF';
+        } else if (val == 'MP3') {
+          _selectedCodec = 'MP3';
+        } else if (val == 'MOV') {
+          _selectedCodec = 'H.264';
+        } else {
+          _selectedCodec = 'H.264';
+        }
+      });
+    }
+  }
+  void _onCodecChanged(String? val) { if (val != null) setState(() => _selectedCodec = val); }
+  void _onBitrateChanged(double val) { setState(() => _bitrateMbps = val); }
 
-  Widget _buildDropdown(String label, String value, List<String> items, ValueChanged<String?> onChanged, IconData icon) {
+  Widget _buildDropdown(String label, String value, List<String> items,
+                        ValueChanged<String?> onChanged, IconData icon) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+        Row(
+          children: [
+            Icon(icon, color: AppTheme.textMuted, size: 14),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+          ],
+        ),
         const SizedBox(height: 4),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -336,6 +481,33 @@ class _ExportDialogState extends State<ExportDialog> {
               items: items.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
               onChanged: onChanged,
             ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSlider(String label, double value, double min, double max,
+                      ValueChanged<double> onChanged) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            activeTrackColor: AppTheme.primary,
+            inactiveTrackColor: AppTheme.divider,
+            thumbColor: AppTheme.primary,
+            valueIndicatorColor: AppTheme.primary,
+            valueIndicatorTextStyle: const TextStyle(color: Colors.white, fontSize: 11),
+          ),
+          child: Slider(
+            value: value,
+            min: min,
+            max: max,
+            divisions: 49,
+            label: '${value.toStringAsFixed(0)} Mbps',
+            onChanged: onChanged,
           ),
         ),
       ],

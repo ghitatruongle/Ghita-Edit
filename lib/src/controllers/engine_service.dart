@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:convert';
 
 import 'package:ffi/ffi.dart';
 import '../ffi/native_bindings.dart';
-import 'package:flutter/foundation.dart'; // 🔒 FIX: Add for debugPrint
+import 'package:flutter/foundation.dart';
 
 /// Manages the raw C++ engine lifecycle and native memory.
 /// This class owns the FFI boundary — the controller should never call
@@ -46,6 +47,18 @@ class EngineService {
   double _volume = 1.0;
   double get volume => _volume;
 
+  // v0.4.5: FFmpeg availability
+  bool _ffmpegAvailable = false;
+  bool get ffmpegAvailable => _ffmpegAvailable;
+
+  // v0.4.5: Cached media info
+  Map<String, dynamic> _mediaInfo = {};
+  Map<String, dynamic> get mediaInfo => _mediaInfo;
+
+  // v0.4.5: Cached available filters
+  List<Map<String, dynamic>> _availableFilters = [];
+  List<Map<String, dynamic>> get availableFilters => _availableFilters;
+
   static const int renderWidth = 640;
   static const int renderHeight = 360;
 
@@ -54,7 +67,6 @@ class EngineService {
   EngineService({GhitaNativeBindings? bindings, bool skipNativeInit = false})
       : _bindings = bindings ?? (skipNativeInit ? null : _tryLoadBindings());
 
-  // 🔒 FIX: Prevent double dispose — critical for memory safety
   bool _disposed = false;
 
   static GhitaNativeBindings? _tryLoadBindings() {
@@ -65,7 +77,6 @@ class EngineService {
     }
   }
 
-  // Guard method — throws if already disposed
   void _checkDisposed() {
     if (_disposed) {
       throw StateError('EngineService has been disposed');
@@ -92,7 +103,6 @@ class EngineService {
 
       final initResult = bindings.initEngine(ctx);
       if (initResult != 0) {
-        // Clean up the context if init failed to prevent memory leak
         bindings.destroyEngine(ctx);
         debugPrint('[EngineService] Engine initialization failed with code: $initResult');
         _ctx = null;
@@ -100,6 +110,20 @@ class EngineService {
       }
 
       _ctx = ctx;
+
+      // v0.4.5: Check FFmpeg availability
+      try {
+        _ffmpegAvailable = bindings.hasFFmpeg(ctx);
+      } catch (_) {
+        _ffmpegAvailable = false;
+      }
+
+      // v0.4.5: Load available filters
+      try {
+        _refreshAvailableFilters();
+      } catch (_) {
+        _availableFilters = [];
+      }
 
       final verPtr = bindings.getVersion();
       if (verPtr != nullptr) {
@@ -114,11 +138,48 @@ class EngineService {
 
       _startTickLoop();
     } catch (e, st) {
-      // 🔒 FIX: Log errors instead of silently swallowing them
       debugPrint('[EngineService] Initialization failed: $e\n$st');
       _ctx = null;
-      rethrow; // Let caller know
+      rethrow;
     }
+  }
+
+  // v0.4.5: Refresh available filters from native engine
+  void _refreshAvailableFilters() {
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return;
+    try {
+      final filterPtr = bindings.getAvailableFilters(_ctx!);
+      if (filterPtr != nullptr) {
+        final jsonStr = filterPtr.toDartString();
+        final decoded = jsonDecode(jsonStr);
+        if (decoded is List) {
+          _availableFilters = decoded.cast<Map<String, dynamic>>();
+        }
+      }
+    } catch (_) {
+      // ignore — use cached default list
+    }
+  }
+
+  // v0.4.5: Get media info JSON from native engine
+  Map<String, dynamic> fetchMediaInfo() {
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return {};
+    try {
+      final infoPtr = bindings.getMediaInfo(_ctx!);
+      if (infoPtr != nullptr) {
+        final jsonStr = infoPtr.toDartString();
+        final decoded = jsonDecode(jsonStr);
+        if (decoded is Map<String, dynamic>) {
+          _mediaInfo = decoded;
+          return _mediaInfo;
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+    return {};
   }
 
   void startPreview() {
@@ -168,9 +229,10 @@ class EngineService {
     }
   }
 
+  // v0.4.5: Extended filter range (0-10 instead of 0-4)
   void applyFilter(int filterType, double intensity) {
     _checkDisposed();
-    if (filterType < 0 || filterType > 4) return;
+    if (filterType < 0 || filterType > 10) return;
     if (intensity < 0.0) intensity = 0.0;
     if (intensity > 1.0) intensity = 1.0;
     _activeFilterType = filterType;
@@ -191,9 +253,11 @@ class EngineService {
     } finally {
       calloc.free(pathPtr);
     }
-    // Refresh duration immediately so callers can read it right after load
     _durationMs = bindings.getDurationMs(_ctx!);
     _positionMs = 0;
+
+    // v0.4.5: Fetch media info after loading
+    fetchMediaInfo();
   }
 
   /// Retrieve audio waveform samples from the native engine (v0.3.0).
@@ -211,6 +275,46 @@ class EngineService {
     } finally {
       calloc.free(ptr);
     }
+  }
+
+  // v0.4.5: Extended export with codec/bitrate/audio control
+  bool startExportEx(String outputPath, int width, int height, int fps,
+                     String codec, int bitrate, bool includeAudio) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return false;
+
+    final pathPtr = outputPath.toNativeUtf8();
+    final codecPtr = codec.toNativeUtf8();
+    try {
+      return bindings.startExportEx(_ctx!, pathPtr, width, height, fps,
+                                     codecPtr, bitrate, includeAudio) == 0;
+    } finally {
+      calloc.free(pathPtr);
+      calloc.free(codecPtr);
+    }
+  }
+
+  // v0.4.5: Get export output file size
+  int getExportFileSize() {
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return 0;
+    return bindings.getExportFileSize(_ctx!);
+  }
+
+  // v0.4.5: Keyframe operations
+  bool addClipKeyframe(int clipId, int timeMs, double value) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return false;
+    return bindings.addClipKeyframe(_ctx!, clipId, timeMs, value) == 0;
+  }
+
+  bool clearClipKeyframes(int clipId) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return false;
+    return bindings.clearClipKeyframes(_ctx!, clipId) == 0;
   }
 
   bool _tickFrame() {
@@ -235,7 +339,6 @@ class EngineService {
       }
       return success;
     } catch (e, st) {
-      // 🔒 FIX: Log errors instead of silently failing
       debugPrint('[EngineService] _tickFrame failed: $e\n$st');
       stopPreview();
       return false;
@@ -253,7 +356,6 @@ class EngineService {
   }
 
   void dispose() {
-    // 🔒 FIX: Idempotent — multiple dispose calls are safe
     if (_disposed) return;
     _disposed = true;
 
@@ -264,7 +366,6 @@ class EngineService {
     }
     _frameBytes = null;
     final bindings = _bindings;
-    // Only call destroyEngine if we have a valid context
     if (isReady && bindings != null && _ctx != null && _ctx != nullptr) {
       try {
         bindings.destroyEngine(_ctx!);

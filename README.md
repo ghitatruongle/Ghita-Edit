@@ -1,83 +1,136 @@
-# Ghita Edit — v0.4.0+4
+# Ghita Edit — v0.4.5+5
 
 A cross-platform multimedia editor suite built with **Flutter** and a native **C++20 rendering engine** connected via Dart FFI.
 
 ## Features
 
-- 🎬 Video preview player with multi-threaded C++20 rendering engine
-- 🎛️ Real-time filters: Grayscale, Sepia, Invert, Brightness
-- 📐 Multi-track timeline with playhead scrubbing, clip splitting & drag-and-drop
-- 🎵 Native C++ Audio Waveform generation & volume control
-- 🚀 Asynchronous background export thread worker pipeline
-- 🔒 C++20 `std::shared_mutex` read-write lock synchronization
-- 🤖 Android NDK multi-ABI cross-compilation & GitHub Actions CI/CD
-- 🌙 Dark-themed UI inspired by DaVinci Resolve / Premiere Pro
-- 🪟 Windows + Android + Linux support (Windows primary)
+### v0.4.5 — FFmpeg Integration & Major Update
+
+- 🎬 **Real FFmpeg Media Decoder** — Actual video/audio decoding via libavformat/libavcodec (graceful fallback to synthetic decoder when FFmpeg unavailable)
+- 📹 **Real Video Export** — H.264, H.265, VP9 encoding with configurable bitrate and AAC audio
+- 🎨 **10 Built-in Filters** — Grayscale, Sepia, Invert, Brightness, Blur, Edge Detect, Color Grading, Adjust (BCSH), Pixelate, Mosaic
+- 🔄 **8 Transition Types** — FadeIn, FadeOut, Crossfade, Slide, Wipe, Zoom, Dissolve, Radial
+- 🎯 **Keyframe Animation** — Linear interpolation for clip properties
+- 💻 **macOS Support** — Native engine builds via Homebrew FFmpeg
+- 📱 **iOS Framework** — Static framework build for iOS integration
+- 🔧 **Extended Export Dialog** — Codec selection, bitrate slider, include-audio toggle, ETA tracking
+- 🛡 **Thread Safety** — shared_mutex read/write locking, atomic memory ordering
+- ✅ **Version Consistency CI** — Automated check across all 10 version sources
+
+### Core (v0.4.0+)
+
+- ⚡ **C++20 Engine** with shared_mutex synchronization
+- 🎞 **Multi-track Timeline** with drag-to-move, zoom, snap-to-grid
+- 🖼 **Real-time Filters** applied via native pixel shaders
+- 🔊 **Audio Waveform** extraction and visualization
+- ⌨️ **Keyboard Shortcuts** — JKL shuttle, Ctrl+Z/Y/S/C/V, Space, S, Delete, Home/End
+- ↩️ **Undo/Redo** with 100-step CommandHistory
+- 💾 **Auto-save** every 60 seconds, project save/load (.ghita JSON)
+- 🎛 **Export Pipeline** — async background export with progress polling
+- 🖥 **Dark UI Theme** with professional color scheme
+
+## Quick Start
+
+### Prerequisites
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| Flutter SDK | 3.27.x | Dart/UI framework |
+| CMake | 3.15+ | Native engine build |
+| C++20 compiler | MSVC 2022 / GCC 11+ / Clang 15+ | |
+| FFmpeg | 4.4+ (optional) | Real media decode/encode |
+
+### Build & Run
+
+```bash
+flutter pub get
+
+# Build native engine (Windows)
+cmake -B native_engine/build -S native_engine -DCMAKE_BUILD_TYPE=Release
+cmake --build native_engine/build --config Release
+
+# Run
+flutter run -d windows
+
+# Or Android (build .so first)
+./scripts/build_android_so.sh
+flutter run -d android
+
+# Or macOS (requires Homebrew FFmpeg)
+brew install ffmpeg pkg-config
+./scripts/build_macos.sh
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────┐
+│         Flutter UI (Dart)            │
+│  EditorView → Timeline / Inspector   │
+│         ↓ FFI (dart:ffi)             │
+├─────────────────────────────────────┤
+│    GhitaNativeBindings (C API)       │
+│         ↕ extern "C"                 │
+├─────────────────────────────────────┤
+│     GhitaEngine (C++20)              │
+│  ┌───────────┐  ┌────────────────┐   │
+│  │IMediaDecoder│  │ Export Pipeline│  │
+│  │• Synthetic  │  │• Raw RGBA     │   │
+│  │• FFmpeg ██  │  │• H.264 ██     │   │
+│  │• Stub       │  │• H.265 ██     │   │
+│  └───────────┘  └────────────────┘   │
+│  shared_mutex • atomics • threads    │
+└─────────────────────────────────────┘
+       Windows │ Android │ macOS
+```
+
+██ = New in v0.4.5
 
 ## Project Structure
 
 ```
-├── lib/                  # Flutter UI + controller layer
-│   ├── main.dart
-│   └── src/
-│       ├── controllers/  # EditorController & EngineService
-│       ├── ffi/          # Dart ↔ C++ FFI bindings
-│       └── ui/           # Theme, views, widgets
-├── native_engine/        # C++20 shared library
-│   ├── include/          # Public headers (ghita_engine.h, ghita_c_api.h)
-│   └── src/              # IMediaDecoder + C API wrapper + Export thread
-├── scripts/              # Automated build scripts (build_android_so.sh)
-├── .github/workflows/    # CI/CD workflows (ci.yml)
-├── android/              # Android build (Gradle + NDK-ready)
-├── windows/              # Windows runner + native_engine integration
-└── test/                 # Dart + FFI + Widget tests
+lib/
+  main.dart                     # Entry point
+  src/
+    core/version.dart           # Centralized version constants
+    controllers/
+      editor_controller.dart    # Central state manager
+      engine_service.dart       # FFI engine lifecycle
+      command_history.dart      # Undo/Redo system
+      project_service.dart      # Save/Load .ghita projects
+    ffi/
+      native_bindings.dart      # Dart FFI function bindings
+    models/
+      project.dart              # Project model
+      track.dart                # Track model
+      clip.dart                 # Clip model
+    ui/
+      theme/app_theme.dart      # Dark theme
+      views/editor_view.dart    # Main editor layout
+      widgets/                  # Inspector, Timeline, Preview, Media Bin, Export
+
+native_engine/
+  CMakeLists.txt                # FFmpeg-aware build
+  include/ghita_engine.h        # C++ engine + decoder API
+  include/ghita_c_api.h         # C API (25+ functions)
+  src/ghita_engine.cpp          # Engine, decoders, filters, export
+  src/ghita_c_api.cpp           # C API implementation
+  test/native_engine_self_test.cpp  # 18+ self-tests
 ```
 
-## Prerequisites
+## Tests
 
-| Tool | Purpose |
-|------|---------|
-| Flutter SDK ≥ 3.27.x | Dart/UI framework |
-| Android SDK + NDK r25+ | Android builds (.so) |
-| CMake ≥ 3.15 | Native engine build |
-| MSVC 2022 (Windows) / GCC 11+ | C++20 compiler with std::shared_mutex |
-
-## Build & Run
-
-### Windows (recommended for development)
 ```bash
-cd native_engine
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
-cd ..
-flutter run -d windows
+flutter test                    # Dart unit tests
+./native_engine/build/native_engine_test  # C++ self-tests
 ```
 
-The `windows/CMakeLists.txt` automatically sub-builds `native_engine` so the DLL is copied into the runner output.
+## Versioning
 
-### Android
-Automated cross-compilation for all 4 ABIs (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`):
-```bash
-./scripts/build_android_so.sh
-flutter run -d android
-```
+Version is centralized in `lib/src/core/version.dart` and auto-verified by CI.
+Current: **v0.4.5+5** (build 5)
 
-## Architecture Notes
+## License
 
-- The native engine exposes a **stable C ABI** (`extern "C"`) through `ghita_c_api.h`.
-- `IMediaDecoder` interface abstraction provides seamless fallback and FFmpeg decoder hookups.
-- C++20 `std::shared_mutex` ensures non-blocking concurrent frame reads.
-- Asynchronous background thread (`m_exportThread`) handles progress calculation and render loops without freezing the UI.
-
-## Changelog
-
-### v0.3.0
-- Upgraded C++20 engine synchronization to `std::shared_mutex` (Read-Write Locks).
-- Introduced `IMediaDecoder` abstraction architecture with `SyntheticMediaDecoder` and `FFmpegMediaDecoderStub`.
-- Added native audio waveform sample extraction (`ghita_engine_get_audio_waveform`).
-- Implemented real asynchronous background export thread worker (`m_exportThread`).
-- Resolved all 207 Flutter linter warnings (0 errors, 0 warnings with `flutter analyze`).
-- Added GitHub Actions CI pipeline (`.github/workflows/ci.yml`).
-- Added Android NDK multi-ABI build script (`scripts/build_android_so.sh`).
-- Expanded FFI resilience unit tests (`test/native_ffi_test.dart`).
-- Upgraded version strings to `v0.3.0+1` across `pubspec.yaml`, `app_theme.dart`, and C++ headers.
+This project is for educational and development purposes.
+FFmpeg is optionally linked under LGPL/GPL — see FFmpeg licensing for details.

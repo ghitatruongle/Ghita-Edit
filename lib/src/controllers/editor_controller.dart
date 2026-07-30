@@ -149,7 +149,8 @@ class EditorController extends ChangeNotifier {
 
   void setFilter(int filterType, double intensity) {
     if (_disposed) return;
-    final safeType = filterType.clamp(0, 4);
+    // v0.4.5: Extended filter range 0-10 (was 0-4)
+    final safeType = filterType.clamp(0, 10);
     final safeIntensity = intensity.clamp(0.0, 1.0);
     _activeFilterType = safeType;
     _filterIntensity = safeIntensity;
@@ -157,6 +158,28 @@ class EditorController extends ChangeNotifier {
       _engine.applyFilter(safeType, safeIntensity);
     }
     notifyListeners();
+  }
+
+  // v0.4.5: Maps Dart clip IDs (String) → native engine clip IDs (int)
+  final Map<String, int> _nativeClipIdMap = {};
+  int _nextNativeClipId = 1;
+
+  int _getOrCreateNativeClipId(String dartClipId) {
+    return _nativeClipIdMap.putIfAbsent(dartClipId, () => _nextNativeClipId++);
+  }
+
+  // v0.4.5: Set clip transition via native engine
+  void setClipTransition(String clipId, int transitionType, int durationMs) {
+    if (_disposed) return;
+    if (_engine.isReady && _engine.bindings != null) {
+      final nativeId = _getOrCreateNativeClipId(clipId);
+      _engine.bindings!.setClipTransition(
+        _engine.ctx,
+        nativeId,
+        transitionType,
+        durationMs,
+      );
+    }
   }
 
   // ========== CLIP & TIMELINE OPERATIONS ==========

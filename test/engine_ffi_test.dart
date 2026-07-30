@@ -77,13 +77,13 @@ void main() {
       expect(controller.activeFilterType, equals(0));
     });
 
-    test('invalid filter type > 4 is clamped', () {
+    test('invalid filter type > 10 is clamped', () {
       controller.setFilter(99, 0.5);
-      expect(controller.activeFilterType, equals(4));
+      expect(controller.activeFilterType, equals(10));
     });
 
-    test('valid types 0-4 are accepted', () {
-      for (final t in [0, 1, 2, 3, 4]) {
+    test('valid types 0-10 are accepted', () {
+      for (final t in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
         controller.setFilter(t, 0.5);
         expect(controller.activeFilterType, equals(t), reason: 'type $t');
       }
@@ -290,7 +290,7 @@ void main() {
       controller.importMedia('test.mp4');
       final json = controller.project.toJsonString();
       expect(json.contains('test.mp4'), isTrue);
-      expect(json.contains('0.4.0'), isTrue);
+      expect(json.contains('0.4.5'), isTrue);
     });
 
     test('project deserializes from JSON', () {

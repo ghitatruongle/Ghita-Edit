@@ -8,6 +8,46 @@ on:
     branches: [ main, master ]
 
 jobs:
+  check-version-consistency:
+    name: Version Consistency Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version.dart matches pubspec.yaml
+        run: |
+          DART_MAJOR=$(sed -n 's/.*kMajorVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart)
+          DART_MINOR=$(sed -n 's/.*kMinorVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart)
+          DART_PATCH=$(sed -n 's/.*kPatchVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart)
+          DART_BUILD=$(sed -n 's/.*kBuildNumber = \([0-9]*\).*/\1/p' lib/src/core/version.dart)
+          PUBSPEC_VER=$(sed -n 's/^version: //p' pubspec.yaml | tr -d '[:space:]')
+          EXPECTED="$DART_MAJOR.$DART_MINOR.$DART_PATCH+$DART_BUILD"
+          if [ "$PUBSPEC_VER" != "$EXPECTED" ]; then
+            echo "Version mismatch: pubspec=$PUBSPEC_VER vs version.dart=$EXPECTED"
+            exit 1
+          fi
+          echo "Version consistent: $EXPECTED"
+
+      - name: Check C API version string consistency
+        run: |
+          DART_VER=$(sed -n 's/.*kMajorVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart).$(sed -n 's/.*kMinorVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart).$(sed -n 's/.*kPatchVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart)
+          C_API_VER=$(sed -n 's/.*v\([0-9.]*\) (C++\/Flutter).*/\1/p' native_engine/src/ghita_c_api.cpp)
+          if [ "$DART_VER" != "$C_API_VER" ]; then
+            echo "C API version mismatch: Dart=$DART_VER vs C=$C_API_VER"
+            exit 1
+          fi
+          echo "C API version consistent: $C_API_VER"
+
+      - name: Check CMake project version
+        run: |
+          DART_VER=$(sed -n 's/.*kMajorVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart).$(sed -n 's/.*kMinorVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart).$(sed -n 's/.*kPatchVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart)
+          CMAKE_VER=$(sed -n 's/.*VERSION \([0-9.]*\) .*/\1/p' native_engine/CMakeLists.txt)
+          if [ "$DART_VER" != "$CMAKE_VER" ]; then
+            echo "CMake version mismatch: Dart=$DART_VER vs CMake=$CMAKE_VER"
+            exit 1
+          fi
+          echo "CMake version consistent: $CMAKE_VER"
+
   flutter-analyze-and-test:
     name: Flutter Linting & Test Suite
     runs-on: ubuntu-latest
@@ -55,8 +95,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install FFmpeg (Linux)
+        run: sudo apt-get update && sudo apt-get install -y libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+
       - name: Configure CMake
         run: cmake -B native_engine/build -S native_engine -DCMAKE_BUILD_TYPE=Release
 
       - name: Build C++ Shared Library
         run: cmake --build native_engine/build --config Release
+
+  build-native-engine-macos:
+    name: Build C++ Native Engine (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install FFmpeg (Homebrew)
+        run: brew install ffmpeg pkg-config
+
+      - name: Configure CMake
+        run: cmake -B native_engine/build -S native_engine -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Build C++ Shared Library
+        run: cmake --build native_engine/build --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Run Native C++ Self Test
+        run: ./native_engine/build/native_engine_test
