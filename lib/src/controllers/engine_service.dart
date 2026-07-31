@@ -20,8 +20,13 @@ class EngineService {
   Timer? _renderTimer;
   bool _isRunning = false;
 
+  // v0.5.8: Frame caching for improved performance during scrubbing
+  final Map<String, Uint8List> _frameCache = {};
+  final int _maxCacheSize = 50; // Max cached frames
+
   bool get isReady => _ctx != null && _ctx != nullptr;
   bool get isRunning => _isRunning;
+  bool get isNativeLibraryLoaded => _nativeLibraryLoaded; // For fallback detection
   String engineVersion = '';
 
   // Public accessors for export dialog
@@ -51,6 +56,18 @@ class EngineService {
   bool _ffmpegAvailable = false;
   bool get ffmpegAvailable => _ffmpegAvailable;
 
+  // v0.5.8: Export state tracking
+  bool get isExporting {
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return false;
+    try {
+      return bindings.isExporting(_ctx!);
+    } catch (e) {
+      debugPrint('[EngineService] Error checking export status: $e');
+      return false;
+    }
+  }
+
   // v0.4.5: Cached media info
   Map<String, dynamic> _mediaInfo = {};
   Map<String, dynamic> get mediaInfo => _mediaInfo;
@@ -68,6 +85,7 @@ class EngineService {
       : _bindings = bindings ?? (skipNativeInit ? null : _tryLoadBindings());
 
   bool _disposed = false;
+  bool _nativeLibraryLoaded = false; // Track if native library was successfully loaded
 
   static GhitaNativeBindings? _tryLoadBindings() {
     try {
@@ -90,6 +108,8 @@ class EngineService {
     final bindings = _bindings;
     if (bindings == null) {
       debugPrint('[EngineService] No FFI bindings available — cannot initialize');
+      // Set _nativeLibraryLoaded to false to indicate failure
+      _nativeLibraryLoaded = false;
       return;
     }
 
@@ -98,6 +118,8 @@ class EngineService {
       if (ctx == nullptr) {
         debugPrint('[EngineService] Failed to create native engine context');
         _ctx = null;
+        // Fallback to demo mode
+        _nativeLibraryLoaded = false;
         return;
       }
 
@@ -132,6 +154,9 @@ class EngineService {
         engineVersion = 'Unknown';
       }
 
+      // Mark as successfully loaded
+      _nativeLibraryLoaded = true;
+
       // Allocate native buffer for preview frames
       _framePointer = calloc<Uint8>(renderWidth * renderHeight * 4);
       _frameBytes = Uint8List(renderWidth * renderHeight * 4);
@@ -140,6 +165,8 @@ class EngineService {
     } catch (e, st) {
       debugPrint('[EngineService] Initialization failed: $e\n$st');
       _ctx = null;
+      // Fallback to demo mode
+      _nativeLibraryLoaded = false;
       rethrow;
     }
   }
@@ -191,8 +218,16 @@ class EngineService {
 
   void stopPreview() {
     _isRunning = false;
-    _renderTimer?.cancel();
-    _renderTimer = null;
+    if (_renderTimer != null) {
+      _renderTimer!.cancel();
+      _renderTimer = null;
+    }
+    // Ensure frame pointers are freed to prevent memory leaks
+    if (_framePointer != null) {
+      calloc.free(_framePointer!);
+      _framePointer = null;
+    }
+    _frameBytes = null;
   }
 
   void play() {
@@ -261,20 +296,51 @@ class EngineService {
   }
 
   /// Retrieve audio waveform samples from the native engine (v0.3.0).
-  Float32List getAudioWaveform(int count) {
+  Float32List getAudioWaveform(int count, {int? downsamplingFactor}) {
     _checkDisposed();
     final bindings = _bindings;
     if (!isReady || bindings == null || count <= 0) return Float32List(0);
-    final ptr = calloc<Float>(count);
+    
+    // v0.5.8: Apply downsampling for lower resolution at small zoom levels
+    final effectiveCount = downsamplingFactor != null 
+        ? (count / downsamplingFactor).round()
+        : count;
+    
+    final ptr = calloc<Float>(effectiveCount);
     try {
-      final ok = bindings.getAudioWaveform(_ctx!, ptr, count);
+      final ok = bindings.getAudioWaveform(_ctx!, ptr, effectiveCount);
       if (ok) {
-        return Float32List.fromList(ptr.asTypedList(count));
+        final result = Float32List.fromList(ptr.asTypedList(effectiveCount));
+        // If downsampling was requested, upsample by interpolating
+        if (downsamplingFactor != null && effectiveCount < count) {
+          return _upsampleWaveform(result, count);
+        }
+        return result;
       }
       return Float32List(0);
     } finally {
       calloc.free(ptr);
     }
+  }
+
+  // v0.5.8: Upsample waveform by linear interpolation when downsampling was used
+  Float32List _upsampleWaveform(Float32List source, int targetCount) {
+    if (source.length >= targetCount) return source.sublist(0, targetCount);
+    
+    final result = Float32List(targetCount);
+    for (int i = 0; i < targetCount; i++) {
+      final pos = i * source.length / targetCount;
+      final left = pos.floor();
+      final right = (left + 1).clamp(0, source.length - 1);
+      final fraction = pos - left;
+      
+      if (right < source.length) {
+        result[i] = source[left] * (1 - fraction) + source[right] * fraction;
+      } else {
+        result[i] = source[left];
+      }
+    }
+    return result;
   }
 
   // v0.4.5: Extended export with codec/bitrate/audio control
@@ -347,6 +413,26 @@ class EngineService {
     return bindings.getPlaybackRate(_ctx!);
   }
 
+  // v0.5.8: Frame caching for improved performance
+  void cacheFrame(String key, Uint8List frame) {
+    if (_disposed || !isReady) return;
+    // Remove oldest if cache is full
+    if (_frameCache.length >= _maxCacheSize) {
+      // Remove first entry (simple LRU - could be improved)
+      final firstKey = _frameCache.keys.first;
+      _frameCache.remove(firstKey);
+    }
+    _frameCache[key] = frame;
+  }
+
+  Uint8List? getCachedFrame(String key) {
+    return _frameCache[key];
+  }
+
+  void clearCache() {
+    _frameCache.clear();
+  }
+
   // v0.5.5: Text overlay rendering (basic rasterizer stub)
   bool renderTextOverlay(Uint8List buffer, int width, int height,
                          String text, int fontSize, double r, double g, double b, double a) {
@@ -378,6 +464,17 @@ class EngineService {
       _positionMs = bindings.getPositionMs(_ctx!);
       _durationMs = bindings.getDurationMs(_ctx!);
 
+      // Create cache key based on position and rendering parameters
+      final cacheKey = '${_positionMs}_${renderWidth}x${renderHeight}';
+      
+      // Try to get frame from cache first
+      final cachedFrame = getCachedFrame(cacheKey);
+      if (cachedFrame != null) {
+        _frameBytes!.setAll(0, cachedFrame);
+        _isPlaying = bindings.isPlaying(_ctx!); // Keep playing state updated
+        return true;
+      }
+
       final success = bindings.renderFrameRgba(
         _ctx!,
         _framePointer!,
@@ -387,6 +484,8 @@ class EngineService {
       if (success) {
         final nativeList = _framePointer!.asTypedList(renderWidth * renderHeight * 4);
         _frameBytes!.setAll(0, nativeList);
+        // Cache the rendered frame for future use
+        cacheFrame(cacheKey, _frameBytes!);
       }
       return success;
     } catch (e, st) {
@@ -411,11 +510,13 @@ class EngineService {
     _disposed = true;
 
     stopPreview();
+    // Free frame buffer to prevent memory leaks
     if (_framePointer != null) {
       calloc.free(_framePointer!);
       _framePointer = null;
     }
     _frameBytes = null;
+    
     final bindings = _bindings;
     if (isReady && bindings != null && _ctx != null && _ctx != nullptr) {
       try {
@@ -426,5 +527,6 @@ class EngineService {
     }
     _ctx = null;
     engineVersion = '';
+    _nativeLibraryLoaded = false;
   }
 }

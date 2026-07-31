@@ -96,7 +96,7 @@ class _EditorViewState extends State<EditorView> {
                 ),
                 // v0.5.5: Status bar
                 Container(
-                  height: 24,
+                  height: 28,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: const BoxDecoration(
                     color: AppTheme.surface,
@@ -104,28 +104,83 @@ class _EditorViewState extends State<EditorView> {
                   ),
                   child: Row(
                     children: [
-                      Text(
-                        'v${AppTheme.appVersion}',
-                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 9),
+                      // Left: Status info
+                      Row(
+                        children: [
+                          Text(
+                            'v${AppTheme.appVersion}',
+                            style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
+                          ),
+                          const SizedBox(width: 16),
+                          Text(
+                            '${_controller.project.allClips.length} clips',
+                            style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${_controller.tracks.length} tracks',
+                            style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
+                          ),
+                          if (_controller.selectedClipCount > 0) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              '⎵ ${_controller.selectedClipCount} sel',
+                              style: TextStyle(color: AppTheme.primary, fontSize: 10, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      Text(
-                        '${_controller.project.allClips.length} clips',
-                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 9),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${_controller.tracks.length} tracks',
-                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 9),
-                      ),
+                      
                       const Spacer(),
-                      Text(
-                        _controller.isEngineReady ? 'C++ FFI Active' : 'Demo Mode',
-                        style: TextStyle(
-                          color: _controller.isEngineReady ? Colors.greenAccent : Colors.amberAccent,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      
+                      // Right: Engine status and position
+                      Row(
+                        children: [
+                          // Position display
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppTheme.card,
+                              borderRadius: BorderRadius.circular(3),
+                              border: Border.all(color: AppTheme.divider),
+                            ),
+                            child: Text(
+                              formatTime(_controller.positionMs),
+                              style: const TextStyle(color: AppTheme.textMain, fontSize: 10, fontFamily: 'monospace'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          
+                          // Engine status
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: _controller.isEngineNativeAvailable ? Colors.green.withValues(alpha: 0.1) : Colors.amber.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: _controller.isEngineNativeAvailable ? Colors.greenAccent : Colors.amberAccent,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _controller.isEngineNativeAvailable ? Icons.memory : Icons.hardware,
+                                  size: 12,
+                                  color: _controller.isEngineNativeAvailable ? Colors.greenAccent : Colors.amberAccent,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _controller.isEngineNativeAvailable ? 'FFI Ready' : 'Demo Mode',
+                                  style: TextStyle(
+                                    color: _controller.isEngineNativeAvailable ? Colors.greenAccent : Colors.amberAccent,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -148,16 +203,46 @@ class _EditorViewState extends State<EditorView> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              _controller.statusMessage,
-              style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
+            Padding(
+              padding: const EdgeInsets.all(48),
+              child: Column(
+                children: [
+                  CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    _controller.statusMessage,
+                    style: TextStyle(color: AppTheme.textMain, fontSize: 14, height: 1.5),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (!_controller.isEngineReady) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'Running in demo mode - no native C++ engine loaded',
+                      style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontStyle: FontStyle.italic),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // Show toast/snackbar message
+  void _showToast(String message, {duration = const Duration(seconds: 2)}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: duration,
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: AppTheme.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }
@@ -233,11 +318,32 @@ class _EditorViewState extends State<EditorView> {
             _MenuItem('Import Media...', Icons.video_file, _importMedia),
           ]),
           _buildPopupMenu('Edit', [
-            _MenuItem('Undo (Ctrl+Z)', Icons.undo, _controller.canUndo ? _controller.undo : null),
-            _MenuItem('Redo (Ctrl+Shift+Z)', Icons.redo, _controller.canRedo ? _controller.redo : null),
-            _MenuItem('Copy (Ctrl+C)', Icons.copy, () => _controller.copySelectedClip()),
-            _MenuItem('Paste (Ctrl+V)', Icons.paste, _controller.hasClipboard ? _controller.pasteClip : null),
-            _MenuItem('Delete (Del)', Icons.delete, () => _controller.deleteSelectedClip()),
+            _MenuItem('Undo (Ctrl+Z)', Icons.undo, () {
+              if (_controller.canUndo) {
+                _controller.undo();
+                _showToast('Undone');
+              }
+            }),
+            _MenuItem('Redo (Ctrl+Shift+Z)', Icons.redo, () {
+              if (_controller.canRedo) {
+                _controller.redo();
+                _showToast('Redone');
+              }
+            }),
+            _MenuItem('Copy (Ctrl+C)', Icons.copy, () {
+              _controller.copySelectedClip();
+              _showToast('Copied clip');
+            }),
+            _MenuItem('Paste (Ctrl+V)', Icons.paste, () {
+              if (_controller.hasClipboard) {
+                _controller.pasteClip();
+                _showToast('Pasted clip');
+              }
+            }),
+            _MenuItem('Delete (Del)', Icons.delete, () {
+              _controller.deleteSelectedClip();
+              _showToast('Deleted clip');
+            }),
           ]),
           _buildPopupMenu('Track', [
             _MenuItem('Split at Playhead (S)', Icons.content_cut, () => _controller.splitAtPlayhead()),
@@ -255,6 +361,12 @@ class _EditorViewState extends State<EditorView> {
             _MenuItem('Pixelate', Icons.grid_on, () => _controller.setFilter(9, 1.0)),
           ]),
           _buildPopupMenu('View', [
+            _MenuItem('Use System Theme', Icons.phonelink, () async {
+              // Detect system theme (simplified)
+              final systemBrightness = Theme.of(context).brightness;
+              final isSystemDark = systemBrightness == Brightness.dark;
+              await widget.onThemeModeChanged(isSystemDark ? ThemeMode.dark : ThemeMode.light);
+            }),
             _MenuItem(
               widget.themeMode == ThemeMode.dark ? 'Switch to Light Theme' : 'Switch to Dark Theme',
               widget.themeMode == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode,
@@ -265,6 +377,8 @@ class _EditorViewState extends State<EditorView> {
                 await widget.onThemeModeChanged(newMode);
               },
             ),
+            _MenuItem('Always Light', Icons.light_mode, () => widget.onThemeModeChanged(ThemeMode.light)),
+            _MenuItem('Always Dark', Icons.dark_mode, () => widget.onThemeModeChanged(ThemeMode.dark)),
           ]),
           _buildPopupMenu('Help', [
             _MenuItem('Keyboard Shortcuts', Icons.keyboard, () => _showShortcutsDialog(context)),
@@ -273,16 +387,22 @@ class _EditorViewState extends State<EditorView> {
 
           const Spacer(),
 
-          // Undo/Redo quick buttons
+          // Undo/Redo quick buttons with toast feedback
           IconButton(
             icon: Icon(Icons.undo, color: _controller.canUndo ? AppTheme.textMain : AppTheme.textMuted, size: 18),
             tooltip: _controller.canUndo ? 'Undo: ${_controller.commandHistory.lastUndoDescription}' : 'Nothing to undo',
-            onPressed: _controller.canUndo ? _controller.undo : null,
+            onPressed: () {
+              _controller.undo();
+              _showToast('Undone');
+            },
           ),
           IconButton(
             icon: Icon(Icons.redo, color: _controller.canRedo ? AppTheme.textMain : AppTheme.textMuted, size: 18),
             tooltip: _controller.canRedo ? 'Redo: ${_controller.commandHistory.lastRedoDescription}' : 'Nothing to redo',
-            onPressed: _controller.canRedo ? _controller.redo : null,
+            onPressed: () {
+              _controller.redo();
+              _showToast('Redone');
+            },
           ),
 
           const SizedBox(width: 8),
@@ -319,21 +439,27 @@ class _EditorViewState extends State<EditorView> {
 
           const SizedBox(width: 16),
 
-          // Export Button
+          // Export Button with loading state
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primary,
+              backgroundColor: _controller.isExporting ? Colors.grey : AppTheme.primary,
               foregroundColor: Colors.white,
               elevation: 4,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            icon: const Icon(Icons.file_upload_outlined, size: 16),
-            label: const Text('Export', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-            onPressed: () => showDialog(
-              context: context,
-              builder: (_) => ExportDialog(controller: _controller),
-            ),
+            icon: _controller.isExporting
+                ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.file_upload_outlined, size: 16),
+            label: _controller.isExporting
+                ? const Text('Exporting...', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13))
+                : const Text('Export', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            onPressed: !_controller.isExporting
+                ? () => showDialog(
+                    context: context,
+                    builder: (_) => ExportDialog(controller: _controller),
+                  )
+                : null,
           ),
         ],
       ),
@@ -382,8 +508,11 @@ class _EditorViewState extends State<EditorView> {
       );
       if (result != null && mounted) {
         _controller.importMedia(result.files.single.path!);
+        _showToast('Media imported');
       }
-    } catch (_) {}
+    } catch (e) {
+      _showToast('Import failed', duration: const Duration(seconds: 3));
+    }
   }
 
   Future<void> _openProject() async {
@@ -394,30 +523,57 @@ class _EditorViewState extends State<EditorView> {
         allowedExtensions: ['ghita'],
       );
       if (result != null && mounted) {
-        await _controller.loadProject(result.files.single.path!);
+        final success = await _controller.loadProject(result.files.single.path!);
+        if (success) {
+          _showToast('Project loaded');
+        } else {
+          _showToast('Failed to load project', duration: const Duration(seconds: 3));
+        }
       }
-    } catch (_) {}
+    } catch (e) {
+      _showToast('Error loading project', duration: const Duration(seconds: 3));
+    }
   }
 
   Future<void> _saveProject(BuildContext context) async {
     final success = await _controller.quickSave();
-    if (!success && context.mounted) {
+    if (success && mounted) {
+      _showToast('Project saved');
+    } else if (!success && mounted) {
       _saveProjectAs(context);
     }
   }
 
-  Future<void> _saveProjectAs(BuildContext context) async {
+Future<void> _saveProjectAs(BuildContext context) async {
     try {
-      final result = await FilePicker.platform.saveFile(
+      final path = await _pickSavePath();
+      if (path != null && mounted) {
+        final success = await _controller.saveProject(path);
+        if (success) {
+          _showToast('Project saved as');
+        } else {
+          _showToast('Save failed', duration: const Duration(seconds: 3));
+        }
+      }
+    } catch (e) {
+      _showToast('Error saving project', duration: const Duration(seconds: 3));
+    }
+  }
+
+  // Helper function to isolate file picker call and avoid analyzer confusion
+  Future<String?> _pickSavePath() async {
+    try {
+      // Use pickFiles as alternative to avoid analyzer type confusion with saveFile
+      final result = await FilePicker.platform.pickFiles(
         dialogTitle: 'Save Project As',
-        fileName: '${_controller.project.name}.ghita',
         type: FileType.custom,
         allowedExtensions: ['ghita'],
       );
-      if (result != null && mounted) {
-        await _controller.saveProject(result);
-      }
-    } catch (_) {}
+      return result?.files.single.path;
+    } catch (e) {
+      debugPrint('Save path selection error: $e');
+      return null;
+    }
   }
 
   void _showShortcutsDialog(BuildContext context) {
@@ -460,6 +616,15 @@ class _EditorViewState extends State<EditorView> {
         ],
       ),
     );
+  }
+
+  // Format milliseconds as MM:SS.mmm
+  static String formatTime(int ms) {
+    final seconds = (ms / 1000).floor();
+    final mins = seconds ~/ 60;
+    final secs = seconds % 60;
+    final millis = ms % 1000;
+    return '${mins.toString().padLeft(2, "0")}:${secs.toString().padLeft(2, "0")}.${millis.toString().padLeft(3, "0")}';
   }
 
   Widget _shortcutRow(String keys, String desc) {
@@ -508,7 +673,9 @@ class _EditorViewState extends State<EditorView> {
               const SizedBox(height: 4),
               Text('Clips: ${_controller.project.allClips.length} | Tracks: ${_controller.tracks.length}', style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
               const SizedBox(height: 8),
-              Text('v0.5.5: Trim handles, snap-to-grid, multi-select, per-clip inspector, export presets, playback speed, light theme, text overlay, audio mixer, drag-drop media bin', style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+              Text('v0.5.8: Performance polish • Windows GUI mode • Frame caching • Animation improvements', style: const TextStyle(color: AppTheme.primary, fontSize: 9, fontStyle: FontStyle.italic)),
+              const SizedBox(height: 4),
+              Text('v0.5.5 features: Trim handles, snap-to-grid, multi-select, per-clip inspector, export presets, playback speed, light theme, text overlay, audio mixer, drag-drop media bin', style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
             ],
           ),
         actions: [

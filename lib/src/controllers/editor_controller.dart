@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'engine_service.dart';
 import 'command_history.dart';
@@ -46,6 +47,7 @@ class EditorController extends ChangeNotifier {
   Uint8List? get frameBytes => _engine.frameBytes;
 
   String get statusMessage => _statusMessage;
+  bool get isEngineNativeAvailable => _engine.isNativeLibraryLoaded; // Check if native library loaded successfully
 
   // --- Clipboard ---
   Clip? _clipboardClip;
@@ -54,6 +56,9 @@ class EditorController extends ChangeNotifier {
   // --- Project Accessors ---
   List<Track> get tracks => project.tracks;
   Clip? get selectedClip => project.selectedClip;
+
+  // v0.5.8: Export state access
+  bool get isExporting => _engine.isExporting;
   List<Clip> get selectedClips => project.selectedClips;
   int get selectedClipCount => project.selectedClipCount;
   bool get canUndo => commandHistory.canUndo;
@@ -79,17 +84,19 @@ class EditorController extends ChangeNotifier {
     try {
       await _engine.initialize();
       if (_disposed) return;
-      if (!isEngineReady) {
-        _statusMessage = 'Native engine unavailable (Demo Mode)';
+      
+      // Check if engine is actually ready or if we're in demo mode
+      if (!_engine.isNativeLibraryLoaded || !isEngineReady) {
+        _statusMessage = 'Native engine unavailable (Demo Mode - limited features)';
         notifyListeners();
         return;
       }
       _statusMessage = 'Engine ready • v$flutterVersion';
       _startAutoSave();
       notifyListeners();
-    } catch (e) {
+    } catch (e, st) {
       if (!_disposed) {
-        _statusMessage = 'Error: $e';
+        _statusMessage = 'Error: $e${st != null ? '\n$st' : ''}';
         notifyListeners();
       }
     }
@@ -190,19 +197,20 @@ class EditorController extends ChangeNotifier {
   void importMedia(String path) {
     if (_disposed || path.isEmpty) return;
 
-    final fileName = path.split(RegExp(r'[/\\]')).last;
-    final extension = fileName.split('.').last.toLowerCase();
+    // Use path package for proper cross-platform path handling with Unicode support
+    final fileName = basename(path);
+    final fileExtension = extension(fileName).toLowerCase();
 
-    // Determine clip type from extension
+    // Determine clip type from fileExtension
     ClipType clipType;
     String targetTrackId;
-    if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(extension)) {
+    if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(fileExtension)) {
       clipType = ClipType.video;
       targetTrackId = 'track_video_1';
-    } else if (['mp3', 'wav', 'flac', 'aac', 'ogg'].contains(extension)) {
+    } else if (['mp3', 'wav', 'flac', 'aac', 'ogg'].contains(fileExtension)) {
       clipType = ClipType.audio;
       targetTrackId = 'track_audio_1';
-    } else if (['png', 'jpg', 'jpeg', 'gif', 'bmp'].contains(extension)) {
+    } else if (['png', 'jpg', 'jpeg', 'gif', 'bmp'].contains(fileExtension)) {
       clipType = ClipType.image;
       targetTrackId = 'track_overlay_1';
     } else {
