@@ -47,6 +47,10 @@ extracted_*.png
 test_*.png
 *.png.tmp
 
+# Installer Build Output (Inno Setup) — only the .iss source is committed
+installer/output/
+installer/*.log
+
 # AI Coding Assistant & Agent Scratch Workspaces
 .antigravityignore
 .brain/
@@ -165,6 +169,12 @@ Release/
 RelWithDebInfo/
 MinSizeRel/
 
+# Negate Android source manifests caught by the Debug/ rule above
+# (android/app/src/debug/AndroidManifest.xml is a REQUIRED source file)
+!android/app/src/debug/
+!android/app/src/profile/
+!android/app/src/main/
+
 # Compiled Object Files & Intermediate Artifacts
 *.obj
 *.o
@@ -206,6 +216,20 @@ output.mp4
 # ------------------------------------------------------------------------------
 app.*.symbols
 app.*.map.json
+
+# ------------------------------------------------------------------------------
+# 11. Archive & Packaging Artifacts (backups, distribution bundles)
+# ------------------------------------------------------------------------------
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.bz2
+*.xz
+*.iso
 
 # ==============================================================================
 # SAFEGUARDS: Explicitly Protect All Source Code Extensions
