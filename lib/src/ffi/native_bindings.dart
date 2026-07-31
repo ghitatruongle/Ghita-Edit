@@ -164,6 +164,64 @@ typedef DartGhitaEngineRenderTextOverlay = bool Function(
   Pointer<Utf8> text, int fontSize, double r, double g, double b, double a
 );
 
+// ========== v0.7.0 New API ==========
+
+// Color correction
+typedef CGhitaEngineApplyColorCorrection = Void Function(
+  Pointer<GhitaEngineContext> ctx, Int32 clipId,
+  Float exposure, Float contrast, Float highlights, Float shadows,
+  Float temperature, Float tint, Float vibrance, Float saturation
+);
+typedef DartGhitaEngineApplyColorCorrection = void Function(
+  Pointer<GhitaEngineContext> ctx, int clipId,
+  double exposure, double contrast, double highlights, double shadows,
+  double temperature, double tint, double vibrance, double saturation
+);
+
+// Keyframe bezier
+typedef CGhitaEngineSetKeyframeBezier = Int32 Function(
+  Pointer<GhitaEngineContext> ctx, Int32 clipId, Int32 keyframeIndex,
+  Float cp1x, Float cp1y, Float cp2x, Float cp2y
+);
+typedef DartGhitaEngineSetKeyframeBezier = int Function(
+  Pointer<GhitaEngineContext> ctx, int clipId, int keyframeIndex,
+  double cp1x, double cp1y, double cp2x, double cp2y
+);
+
+// PIP rendering
+typedef CGhitaEngineRenderPip = Bool Function(
+  Pointer<GhitaEngineContext> ctx, Int32 overlayClipId,
+  Float x, Float y, Float width, Float height, Float rotation
+);
+typedef DartGhitaEngineRenderPip = bool Function(
+  Pointer<GhitaEngineContext> ctx, int overlayClipId,
+  double x, double y, double width, double height, double rotation
+);
+
+// Thumbnail extraction
+typedef CGhitaEngineGetThumbnail = Pointer<Uint8> Function(
+  Pointer<GhitaEngineContext> ctx, Int32 clipId, Int32 timeMs, Int32 width, Int32 height
+);
+typedef DartGhitaEngineGetThumbnail = Pointer<Uint8> Function(
+  Pointer<GhitaEngineContext> ctx, int clipId, int timeMs, int width, int height
+);
+
+// New filter types (v0.7.0)
+typedef CGhitaEngineSetFilterPreset = Void Function(
+  Pointer<GhitaEngineContext> ctx, Int32 clipId, Int32 filterType, Float intensity
+);
+typedef DartGhitaEngineSetFilterPreset = void Function(
+  Pointer<GhitaEngineContext> ctx, int clipId, int filterType, double intensity
+);
+
+// Audio waveform peaks for timeline
+typedef CGhitaEngineGetAudioWaveformPeaks = Bool Function(
+  Pointer<GhitaEngineContext> ctx, Pointer<Float> outSamples, Int32 sampleCount
+);
+typedef DartGhitaEngineGetAudioWaveformPeaks = bool Function(
+  Pointer<GhitaEngineContext> ctx, Pointer<Float> outSamples, int sampleCount
+);
+
 // ========== Bindings Class ==========
 
 class GhitaNativeBindings {
@@ -233,6 +291,14 @@ class GhitaNativeBindings {
   late DartGhitaEngineSetClipKeyframeInterpolation setClipKeyframeInterpolation;
   late DartGhitaEngineGetClipKeyframeInterpolation getClipKeyframeInterpolation;
   late DartGhitaEngineRenderTextOverlay renderTextOverlay;
+
+  // v0.7.0 New bindings
+  late DartGhitaEngineApplyColorCorrection applyColorCorrection;
+  late DartGhitaEngineSetKeyframeBezier setKeyframeBezier;
+  late DartGhitaEngineRenderPip renderPip;
+  late DartGhitaEngineGetThumbnail getThumbnail;
+  late DartGhitaEngineSetFilterPreset setFilterPreset;
+  late DartGhitaEngineGetAudioWaveformPeaks getAudioWaveformPeaks;
 
   GhitaNativeBindings._internal() {
     _loadLibrary();
@@ -373,5 +439,13 @@ class GhitaNativeBindings {
     setClipKeyframeInterpolation = _lib.lookupFunction<CGhitaEngineSetClipKeyframeInterpolation, DartGhitaEngineSetClipKeyframeInterpolation>('ghita_engine_set_clip_keyframe_interpolation');
     getClipKeyframeInterpolation = _lib.lookupFunction<CGhitaEngineGetClipKeyframeInterpolation, DartGhitaEngineGetClipKeyframeInterpolation>('ghita_engine_get_clip_keyframe_interpolation');
     renderTextOverlay = _lib.lookupFunction<CGhitaEngineRenderTextOverlay, DartGhitaEngineRenderTextOverlay>('ghita_engine_render_text_overlay');
+
+    // v0.7.0 New bindings
+    applyColorCorrection = _lib.lookupFunction<CGhitaEngineApplyColorCorrection, DartGhitaEngineApplyColorCorrection>('ghita_engine_apply_color_correction');
+    setKeyframeBezier = _lib.lookupFunction<CGhitaEngineSetKeyframeBezier, DartGhitaEngineSetKeyframeBezier>('ghita_engine_set_keyframe_bezier');
+    renderPip = _lib.lookupFunction<CGhitaEngineRenderPip, DartGhitaEngineRenderPip>('ghita_engine_render_pip');
+    getThumbnail = _lib.lookupFunction<CGhitaEngineGetThumbnail, DartGhitaEngineGetThumbnail>('ghita_engine_get_thumbnail');
+    setFilterPreset = _lib.lookupFunction<CGhitaEngineSetFilterPreset, DartGhitaEngineSetFilterPreset>('ghita_engine_set_filter_preset');
+    getAudioWaveformPeaks = _lib.lookupFunction<CGhitaEngineGetAudioWaveformPeaks, DartGhitaEngineGetAudioWaveformPeaks>('ghita_engine_get_audio_waveform_peaks');
   }
 }

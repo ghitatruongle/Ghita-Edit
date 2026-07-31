@@ -454,6 +454,81 @@ class EngineService {
     }
   }
 
+  // v0.7.0: Color correction
+  void applyColorCorrection(int clipId, {
+    double exposure = 0.0,
+    double contrast = 1.0,
+    double highlights = 0.0,
+    double shadows = 0.0,
+    double temperature = 0.0,
+    double tint = 0.0,
+    double vibrance = 1.0,
+    double saturation = 1.0,
+  }) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return;
+    bindings.applyColorCorrection(
+      _ctx!, clipId,
+      exposure, contrast, highlights, shadows,
+      temperature, tint, vibrance, saturation,
+    );
+  }
+
+  // v0.7.0: Keyframe bezier curves
+  bool setKeyframeBezier(int clipId, int keyframeIndex, double cp1x, double cp1y, double cp2x, double cp2y) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return false;
+    return bindings.setKeyframeBezier(_ctx!, clipId, keyframeIndex, cp1x, cp1y, cp2x, cp2y) == 0;
+  }
+
+  // v0.7.0: PIP rendering
+  bool renderPip(int overlayClipId, double x, double y, double width, double height, double rotation) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return false;
+    return bindings.renderPip(_ctx!, overlayClipId, x, y, width, height, rotation);
+  }
+
+  // v0.7.0: Thumbnail extraction
+  Uint8List? getThumbnail(int clipId, int timeMs, int width, int height) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return null;
+    final ptr = bindings.getThumbnail(_ctx!, clipId, timeMs, width, height);
+    if (ptr == nullptr) return null;
+    // Copy data and return (caller must not free)
+    final size = width * height * 4;
+    final result = Uint8List.fromList(ptr.asTypedList(size));
+    return result;
+  }
+
+  // v0.7.0: Filter preset
+  void setFilterPreset(int clipId, int filterType, double intensity) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return;
+    bindings.setFilterPreset(_ctx!, clipId, filterType, intensity);
+  }
+
+  // v0.7.0: Audio waveform peaks for timeline
+  Float32List getAudioWaveformPeaks(int count) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null || count <= 0) return Float32List(0);
+    final ptr = calloc<Float>(count);
+    try {
+      final ok = bindings.getAudioWaveformPeaks(_ctx!, ptr, count);
+      if (ok) {
+        return Float32List.fromList(ptr.asTypedList(count));
+      }
+      return Float32List(0);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
   bool _tickFrame() {
     if (_disposed || !_isRunning || !isReady || _framePointer == null) return false;
     final bindings = _bindings;
@@ -465,7 +540,8 @@ class EngineService {
       _durationMs = bindings.getDurationMs(_ctx!);
 
       // Create cache key based on position and rendering parameters
-      final cacheKey = '${_positionMs}_${renderWidth}x${renderHeight}';
+      // ignore: unnecessary_brace_in_string_interps
+      final cacheKey = '${_positionMs}_${renderWidth}x$renderHeight';
       
       // Try to get frame from cache first
       final cachedFrame = getCachedFrame(cacheKey);

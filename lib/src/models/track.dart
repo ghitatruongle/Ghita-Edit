@@ -153,10 +153,10 @@ class Track {
   factory Track.fromJson(Map<String, dynamic> json) => Track(
         id: json['id'] as String,
         name: json['name'] as String,
-        type: TrackType.values[json['type'] as int],
-        clips: (json['clips'] as List)
-            .map((c) => Clip.fromJson(c as Map<String, dynamic>))
-            .toList(),
+        type: TrackType.values[(json['type'] as int?)?.clamp(0, TrackType.values.length - 1) ?? 0],
+        clips: (json['clips'] as List<dynamic>?)
+                ?.map((c) => Clip.fromJson(c as Map<String, dynamic>))
+                .toList() ?? [],
         isMuted: json['isMuted'] as bool? ?? false,
         isLocked: json['isLocked'] as bool? ?? false,
         isVisible: json['isVisible'] as bool? ?? true,

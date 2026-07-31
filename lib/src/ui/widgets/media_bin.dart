@@ -1,9 +1,15 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../controllers/editor_controller.dart';
 import '../../controllers/command_history.dart';
 import '../../models/clip.dart';
 import '../theme/app_theme.dart';
+
+// ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+
+// ============================================================
+// MediaBin — v0.7.0 Enhanced with Stickers & Rich Presets
+// ============================================================
 
 class MediaBin extends StatefulWidget {
   final EditorController controller;
@@ -18,13 +24,13 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
   late TabController _tabController;
   String _searchQuery = '';
 
-  // v0.5.5: Track imported media for display in the bin
+  // v0.7.0: Imported media + stickers
   final List<Map<String, dynamic>> _importedMedia = [];
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _syncImportedMedia();
   }
 
@@ -51,7 +57,6 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       }
     }
 
-    // Remove entries for clips that no longer exist
     _importedMedia.removeWhere((m) {
       final id = m['id'] as String;
       return !clips.any((c) => c.id == id);
@@ -65,6 +70,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       case ClipType.image: return 'image';
       case ClipType.text: return 'text';
       case ClipType.overlay: return 'overlay';
+      case ClipType.sticker: return 'sticker';
     }
   }
 
@@ -72,7 +78,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
     final totalSec = ms ~/ 1000;
     final min = totalSec ~/ 60;
     final sec = totalSec % 60;
-    return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+    return '${min.toString().padLeft(2, "0")}:${sec.toString().padLeft(2, "0")}';
   }
 
   List<Map<String, dynamic>> get _filteredMedia {
@@ -101,20 +107,14 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
         setState(() {});
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Imported: ${result.files.single.name}'),
-              duration: const Duration(seconds: 2),
-            ),
+            SnackBar(content: Text('Imported: ${result.files.single.name}'), duration: const Duration(seconds: 2)),
           );
         }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to pick file: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Failed to pick file: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -126,7 +126,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       color: AppTheme.surface,
       child: Column(
         children: [
-          // Navigation Tabs
+          // v0.7.0: Navigation Tabs (5 tabs)
           Container(
             color: AppTheme.card,
             child: TabBar(
@@ -134,49 +134,45 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
               indicatorColor: AppTheme.primaryLight,
               labelColor: AppTheme.primaryLight,
               unselectedLabelColor: AppTheme.textMuted,
-              labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+              labelStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.2),
               tabs: const [
-                Tab(icon: Icon(Icons.folder, size: 18), text: 'Media'),
-                Tab(icon: Icon(Icons.audiotrack, size: 18), text: 'Audio'),
-                Tab(icon: Icon(Icons.auto_fix_high, size: 18), text: 'Effects'),
-                Tab(icon: Icon(Icons.title, size: 18), text: 'Text'),
+                Tab(icon: Icon(Icons.folder_rounded, size: 16), text: 'Media'),
+                Tab(icon: Icon(Icons.music_note_rounded, size: 16), text: 'Audio'),
+                Tab(icon: Icon(Icons.emoji_emotions_rounded, size: 16), text: 'Stickers'),
+                Tab(icon: Icon(Icons.auto_fix_high_rounded, size: 16), text: 'Effects'),
+                Tab(icon: Icon(Icons.title_rounded, size: 16), text: 'Text'),
               ],
             ),
           ),
 
-          // Search & Import Bar
+          // Search & Import
           Padding(
-            padding: const EdgeInsets.all(8.0),
+            padding: const EdgeInsets.all(8),
             child: Column(
               children: [
                 TextField(
                   decoration: InputDecoration(
-                    hintText: 'Search media...',
+                    hintText: 'Search...',
                     hintStyle: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
-                    prefixIcon: const Icon(Icons.search, color: AppTheme.textMuted, size: 16),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
-                    ),
+                    prefixIcon: const Icon(Icons.search_rounded, color: AppTheme.textMuted, size: 16),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm), borderSide: BorderSide.none),
                     fillColor: AppTheme.background,
                     filled: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
                   ),
                   style: const TextStyle(color: AppTheme.textMain, fontSize: 12),
                   onChanged: (val) => setState(() => _searchQuery = val),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primary,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm + 2)),
                   ),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Import File', style: TextStyle(fontSize: 12)),
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text('Import', style: TextStyle(fontSize: 11)),
                   onPressed: _openFilePicker,
                 ),
               ],
@@ -188,17 +184,11 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
             child: TabBarView(
               controller: _tabController,
               children: [
-                // Media Grid — v0.5.5: real imported clips with drag support
                 _buildMediaGrid(),
-
-                // Audio presets
                 _buildAudioPresets(),
-
-                // Effects / Filters
+                _buildStickersGrid(),
                 _buildEffectsList(),
-
-                // Text Presets — v0.5.5
-                _buildTextPresets(),
+                _buildTextPresetsEnhanced(),
               ],
             ),
           ),
@@ -207,55 +197,42 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
     );
   }
 
-  // ========== Media Grid ==========
+  // ============================================================
+  // Media Grid Tab
+  // ============================================================
 
   Widget _buildMediaGrid() {
     final mediaItems = _filteredMedia.where((m) => ['video', 'image', 'overlay'].contains(m['type'])).toList();
 
     if (mediaItems.isEmpty) {
       return const Center(
-        child: Text('No media imported yet.\nClick "Import File" to add media.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: AppTheme.textMuted, fontSize: 12)),
+        child: Text('No media imported.\nClick "Import" to add media.', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
       );
     }
 
     return GridView.builder(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(6),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-        childAspectRatio: 1.2,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
+        childAspectRatio: 1.1,
       ),
       itemCount: mediaItems.length,
-          itemBuilder: (context, index) {
-            final item = mediaItems[index];
-            // v0.5.5: clip metadata available for future thumbnail display
-            // final clip = item['clip'] as Clip?;
+      itemBuilder: (context, index) {
+        final item = mediaItems[index];
         return LongPressDraggable<Map<String, dynamic>>(
           data: item,
-          feedback: Material(
-            color: Colors.transparent,
-            child: _MediaTile(
-              name: item['name'] as String,
-              duration: item['duration'] as String,
-              type: item['type'] as String,
-              isDragging: true,
-            ),
-          ),
-          child: _MediaTile(
-            name: item['name'] as String,
-            duration: item['duration'] as String,
-            type: item['type'] as String,
-            isDragging: false,
-          ),
+          feedback: Material(color: Colors.transparent, child: _MediaTile(name: item['name'] as String, duration: item['duration'] as String, type: item['type'] as String, isDragging: true)),
+          child: _MediaTile(name: item['name'] as String, duration: item['duration'] as String, type: item['type'] as String, isDragging: false),
         );
       },
     );
   }
 
-  // ========== Audio Presets ==========
+  // ============================================================
+  // Audio Presets Tab
+  // ============================================================
 
   Widget _buildAudioPresets() {
     final audioItems = _filteredMedia.where((m) => m['type'] == 'audio').toList();
@@ -264,23 +241,78 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       padding: const EdgeInsets.all(8),
       children: [
         if (audioItems.isNotEmpty) ...[
-          const Text('Imported Audio', style: TextStyle(color: AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.bold)),
+          const Text('Imported Audio', style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.3)),
           const SizedBox(height: 4),
-          ...audioItems.map((item) => _buildPresetTile(item['name'] as String, 'Audio', Icons.music_note, () {
+          ...audioItems.map((item) => _presetTile(item['name'] as String, 'Audio', Icons.music_note_rounded, () {
             widget.controller.importMedia(item['path'] as String);
           })),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
         ],
-        const Text('Audio FX Presets', style: TextStyle(color: AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.bold)),
+        const Text('Audio FX Presets', style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.3)),
         const SizedBox(height: 4),
-        _buildPresetTile('Cinematic Bass Drop', 'Audio FX', Icons.multitrack_audio, () {}),
-        _buildPresetTile('Pop Background Beat', 'Music', Icons.music_note, () {}),
-        _buildPresetTile('Vlog Acoustic Guitar', 'Music', Icons.audiotrack, () {}),
+        _presetTile('Cinematic Bass Drop', 'Audio FX', Icons.multitrack_audio_rounded, () {}),
+        _presetTile('Pop Background Beat', 'Music', Icons.music_note_rounded, () {}),
+        _presetTile('Vlog Acoustic Guitar', 'Music', Icons.audiotrack_rounded, () {}),
       ],
     );
   }
 
-  // ========== Effects List ==========
+  // ============================================================
+  // Stickers Grid Tab (v0.7.0)
+  // ============================================================
+
+  Widget _buildStickersGrid() {
+    final stickers = _stickerData;
+    return GridView.builder(
+      padding: const EdgeInsets.all(6),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+        childAspectRatio: 1.0,
+      ),
+      itemCount: stickers.length,
+      itemBuilder: (context, index) {
+        final sticker = stickers[index];
+        return _StickerTile(
+          emoji: sticker['emoji'] as String,
+          label: sticker['label'] as String,
+          onTap: () => _addStickerClip(sticker['emoji'] as String, sticker['label'] as String),
+        );
+      },
+    );
+  }
+
+  void _addStickerClip(String emoji, String label) {
+    final ctrl = widget.controller;
+    final clip = Clip(
+      id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
+      sourceFilePath: '',
+      displayName: label,
+      timelineStartMs: ctrl.positionMs,
+      durationMs: 3000,
+      type: ClipType.sticker,
+      textContent: emoji,
+      textFontSize: 64.0,
+      stickerScale: 1.0,
+    );
+    final cmd = AddClipCommand(
+      trackId: 'track_overlay_1',
+      clip: clip,
+      positionMs: ctrl.positionMs,
+    );
+    ctrl.commandHistory.execute(cmd, ctrl.project);
+    ctrl.notifyListeners();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added $label sticker'), duration: const Duration(seconds: 2)),
+      );
+    }
+  }
+
+  // ============================================================
+  // Effects List Tab
+  // ============================================================
 
   Widget _buildEffectsList() {
     final engineFilters = widget.controller.engineService.availableFilters;
@@ -288,7 +320,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
     return ListView(
       padding: const EdgeInsets.all(8),
       children: [
-        const Text('Filters', style: TextStyle(color: AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.bold)),
+        const Text('Filters', style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.3)),
         const SizedBox(height: 4),
         if (engineFilters.isNotEmpty)
           ...engineFilters.map((f) {
@@ -298,59 +330,92 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
             return _buildFilterTile(name, id, isActive, widget.controller);
           })
         else
-          ListView(
-            padding: const EdgeInsets.all(8),
-            children: [
-              _buildFilterTileStatic('Original (No Filter)', 0, false),
-              _buildFilterTileStatic('Grayscale Filter', 1, false),
-              _buildFilterTileStatic('Warm Sepia Tone', 2, false),
-              _buildFilterTileStatic('Negative / Invert', 3, false),
-              _buildFilterTileStatic('Brightness Boost', 4, false),
-              _buildFilterTileStatic('Gaussian Blur', 5, false),
-              _buildFilterTileStatic('Edge Detect (Sobel)', 6, false),
-              _buildFilterTileStatic('Color Grading', 7, false),
-              _buildFilterTileStatic('Adjust (BCSH)', 8, false),
-              _buildFilterTileStatic('Pixelate', 9, false),
-              _buildFilterTileStatic('Mosaic', 10, false),
-            ],
-          ),
+          ..._defaultFilterTiles(),
       ],
     );
   }
 
-  // ========== Text Presets — v0.5.5 ==========
+  List<Widget> _defaultFilterTiles() {
+    return [
+      _filterTileStatic('Original (No Filter)', 0),
+      _filterTileStatic('Grayscale', 1),
+      _filterTileStatic('Sepia Tone', 2),
+      _filterTileStatic('Negative / Invert', 3),
+      _filterTileStatic('Brightness Boost', 4),
+      _filterTileStatic('Gaussian Blur', 5),
+      _filterTileStatic('Edge Detect (Sobel)', 6),
+      _filterTileStatic('Color Grading', 7),
+      _filterTileStatic('BCSH Adjust', 8),
+      _filterTileStatic('Pixelate', 9),
+      _filterTileStatic('Mosaic', 10),
+      // v0.7.0: New filters placeholder
+      _filterTileStatic('VHS Effect', 11),
+      _filterTileStatic('Glitch', 12),
+      _filterTileStatic('Chromatic Aberration', 13),
+      _filterTileStatic('Vignette', 14),
+      _filterTileStatic('Film Grain', 15),
+      _filterTileStatic('Light Leak', 16),
+      _filterTileStatic('Sharpen', 17),
+      _filterTileStatic('Posterize', 18),
+      _filterTileStatic('Duotone', 19),
+      _filterTileStatic('Background Blur', 20),
+    ];
+  }
 
-  Widget _buildTextPresets() {
+  // ============================================================
+  // Text Presets Enhanced Tab (v0.7.0)
+  // ============================================================
+
+  Widget _buildTextPresetsEnhanced() {
+    final textPresets = [
+      {'name': 'Title Banner', 'subtitle': 'Text Overlay', 'icon': Icons.title_rounded, 'preset': _TitleBannerPreset()},
+      {'name': 'Subtitle', 'subtitle': 'Text Overlay', 'icon': Icons.subtitles_rounded, 'preset': _SubtitlePreset()},
+      {'name': 'Lower Third', 'subtitle': 'Graphics', 'icon': Icons.featured_play_list_rounded, 'preset': _LowerThirdPreset()},
+      {'name': 'Watermark', 'subtitle': 'Text Overlay', 'icon': Icons.water_damage_rounded, 'preset': _WatermarkPreset()},
+      // v0.7.0: New text presets
+      {'name': 'Callout', 'subtitle': 'Text Overlay', 'icon': Icons.chat_bubble_rounded, 'preset': _CalloutPreset()},
+      {'name': 'Neon Glow', 'subtitle': 'Text Overlay', 'icon': Icons.auto_awesome_rounded, 'preset': _NeonGlowPreset()},
+      {'name': 'Pop-up', 'subtitle': 'Text Overlay', 'icon': Icons.chat_bubble_rounded, 'preset': _PopupPreset()},
+      {'name': 'Cinematic', 'subtitle': 'Text Overlay', 'icon': Icons.movie_rounded, 'preset': _CinematicPreset()},
+      {'name': 'Handwriting', 'subtitle': 'Text Overlay', 'icon': Icons.edit_rounded, 'preset': _HandwritingPreset()},
+    ];
+
     return ListView(
       padding: const EdgeInsets.all(8),
       children: [
-        const Text('Text Overlay Presets', style: TextStyle(color: AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.bold)),
+        const Text('Text Presets', style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.3)),
         const SizedBox(height: 4),
-        _buildPresetTile('Title Banner', 'Text Overlay', Icons.title, () {
-          _addTextClip('Title Banner');
-        }),
-        _buildPresetTile('Subtitle', 'Text Overlay', Icons.subtitles, () {
-          _addTextClip('Subtitle');
-        }),
-        _buildPresetTile('Lower Third', 'Graphics', Icons.featured_play_list, () {
-          _addTextClip('Lower Third');
-        }),
-        _buildPresetTile('Watermark', 'Text Overlay', Icons.water_damage, () {
-          _addTextClip('Watermark');
+        ...textPresets.map((preset) {
+          return _presetTile(preset['name'] as String, preset['subtitle'] as String, preset['icon'] as IconData, () {
+            _addTextClipWithPreset(preset['name'] as String, preset['preset'] as _TextPreset);
+          });
         }),
       ],
     );
   }
 
-  void _addTextClip(String presetName) {
+  void _addTextClipWithPreset(String presetName, _TextPreset preset) {
     final ctrl = widget.controller;
     final clip = Clip(
       id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
       sourceFilePath: '',
       displayName: presetName,
       timelineStartMs: ctrl.positionMs,
-      durationMs: 3000,
+      durationMs: preset.durationMs,
       type: ClipType.text,
+      textContent: preset.text,
+      textFont: preset.font,
+      textFontSize: preset.fontSize,
+      textColorValue: preset.color.toARGB32(),
+      textBold: preset.bold,
+      textItalic: preset.italic,
+      textUnderline: preset.underline,
+      textStrokeWidth: preset.strokeWidth,
+      textStrokeColorValue: preset.strokeColor.toARGB32(),
+      textShadow: preset.shadow,
+      textBackgroundColorValue: preset.backgroundColor.toARGB32(),
+      textAlignment: preset.alignment,
+      textGradient: preset.gradient,
     );
     final cmd = AddClipCommand(
       trackId: 'track_overlay_1',
@@ -358,30 +423,28 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       positionMs: ctrl.positionMs,
     );
     ctrl.commandHistory.execute(cmd, ctrl.project);
-    // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
     ctrl.notifyListeners();
-
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Added $presetName to overlay track'),
-          duration: const Duration(seconds: 2),
-        ),
+        SnackBar(content: Text('Added $presetName'), duration: const Duration(seconds: 2)),
       );
     }
   }
 
-  // ========== Shared Tile Builders ==========
+  // ============================================================
+  // Shared Tile Builders
+  // ============================================================
 
-  Widget _buildPresetTile(String title, String subtitle, IconData icon, VoidCallback onTap) {
+  Widget _presetTile(String title, String subtitle, IconData icon, VoidCallback onTap) {
     return Card(
       color: AppTheme.card,
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm), side: const BorderSide(color: AppTheme.divider, width: 0.5)),
       child: ListTile(
-        leading: Icon(icon, color: AppTheme.primaryLight),
+        leading: Icon(icon, color: AppTheme.primaryLight, size: 18),
         title: Text(title, style: const TextStyle(color: AppTheme.textMain, fontSize: 12)),
         subtitle: Text(subtitle, style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
-        trailing: const Icon(Icons.add_circle_outline, color: AppTheme.accent, size: 20),
+        trailing: const Icon(Icons.add_circle_outline_rounded, color: AppTheme.accent, size: 20),
         onTap: onTap,
       ),
     );
@@ -389,40 +452,41 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
 
   Widget _buildFilterTile(String name, int type, bool isActive, EditorController ctrl) {
     return Card(
-      color: isActive ? AppTheme.primary.withValues(alpha: 0.3) : AppTheme.card,
-      margin: const EdgeInsets.only(bottom: 8),
+      color: isActive ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.card,
+      margin: const EdgeInsets.only(bottom: 6),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: isActive ? AppTheme.accent : AppTheme.divider),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+        side: BorderSide(color: isActive ? AppTheme.primaryLight : AppTheme.divider, width: isActive ? 1.2 : 0.5),
       ),
       child: ListTile(
-        leading: Icon(Icons.color_lens, color: isActive ? AppTheme.accent : AppTheme.textMuted),
-        title: Text(name, style: const TextStyle(color: AppTheme.textMain, fontSize: 12)),
+        leading: Icon(Icons.color_lens_rounded, color: isActive ? AppTheme.primaryLight : AppTheme.textMuted, size: 16),
+        title: Text(name, style: const TextStyle(color: AppTheme.textMain, fontSize: 11)),
         trailing: isActive
-            ? const Icon(Icons.check_circle, color: AppTheme.accent, size: 20)
-            : const Icon(Icons.play_arrow, color: AppTheme.textMuted, size: 18),
+            ? const Icon(Icons.check_circle_rounded, color: AppTheme.primaryLight, size: 18)
+            : const Icon(Icons.play_arrow_rounded, color: AppTheme.textMuted, size: 16),
         onTap: () => ctrl.setFilter(type, 1.0),
       ),
     );
   }
 
-  Widget _buildFilterTileStatic(String name, int type, bool isActive) {
+  Widget _filterTileStatic(String name, int type) {
     return Card(
       color: AppTheme.card,
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm), side: const BorderSide(color: AppTheme.divider, width: 0.5)),
       child: ListTile(
-        leading: Icon(Icons.color_lens, color: AppTheme.textMuted),
-        title: Text(name, style: const TextStyle(color: AppTheme.textMain, fontSize: 12)),
-        trailing: const Icon(Icons.play_arrow, color: AppTheme.textMuted, size: 18),
-        onTap: () {
-          debugPrint('Filter $type selected (needs clip selected)');
-        },
+        leading: Icon(Icons.color_lens_rounded, color: AppTheme.textMuted, size: 16),
+        title: Text(name, style: const TextStyle(color: AppTheme.textMain, fontSize: 11)),
+        trailing: const Icon(Icons.play_arrow_rounded, color: AppTheme.textMuted, size: 16),
+        onTap: () {},
       ),
     );
   }
 }
 
-// ========== Media Tile Widget — v0.5.5 ==========
+// ============================================================
+// Media Tile Widget
+// ============================================================
 
 class _MediaTile extends StatelessWidget {
   final String name;
@@ -430,55 +494,272 @@ class _MediaTile extends StatelessWidget {
   final String type;
   final bool isDragging;
 
-  const _MediaTile({
-    required this.name,
-    required this.duration,
-    required this.type,
-    this.isDragging = false,
-  });
+  const _MediaTile({required this.name, required this.duration, required this.type, this.isDragging = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: isDragging ? AppTheme.primary.withValues(alpha: 0.3) : AppTheme.card,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: isDragging ? AppTheme.accent : AppTheme.divider),
+        color: isDragging ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.card,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: isDragging ? AppTheme.primaryLight : AppTheme.divider, width: isDragging ? 1.2 : 0.5),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            type == 'video'
-                ? Icons.movie
-                : type == 'audio'
-                    ? Icons.music_note
-                    : type == 'text'
-                        ? Icons.title
-                        : Icons.image,
+            type == 'video' ? Icons.movie_rounded : type == 'audio' ? Icons.music_note_rounded : type == 'text' ? Icons.title_rounded : Icons.image_rounded,
             color: AppTheme.accent,
-            size: 32,
+            size: 28,
           ),
           const SizedBox(height: 6),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4.0),
-            child: Text(
-              name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTheme.textMain,
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMain, fontSize: 10, fontWeight: FontWeight.w500)),
           ),
-          Text(
-            duration,
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
-          ),
+          Text(duration, style: const TextStyle(color: AppTheme.textMuted, fontSize: 9)),
         ],
       ),
     );
   }
 }
+
+// ============================================================
+// Sticker Tile Widget (v0.7.0)
+// ============================================================
+
+class _StickerTile extends StatelessWidget {
+  final String emoji;
+  final String label;
+  final VoidCallback onTap;
+
+  const _StickerTile({required this.emoji, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppTheme.card,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          border: Border.all(color: AppTheme.divider, width: 0.5),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 28)),
+            const SizedBox(height: 4),
+            Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 8), textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// Text Preset Definitions (v0.7.0)
+// ============================================================
+
+abstract class _TextPreset {
+  String get text;
+  String get font;
+  double get fontSize;
+  Color get color;
+  bool get bold;
+  bool get italic;
+  bool get underline;
+  double get strokeWidth;
+  Color get strokeColor;
+  bool get shadow;
+  Color get backgroundColor;
+  int get alignment;
+  bool get gradient;
+  int get durationMs;
+}
+
+class _TitleBannerPreset extends _TextPreset {
+  @override String get text => 'YOUR TITLE';
+  @override String get font => 'Impact';
+  @override double get fontSize => 72.0;
+  @override Color get color => Colors.white;
+  @override bool get bold => true;
+  @override bool get italic => false;
+  @override bool get underline => false;
+  @override double get strokeWidth => 4.0;
+  @override Color get strokeColor => Colors.black;
+  @override bool get shadow => true;
+  @override Color get backgroundColor => Color(0x00000000);
+  @override int get alignment => 1;
+  @override bool get gradient => false;
+  @override int get durationMs => 5000;
+}
+
+class _SubtitlePreset extends _TextPreset {
+  @override String get text => 'Subtitle text here';
+  @override String get font => 'Segoe UI';
+  @override double get fontSize => 36.0;
+  @override Color get color => Colors.white;
+  @override bool get bold => false;
+  @override bool get italic => false;
+  @override bool get underline => false;
+  @override double get strokeWidth => 2.0;
+  @override Color get strokeColor => Colors.black;
+  @override bool get shadow => true;
+  @override Color get backgroundColor => Color(0x80000000);
+  @override int get alignment => 1;
+  @override bool get gradient => false;
+  @override int get durationMs => 4000;
+}
+
+class _LowerThirdPreset extends _TextPreset {
+  @override String get text => 'YOUR NAME';
+  @override String get font => 'Arial';
+  @override double get fontSize => 40.0;
+  @override Color get color => Colors.white;
+  @override bool get bold => true;
+  @override bool get italic => false;
+  @override bool get underline => false;
+  @override double get strokeWidth => 1.0;
+  @override Color get strokeColor => Color(0xFF7C4DFF);
+  @override bool get shadow => false;
+  @override Color get backgroundColor => Color(0xFF7C4DFF);
+  @override int get alignment => 0;
+  @override bool get gradient => true;
+  @override int get durationMs => 5000;
+}
+
+class _WatermarkPreset extends _TextPreset {
+  @override String get text => 'GHITA EDIT';
+  @override String get font => 'Verdana';
+  @override double get fontSize => 24.0;
+  @override Color get color => Colors.white;
+  @override bool get bold => false;
+  @override bool get italic => false;
+  @override bool get underline => false;
+  @override double get strokeWidth => 0.0;
+  @override Color get strokeColor => Colors.black;
+  @override bool get shadow => true;
+  @override Color get backgroundColor => Color(0x00000000);
+  @override int get alignment => 2;
+  @override bool get gradient => false;
+  @override int get durationMs => 10000;
+}
+
+// v0.7.0: New text presets
+class _CalloutPreset extends _TextPreset {
+  @override String get text => 'Tap here!';
+  @override String get font => 'Segoe UI';
+  @override double get fontSize => 42.0;
+  @override Color get color => Colors.white;
+  @override bool get bold => true;
+  @override bool get italic => false;
+  @override bool get underline => false;
+  @override double get strokeWidth => 3.0;
+  @override Color get strokeColor => Colors.red;
+  @override bool get shadow => true;
+  @override Color get backgroundColor => Color(0xFFE53935);
+  @override int get alignment => 1;
+  @override bool get gradient => false;
+  @override int get durationMs => 3000;
+}
+
+class _NeonGlowPreset extends _TextPreset {
+  @override String get text => 'NEON';
+  @override String get font => 'Impact';
+  @override double get fontSize => 80.0;
+  @override Color get color => Color(0xFFFF00FF);
+  @override bool get bold => true;
+  @override bool get italic => false;
+  @override bool get underline => false;
+  @override double get strokeWidth => 0.0;
+  @override Color get strokeColor => Colors.black;
+  @override bool get shadow => true;
+  @override Color get backgroundColor => Color(0x00000000);
+  @override int get alignment => 1;
+  @override bool get gradient => true;
+  @override int get durationMs => 4000;
+}
+
+class _PopupPreset extends _TextPreset {
+  @override String get text => 'Pop-up!';
+  @override String get font => 'Comic Sans MS';
+  @override double get fontSize => 48.0;
+  @override Color get color => Colors.yellow;
+  @override bool get bold => true;
+  @override bool get italic => false;
+  @override bool get underline => false;
+  @override double get strokeWidth => 2.0;
+  @override Color get strokeColor => Colors.black;
+  @override bool get shadow => true;
+  @override Color get backgroundColor => Color(0x00000000);
+  @override int get alignment => 1;
+  @override bool get gradient => false;
+  @override int get durationMs => 2000;
+}
+
+class _CinematicPreset extends _TextPreset {
+  @override String get text => 'CINEMATIC';
+  @override String get font => 'Georgia';
+  @override double get fontSize => 60.0;
+  @override Color get color => Color(0xFFE0E0E0);
+  @override bool get bold => false;
+  @override bool get italic => true;
+  @override bool get underline => false;
+  @override double get strokeWidth => 1.0;
+  @override Color get strokeColor => Color(0xFF424242);
+  @override bool get shadow => true;
+  @override Color get backgroundColor => Color(0x00000000);
+  @override int get alignment => 1;
+  @override bool get gradient => false;
+  @override int get durationMs => 5000;
+}
+
+class _HandwritingPreset extends _TextPreset {
+  @override String get text => 'My Note';
+  @override String get font => 'Trebuchet MS';
+  @override double get fontSize => 44.0;
+  @override Color get color => Color(0xFF2E7D32);
+  @override bool get bold => false;
+  @override bool get italic => true;
+  @override bool get underline => true;
+  @override double get strokeWidth => 0.0;
+  @override Color get strokeColor => Colors.black;
+  @override bool get shadow => false;
+  @override Color get backgroundColor => Color(0x00000000);
+  @override int get alignment => 0;
+  @override bool get gradient => false;
+  @override int get durationMs => 4000;
+}
+
+// ============================================================
+// Sticker Data (v0.7.0 — 24 curated emoji/stickers)
+// ============================================================
+
+const _stickerData = [
+  {'emoji': '👍', 'label': 'Like'},
+  {'emoji': '❤️', 'label': 'Heart'},
+  {'emoji': '🔥', 'label': 'Fire'},
+  {'emoji': '⭐', 'label': 'Star'},
+  {'emoji': '🎉', 'label': 'Party'},
+  {'emoji': '😂', 'label': 'LOL'},
+  {'emoji': '😮', 'label': 'Wow'},
+  {'emoji': '👏', 'label': 'Clap'},
+  {'emoji': '💯', 'label': '100'},
+  {'emoji': '✨', 'label': 'Sparkle'},
+  {'emoji': '👆', 'label': 'Up'},
+  {'emoji': '👇', 'label': 'Down'},
+  {'emoji': '✅', 'label': 'Check'},
+  {'emoji': '❌', 'label': 'Cross'},
+  {'emoji': '💬', 'label': 'Comment'},
+  {'emoji': '📌', 'label': 'Pin'},
+  {'emoji': '🎯', 'label': 'Target'},
+  {'emoji': '🏆', 'label': 'Trophy'},
+  {'emoji': '🚀', 'label': 'Rocket'},
+  {'emoji': '💡', 'label': 'Idea'},
+  {'emoji': '🎵', 'label': 'Music'},
+  {'emoji': '📸', 'label': 'Camera'},
+  {'emoji': '💬', 'label': 'Chat'},
+  {'emoji': '🔔', 'label': 'Bell'},
+];

@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import '../../controllers/editor_controller.dart';
@@ -7,9 +8,13 @@ import '../../models/clip.dart' as models;
 import '../../models/track.dart';
 import '../theme/app_theme.dart';
 
-// ========== Snap Engine ==========
+// ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
 
-enum SnapMode { off, oneSecond, halfSecond }
+// ============================================================
+// Snap Engine — v0.5.5 (unchanged)
+// ============================================================
+
+enum SnapMode { off, halfSecond, oneSecond }
 
 class SnapEngine {
   SnapMode mode;
@@ -17,26 +22,21 @@ class SnapEngine {
 
   SnapEngine({this.mode = SnapMode.off, this.snapThresholdPx = 8.0});
 
-  /// Returns the snapped time in ms, or null if no snap point is within threshold.
   int? snap(int timeMs, double pxPerSec) {
     if (mode == SnapMode.off || pxPerSec <= 0) return null;
-
     final gridSec = mode == SnapMode.oneSecond ? 1.0 : 0.5;
     final gridMs = (gridSec * 1000).toInt();
     final remainder = timeMs % gridMs;
     if (remainder == 0) return timeMs;
-
     final distToPrev = remainder;
     final distToNext = gridMs - remainder;
     final prevPx = (distToPrev / 1000.0) * pxPerSec;
     final nextPx = (distToNext / 1000.0) * pxPerSec;
-
     if (prevPx <= snapThresholdPx) return timeMs - distToPrev;
     if (nextPx <= snapThresholdPx) return timeMs + distToNext;
     return null;
   }
 
-  /// Snap clip edges to nearby clip edges on any track (magnetic snapping).
   int? snapToClipEdges(int timeMs, double pxPerSec, List<Track> tracks, String excludeTrackId, String excludeClipId) {
     if (mode == SnapMode.off || pxPerSec <= 0) return null;
     final thresholdPx = snapThresholdPx * 1.5;
@@ -67,7 +67,9 @@ class SnapEngine {
   }
 }
 
-// ========== Timeline Panel ==========
+// ============================================================
+// Timeline Panel — v0.7.0 Enhanced
+// ============================================================
 
 class TimelinePanel extends StatefulWidget {
   final EditorController controller;
@@ -97,7 +99,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
   Offset? _marqueeEnd;
   final Set<String> _marqueeSelectedIds = {};
 
-  // Track lane dimensions (computed during build for marquee)
+  // Track dimensions
   double _trackLaneHeight = 0.0;
   final double _rulerHeight = 28.0;
   final double _headerWidth = 120.0;
@@ -105,6 +107,16 @@ class _TimelinePanelState extends State<TimelinePanel> {
   // Snap
   SnapMode _snapMode = SnapMode.off;
   late final SnapEngine _snapEngine;
+
+  // v0.7.0: Ripple edit mode
+  bool _rippleMode = false;
+
+  // v0.7.0: Group clips (for visual grouping)
+  // ignore: unused_field
+  final Map<String, String> _clipGroupMap = {}; // clipId -> groupId
+
+  // v0.7.0: Trim drag state — stores original bounds for single undo entry
+  final Map<String, _TrimOrigin> _trimOrigins = {};
 
   @override
   void initState() {
@@ -128,7 +140,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final timelineWidth = constraints.maxWidth - _headerWidth;
+                final timelineWidth = max(constraints.maxWidth - _headerWidth, _headerWidth);
                 final pxPerSec = (timelineWidth / (totalDurationSec > 0 ? totalDurationSec : 60)) * _zoomScale;
                 final playheadX = currentPosSec * pxPerSec;
                 final numTracks = ctrl.tracks.length;
@@ -141,7 +153,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
                       width: _headerWidth,
                       child: Column(
                         children: [
-                          _buildTrackHeaderLabel('Timecode', Icons.access_time, isRuler: true),
+                          _buildTrackHeaderLabel('Timecode', Icons.access_time_rounded, isRuler: true),
                           ...ctrl.tracks.map((track) => Expanded(
                             child: _buildTrackHeader(track, ctrl),
                           )),
@@ -166,10 +178,10 @@ class _TimelinePanelState extends State<TimelinePanel> {
                           final newSec = (details.localPosition.dx / pxPerSec).clamp(0.0, totalDurationSec);
                           ctrl.seek((newSec * 1000).toInt());
                         },
-                        onLongPressStart: (_) {
+                        onLongPressStart: (details) {
                           _marqueeActive = true;
-                          _marqueeStart = Offset(0, 0);
-                          _marqueeEnd = Offset(0, 0);
+                          _marqueeStart = details.localPosition;
+                          _marqueeEnd = details.localPosition;
                           _marqueeSelectedIds.clear();
                           ctrl.deselectAll();
                           setState(() {});
@@ -186,7 +198,6 @@ class _TimelinePanelState extends State<TimelinePanel> {
                             _marqueeEnd = null;
                             if (_marqueeSelectedIds.isNotEmpty) {
                               ctrl.project.addToSelection(_marqueeSelectedIds);
-                              // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
                               ctrl.notifyListeners();
                             }
                             _marqueeSelectedIds.clear();
@@ -211,14 +222,14 @@ class _TimelinePanelState extends State<TimelinePanel> {
                                   ),
                                 ),
 
-                                // Track Lanes with real clips
+                                // Track Lanes
                                 ...ctrl.tracks.map((track) => Expanded(
                                   child: _buildTrackLane(track, ctrl, pxPerSec),
                                 )),
                               ],
                             ),
 
-                            // Marquee selection rectangle — v0.5.5
+                            // Marquee selection rectangle
                             if (_marqueeActive && _marqueeStart != null && _marqueeEnd != null)
                               _buildMarqueeRect(),
 
@@ -229,7 +240,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
                               bottom: 0,
                               child: Container(
                                 width: 2,
-                                color: Colors.redAccent,
+                                color: AppTheme.accent,
                                 child: Stack(
                                   clipBehavior: Clip.none,
                                   children: [
@@ -240,8 +251,9 @@ class _TimelinePanelState extends State<TimelinePanel> {
                                         width: 12,
                                         height: 12,
                                         decoration: const BoxDecoration(
-                                          color: Colors.redAccent,
+                                          color: AppTheme.accent,
                                           shape: BoxShape.circle,
+                                          boxShadow: [BoxShadow(color: AppTheme.accent, blurRadius: 6, spreadRadius: -2)],
                                         ),
                                       ),
                                     ),
@@ -249,6 +261,14 @@ class _TimelinePanelState extends State<TimelinePanel> {
                                 ),
                               ),
                             ),
+
+                            // v0.7.0: Mini-map overview bar
+                            if (totalDurationSec > 10)
+                              Positioned(
+                                right: 8,
+                                top: 4,
+                                child: _buildMiniMap(ctrl, pxPerSec),
+                              ),
                           ],
                         ),
                       ),
@@ -263,14 +283,44 @@ class _TimelinePanelState extends State<TimelinePanel> {
     );
   }
 
-  // ========== Marquee Selection ==========
+  // ============================================================
+  // Mini-map Overview (v0.7.0)
+  // ============================================================
+
+  Widget _buildMiniMap(EditorController ctrl, double pxPerSec) {
+    final totalWidth = 120.0;
+    final totalDur = ctrl.durationMs / 1000.0;
+    final scale = totalWidth / (totalDur * pxPerSec);
+
+    return Container(
+      width: totalWidth,
+      height: 8,
+      decoration: BoxDecoration(
+        color: AppTheme.background,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: AppTheme.divider, width: 0.5),
+      ),
+      child: CustomPaint(
+        painter: MiniMapPainter(
+          tracks: ctrl.tracks,
+          totalWidth: totalWidth,
+          scale: scale,
+          playheadSec: ctrl.positionMs / 1000.0,
+          pxPerSec: pxPerSec,
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // Marquee Selection
+  // ============================================================
 
   void _updateMarquee(Offset localPos, double pxPerSec, EditorController ctrl) {
     setState(() {
       _marqueeEnd = localPos;
     });
 
-    // Determine which clips intersect the marquee rectangle
     final left = min(_marqueeStart!.dx, _marqueeEnd!.dx);
     final right = max(_marqueeStart!.dx, _marqueeEnd!.dx);
     final top = min(_marqueeStart!.dy, _marqueeEnd!.dy);
@@ -282,7 +332,6 @@ class _TimelinePanelState extends State<TimelinePanel> {
       final track = ctrl.tracks[trackIdx];
       if (!track.isVisible) continue;
 
-      // Track lane area relative to the canvas (below ruler)
       final laneTop = _rulerHeight + trackIdx * _trackLaneHeight;
       final laneBottom = laneTop + _trackLaneHeight;
 
@@ -316,53 +365,55 @@ class _TimelinePanelState extends State<TimelinePanel> {
       child: Container(
         decoration: BoxDecoration(
           border: Border.all(color: AppTheme.accent, width: 1),
-          color: AppTheme.accent.withValues(alpha: 0.1),
+          color: AppTheme.accent.withValues(alpha: 0.08),
         ),
       ),
     );
   }
 
-  // ========== Toolbar ==========
+  // ============================================================
+  // Toolbar
+  // ============================================================
 
   Widget _buildToolbar(EditorController ctrl, double currentPosSec) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: const BoxDecoration(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
         color: AppTheme.surface,
-        border: Border(bottom: BorderSide(color: AppTheme.divider)),
+        border: const Border(bottom: BorderSide(color: AppTheme.divider)),
       ),
       child: Row(
         children: [
-          _toolButton(Icons.content_cut, 'Split at Playhead (S)', AppTheme.accent, ctrl.splitAtPlayhead),
-          _toolButton(Icons.delete_outline, 'Delete Selected (Del)', Colors.redAccent, ctrl.deleteSelectedClip),
+          _toolButton(Icons.call_split_rounded, 'Split (S)', AppTheme.accent, ctrl.splitAtPlayhead),
+          _toolButton(Icons.delete_outline_rounded, 'Delete (Del)', AppTheme.error, ctrl.deleteSelectedClip),
 
-          const VerticalDivider(color: AppTheme.divider, indent: 8, endIndent: 8),
+          const VerticalDivider(color: AppTheme.divider, indent: 6, endIndent: 6),
 
-          // Zoom controls
+          // Zoom
           IconButton(
-            icon: const Icon(Icons.zoom_out, size: 18, color: AppTheme.textMuted),
+            icon: const Icon(Icons.zoom_out_rounded, size: 16, color: AppTheme.textMuted),
             onPressed: () => setState(() => _zoomScale = (_zoomScale - 0.2).clamp(0.4, 4.0)),
           ),
-          Text(
-            '${(_zoomScale * 100).toInt()}%',
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
-          ),
+          Text('${(_zoomScale * 100).toInt()}%', style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
           IconButton(
-            icon: const Icon(Icons.zoom_in, size: 18, color: AppTheme.textMuted),
+            icon: const Icon(Icons.zoom_in_rounded, size: 16, color: AppTheme.textMuted),
             onPressed: () => setState(() => _zoomScale = (_zoomScale + 0.2).clamp(0.4, 4.0)),
           ),
 
-          const VerticalDivider(color: AppTheme.divider, indent: 8, endIndent: 8),
+          const VerticalDivider(color: AppTheme.divider, indent: 6, endIndent: 6),
 
-          // Snap toggle — v0.5.5: replaces fake "Snap ON"
+          // Snap toggle
           _buildSnapToggle(),
+
+          // v0.7.0: Ripple toggle
+          _buildRippleToggle(),
 
           const Spacer(),
 
           // Status info
           Text(
             '${ctrl.project.allClips.length} clips${ctrl.selectedClipCount > 1 ? ' • ${ctrl.selectedClipCount} selected' : ''} • ${(ctrl.durationMs / 1000).toStringAsFixed(1)}s',
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
           ),
         ],
       ),
@@ -377,17 +428,17 @@ class _TimelinePanelState extends State<TimelinePanel> {
       case SnapMode.off:
         label = 'Snap: Off';
         color = AppTheme.textMuted;
-        icon = Icons.grid_off;
+        icon = Icons.grid_off_rounded;
         break;
       case SnapMode.halfSecond:
         label = 'Snap: 0.5s';
         color = AppTheme.primaryLight;
-        icon = Icons.grid_on;
+        icon = Icons.grid_on_rounded;
         break;
       case SnapMode.oneSecond:
         label = 'Snap: 1s';
         color = AppTheme.accent;
-        icon = Icons.grid_on;
+        icon = Icons.grid_on_rounded;
         break;
     }
 
@@ -399,17 +450,51 @@ class _TimelinePanelState extends State<TimelinePanel> {
         });
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: color.withValues(alpha: 0.4)),
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: 4),
-            Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 3),
+            Text(label, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRippleToggle() {
+    return InkWell(
+      onTap: () {
+        setState(() => _rippleMode = !_rippleMode);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: _rippleMode ? AppTheme.success.withValues(alpha: 0.1) : AppTheme.surfaceVariant,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: _rippleMode ? AppTheme.success : AppTheme.divider, width: 0.5),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              _rippleMode ? Icons.graphic_eq : Icons.waves,
+              size: 13,
+              color: _rippleMode ? AppTheme.success : AppTheme.textMuted,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              'Ripple',
+              style: TextStyle(
+                color: _rippleMode ? AppTheme.success : AppTheme.textMuted,
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       ),
@@ -418,13 +503,16 @@ class _TimelinePanelState extends State<TimelinePanel> {
 
   Widget _toolButton(IconData icon, String tooltip, Color color, VoidCallback onPressed) {
     return IconButton(
-      icon: Icon(icon, size: 18, color: color),
+      icon: Icon(icon, size: 16, color: color),
       tooltip: tooltip,
       onPressed: onPressed,
+      style: IconButton.styleFrom(padding: const EdgeInsets.all(4)),
     );
   }
 
-  // ========== Track Headers ==========
+  // ============================================================
+  // Track Headers
+  // ============================================================
 
   Widget _buildTrackHeader(Track track, EditorController ctrl) {
     return Container(
@@ -438,45 +526,42 @@ class _TimelinePanelState extends State<TimelinePanel> {
       ),
       child: Row(
         children: [
-          Icon(_iconForTrackType(track.type), size: 14, color: AppTheme.textMuted),
-          const SizedBox(width: 4),
+          Icon(_iconForTrackType(track.type), size: 12, color: AppTheme.textMuted),
+          const SizedBox(width: 3),
           Expanded(
             child: Text(
               track.name,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppTheme.textMain, fontSize: 10),
+              style: const TextStyle(color: AppTheme.textMain, fontSize: 9),
             ),
           ),
-          // Visibility toggle — v0.5.5
           GestureDetector(
-            onTap: () => setState(() => track.isVisible = !track.isVisible),
+            onTap: () => ctrl.setTrackVisible(track.id, !track.isVisible),
             child: Icon(
-              track.isVisible ? Icons.visibility : Icons.visibility_off,
-              size: 12,
+              track.isVisible ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+              size: 10,
               color: track.isVisible ? AppTheme.textMuted : AppTheme.textMuted.withValues(alpha: 0.3),
             ),
           ),
-          const SizedBox(width: 2),
-          // Mute toggle
+          const SizedBox(width: 1),
           GestureDetector(
             onTap: () {
               ctrl.setTrackMute(track.id, !track.isMuted);
               setState(() {});
             },
             child: Icon(
-              track.isMuted ? Icons.volume_off : Icons.volume_up,
-              size: 12,
-              color: track.isMuted ? Colors.redAccent : AppTheme.textMuted,
+              track.isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+              size: 10,
+              color: track.isMuted ? AppTheme.error : AppTheme.textMuted,
             ),
           ),
-          const SizedBox(width: 2),
-          // Lock toggle
+          const SizedBox(width: 1),
           GestureDetector(
-            onTap: () => setState(() => track.isLocked = !track.isLocked),
+            onTap: () => ctrl.setTrackLock(track.id, !track.isLocked),
             child: Icon(
-              track.isLocked ? Icons.lock : Icons.lock_open,
-              size: 12,
-              color: track.isLocked ? Colors.amberAccent : AppTheme.textMuted,
+              track.isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
+              size: 10,
+              color: track.isLocked ? AppTheme.warning : AppTheme.textMuted,
             ),
           ),
         ],
@@ -484,7 +569,40 @@ class _TimelinePanelState extends State<TimelinePanel> {
     );
   }
 
-  // ========== Track Lanes ==========
+  Widget _buildTrackHeaderLabel(String title, IconData icon, {bool isRuler = false}) {
+    return Container(
+      height: _rulerHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: isRuler ? AppTheme.surface : AppTheme.card,
+        border: const Border(
+          right: BorderSide(color: AppTheme.divider),
+          bottom: BorderSide(color: AppTheme.divider),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 12, color: isRuler ? AppTheme.accent : AppTheme.textMuted),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              title,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isRuler ? AppTheme.accent : AppTheme.textMain,
+                fontSize: 9,
+                fontWeight: isRuler ? FontWeight.w700 : FontWeight.normal,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // Track Lanes
+  // ============================================================
 
   Widget _buildTrackLane(Track track, EditorController ctrl, double pxPerSec) {
     if (!track.isVisible) {
@@ -494,7 +612,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
           border: Border(bottom: BorderSide(color: AppTheme.divider)),
         ),
         child: const Center(
-          child: Text('Track Hidden', style: TextStyle(color: AppTheme.textMuted, fontSize: 10, fontStyle: FontStyle.italic)),
+          child: Text('Track Hidden', style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontStyle: FontStyle.italic)),
         ),
       );
     }
@@ -504,7 +622,6 @@ class _TimelinePanelState extends State<TimelinePanel> {
     return DragTarget<Map<String, dynamic>>(
       onAcceptWithDetails: (details) {
         final item = details.data;
-        // v0.5.5: Drop media from MediaBin onto timeline track
         final clipData = item['clip'] as models.Clip?;
         if (clipData == null) return;
         final newClip = models.Clip(
@@ -522,28 +639,28 @@ class _TimelinePanelState extends State<TimelinePanel> {
         );
         final cmd = AddClipCommand(trackId: track.id, clip: newClip, positionMs: track.durationMs);
         ctrl.commandHistory.execute(cmd, ctrl.project);
-        // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
         ctrl.notifyListeners();
       },
       builder: (context, candidateData, rejectedData) {
         return Container(
           decoration: BoxDecoration(
-            color: candidateData.isNotEmpty
-                ? laneColor.withValues(alpha: 0.15)
-                : laneColor.withValues(alpha: 0.05),
+            color: candidateData.isNotEmpty ? laneColor.withValues(alpha: 0.1) : laneColor.withValues(alpha: 0.04),
             border: const Border(bottom: BorderSide(color: AppTheme.divider)),
           ),
           child: Stack(
             children: [
+              // v0.7.0: Audio waveform on audio tracks
+              if (track.type == TrackType.audio) _buildAudioWaveform(track, ctrl, pxPerSec),
+
               ...track.clips.map((clip) => _buildClipWidget(clip, track, ctrl, pxPerSec)),
 
-              if (track.clips.isEmpty)
+              if (track.clips.isEmpty && track.type != TrackType.audio)
                 Center(
                   child: Text(
-                    candidateData.isNotEmpty ? 'Drop here' : 'Drop media here or import file',
+                    candidateData.isNotEmpty ? 'Drop here' : 'Drop media here',
                     style: TextStyle(
-                      color: candidateData.isNotEmpty ? AppTheme.accent : AppTheme.textMuted.withValues(alpha: 0.5),
-                      fontSize: 10,
+                      color: candidateData.isNotEmpty ? AppTheme.accent : AppTheme.textMuted.withValues(alpha: 0.4),
+                      fontSize: 9,
                     ),
                   ),
                 ),
@@ -554,7 +671,28 @@ class _TimelinePanelState extends State<TimelinePanel> {
     );
   }
 
-  // ========== Clip Widget ==========
+  // ============================================================
+  // Audio Waveform (v0.7.0)
+  // ============================================================
+
+  Widget _buildAudioWaveform(Track track, EditorController ctrl, double pxPerSec) {
+    final waveform = ctrl.engineService.getAudioWaveform(200);
+    if (waveform.isEmpty) return const SizedBox.shrink();
+
+    return Positioned.fill(
+      child: CustomPaint(
+        painter: WaveformPainter(
+          samples: waveform,
+          color: AppTheme.clipAudio,
+          pxPerSec: pxPerSec,
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // Clip Widget
+  // ============================================================
 
   Widget _buildClipWidget(models.Clip clip, Track track, EditorController ctrl, double pxPerSec) {
     final displayStartMs = _tempClipPositions[clip.id] ?? clip.timelineStartMs;
@@ -563,6 +701,9 @@ class _TimelinePanelState extends State<TimelinePanel> {
     final clipColor = _colorForClipType(clip.type);
     final isMultiSelected = ctrl.selectedClipCount > 1 && ctrl.selectedClips.any((c) => c.id == clip.id);
 
+    // v0.7.0: Group color
+    final groupColor = clip.groupId != null ? AppTheme.success.withValues(alpha: 0.3) : null;
+
     return Positioned(
       left: leftPx,
       width: widthPx.clamp(20, double.infinity),
@@ -570,8 +711,8 @@ class _TimelinePanelState extends State<TimelinePanel> {
       bottom: 3,
       child: Stack(
         children: [
-          // Left trim handle — v0.5.5
-          if (clip.isSelected || isMultiSelected)
+          // Left trim handle
+          if ((clip.isSelected || isMultiSelected) && !track.isLocked)
             Positioned(
               left: 0,
               top: 0,
@@ -581,6 +722,14 @@ class _TimelinePanelState extends State<TimelinePanel> {
                 onDragStart: (_) {
                   _trimmingClipId = clip.id;
                   _trimmingStart = true;
+                  final track = ctrl.project.trackForClip(clip.id);
+                  if (track != null) {
+                    _trimOrigins[clip.id] = _TrimOrigin(
+                      track.id,
+                      clip.timelineStartMs,
+                      clip.durationMs,
+                    );
+                  }
                 },
                 onDragUpdate: (details) {
                   if (_trimmingClipId != clip.id) return;
@@ -590,20 +739,36 @@ class _TimelinePanelState extends State<TimelinePanel> {
                   final snapped = _snapEngine.snap(newStart, pxPerSec) ?? newStart;
                   final snapped2 = _snapEngine.snapToClipEdges(snapped, pxPerSec, ctrl.tracks, track.id, clip.id) ?? snapped;
                   if (snapped2 != clip.timelineStartMs) {
-                    ctrl.trimClipStart(clip.id, snapped2);
+                    // Direct mutation during drag — single undo entry on drag end
+                    clip.timelineStartMs = snapped2;
+                    clip.durationMs = clip.timelineEndMs - snapped2;
                     _tempClipPositions[clip.id] = snapped2;
-                    setState(() {});
+                    ctrl.notifyListeners();
                   }
                 },
                 onDragEnd: (_) {
+                  // Create single undo entry for the entire trim operation
+                  final origin = _trimOrigins.remove(clip.id);
+                  if (origin != null && clip.timelineStartMs != origin.originalStartMs) {
+                    final cmd = TrimClipCommand(
+                      trackId: origin.trackId,
+                      clipId: clip.id,
+                      trimStart: true,
+                      newBoundaryMs: clip.timelineStartMs,
+                    );
+                    // Temporarily swap clip back to original, then execute command
+                    clip.timelineStartMs = origin.originalStartMs;
+                    clip.durationMs = origin.originalDurationMs;
+                    ctrl.commandHistory.execute(cmd, ctrl.project);
+                  }
                   _trimmingClipId = null;
                   _trimmingStart = false;
                 },
               ),
             ),
 
-          // Right trim handle — v0.5.5
-          if (clip.isSelected || isMultiSelected)
+          // Right trim handle
+          if ((clip.isSelected || isMultiSelected) && !track.isLocked)
             Positioned(
               right: 0,
               top: 0,
@@ -613,6 +778,14 @@ class _TimelinePanelState extends State<TimelinePanel> {
                 onDragStart: (_) {
                   _trimmingClipId = clip.id;
                   _trimmingStart = false;
+                  final track = ctrl.project.trackForClip(clip.id);
+                  if (track != null) {
+                    _trimOrigins[clip.id] = _TrimOrigin(
+                      track.id,
+                      clip.timelineStartMs,
+                      clip.durationMs,
+                    );
+                  }
                 },
                 onDragUpdate: (details) {
                   if (_trimmingClipId != clip.id) return;
@@ -622,11 +795,23 @@ class _TimelinePanelState extends State<TimelinePanel> {
                   final snappedEnd = _snapEngine.snap(clip.timelineStartMs + newDuration, pxPerSec)
                     ?? (clip.timelineStartMs + newDuration);
                   if (snappedEnd > clip.timelineStartMs + 100) {
-                    ctrl.trimClipEnd(clip.id, snappedEnd);
-                    setState(() {});
+                    // Direct mutation during drag — single undo entry on drag end
+                    clip.durationMs = snappedEnd - clip.timelineStartMs;
+                    ctrl.notifyListeners();
                   }
                 },
                 onDragEnd: (_) {
+                  final origin = _trimOrigins.remove(clip.id);
+                  if (origin != null && clip.durationMs != origin.originalDurationMs) {
+                    final cmd = TrimClipCommand(
+                      trackId: origin.trackId,
+                      clipId: clip.id,
+                      trimStart: false,
+                      newBoundaryMs: clip.timelineEndMs,
+                    );
+                    clip.durationMs = origin.originalDurationMs;
+                    ctrl.commandHistory.execute(cmd, ctrl.project);
+                  }
                   _trimmingClipId = null;
                   _trimmingStart = false;
                 },
@@ -654,8 +839,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
                 setState(() {});
               },
               onHorizontalDragStart: (_) {
-                if (_trimmingClipId != null) return;
-                // If this clip is NOT in current selection, clear and select only it
+                if (_trimmingClipId != null || track.isLocked || clip.isLocked) return;
                 if (!ctrl.selectedClips.any((c) => c.id == clip.id)) {
                   ctrl.selectClip(clip.id);
                 }
@@ -664,15 +848,19 @@ class _TimelinePanelState extends State<TimelinePanel> {
               },
               onHorizontalDragUpdate: (details) {
                 if (_trimmingClipId != null) return;
-                if (track.isLocked) return;
+                if (track.isLocked || clip.isLocked) return;
                 final deltaMs = (details.delta.dx / pxPerSec * 1000).toInt();
 
                 if (ctrl.selectedClipCount > 1) {
-                  // Move all selected clips by same delta
                   for (final selClip in ctrl.selectedClips) {
                     final currentPos = _tempClipPositions[selClip.id] ?? selClip.timelineStartMs;
                     final newPos = max(0, currentPos + deltaMs);
-                    _tempClipPositions[selClip.id] = newPos;
+                    final snapped = _snapEngine.snap(newPos, pxPerSec) ?? newPos;
+                    final selTrack = ctrl.project.trackForClip(selClip.id);
+                    final snapped2 = selTrack != null
+                        ? (_snapEngine.snapToClipEdges(snapped, pxPerSec, ctrl.tracks, selTrack.id, selClip.id) ?? snapped)
+                        : snapped;
+                    _tempClipPositions[selClip.id] = snapped2;
                   }
                 } else {
                   final newStart = max(0, displayStartMs + deltaMs);
@@ -685,6 +873,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
               onHorizontalDragEnd: (_) {
                 if (_draggingClipId != null && _dragStartMs != null) {
                   if (ctrl.selectedClipCount > 1) {
+                    // Move all selected clips
                     for (final selClip in ctrl.selectedClips) {
                       final currentPos = _tempClipPositions[selClip.id] ?? selClip.timelineStartMs;
                       final selTrack = ctrl.project.trackForClip(selClip.id);
@@ -692,9 +881,30 @@ class _TimelinePanelState extends State<TimelinePanel> {
                         ctrl.moveClipFrom(selTrack.id, selClip.id, selClip.timelineStartMs, currentPos);
                       }
                     }
+                    // Apply ripple once: shift clips after the rightmost edge of the selection
+                    if (_rippleMode) {
+                      final sortedSelected = ctrl.selectedClips.toList()
+                        ..sort((a, b) => a.timelineEndMs.compareTo(b.timelineEndMs));
+                      if (sortedSelected.isNotEmpty) {
+                        final rightmostClip = sortedSelected.last;
+                        final selTrack = ctrl.project.trackForClip(rightmostClip.id);
+                        if (selTrack != null) {
+                          // Compute total delta of the rightmost clip
+                          final rightmostCurrent = _tempClipPositions[rightmostClip.id] ?? rightmostClip.timelineStartMs;
+                          final rightmostDelta = rightmostCurrent - rightmostClip.timelineStartMs;
+                          if (rightmostDelta != 0) {
+                            _applyRipple(selTrack, rightmostClip, rightmostDelta, ctrl);
+                          }
+                        }
+                      }
+                    }
                   } else {
                     final currentPos = _tempClipPositions[clip.id] ?? clip.timelineStartMs;
                     if (currentPos != _dragStartMs) {
+                      if (_rippleMode) {
+                        final delta = currentPos - _dragStartMs!;
+                        _applyRipple(track, clip, delta, ctrl);
+                      }
                       ctrl.moveClipFrom(track.id, clip.id, _dragStartMs!, currentPos);
                     }
                   }
@@ -706,46 +916,54 @@ class _TimelinePanelState extends State<TimelinePanel> {
               },
               child: Container(
                 decoration: BoxDecoration(
-                  color: clip.isSelected ? clipColor.withValues(alpha: 0.9) : clipColor.withValues(alpha: 0.7),
+                  color: clip.isSelected ? clipColor.withValues(alpha: 0.85) : clipColor.withValues(alpha: 0.65),
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(
-                    color: clip.isSelected ? Colors.white : clipColor,
-                    width: clip.isSelected ? 2 : 1,
+                    color: groupColor != null ? AppTheme.success : (clip.isSelected ? Colors.white : clipColor),
+                    width: clip.isSelected ? 1.5 : 0.8,
                   ),
-                  boxShadow: clip.isSelected ? [
-                    BoxShadow(color: clipColor.withValues(alpha: 0.4), blurRadius: 8),
-                  ] : null,
+                  boxShadow: clip.isSelected ? [BoxShadow(color: clipColor.withValues(alpha: 0.3), blurRadius: 6)] : null,
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Row(
+                child: Stack(
                   children: [
-                    Icon(_iconForClipType(clip.type), size: 12, color: Colors.white),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        clip.displayName,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+                    Row(
+                      children: [
+                        Icon(_iconForClipType(clip.type), size: 11, color: Colors.white),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            clip.displayName,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600),
+                          ),
                         ),
-                      ),
+                        if (clip.filterType > 0)
+                          const Icon(Icons.auto_fix_high_rounded, size: 9, color: Colors.amberAccent),
+                        if (clip.isLocked)
+                          const Icon(Icons.lock_rounded, size: 9, color: AppTheme.warning),
+                        if (isMultiSelected)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Text(
+                              '${ctrl.selectedClips.indexOf(clip) + 1}',
+                              style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                      ],
                     ),
-                    if (clip.filterType > 0)
-                      const Icon(Icons.auto_fix_high, size: 10, color: Colors.amberAccent),
-                    // Multi-select index badge — v0.5.5
-                    if (isMultiSelected)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          '${ctrl.selectedClips.indexOf(clip) + 1}',
-                          style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold),
-                        ),
+
+                    // v0.7.0: Keyframe dots on clip
+                    if (clip.isSelected || isMultiSelected)
+                      Positioned(
+                        bottom: 2,
+                        left: 8,
+                        right: 8,
+                        child: _buildKeyframeDots(clip, pxPerSec),
                       ),
                   ],
                 ),
@@ -757,90 +975,111 @@ class _TimelinePanelState extends State<TimelinePanel> {
     );
   }
 
-  // ========== Track Header Label ==========
+  // ============================================================
+  // Keyframe Dots (v0.7.0 visual indicator)
+  // ============================================================
 
-  Widget _buildTrackHeaderLabel(String title, IconData icon, {bool isRuler = false}) {
-    return Container(
-      height: isRuler ? _rulerHeight : double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: isRuler ? AppTheme.surface : AppTheme.card,
-        border: const Border(
-          right: BorderSide(color: AppTheme.divider),
-          bottom: BorderSide(color: AppTheme.divider),
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 14, color: isRuler ? AppTheme.accent : AppTheme.textMuted),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              title,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isRuler ? AppTheme.accent : AppTheme.textMain,
-                fontSize: 11,
-                fontWeight: isRuler ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
+  Widget _buildKeyframeDots(models.Clip clip, double pxPerSec) {
+    // Placeholder: show indicator that keyframes exist for this clip
+    // In full implementation, keyframe data would come from engine/model
+    return Row(
+      children: [
+        Container(
+          width: 5,
+          height: 5,
+          decoration: const BoxDecoration(
+            color: AppTheme.warning,
+            shape: BoxShape.circle,
+            boxShadow: [BoxShadow(color: AppTheme.warning, blurRadius: 3, spreadRadius: -1)],
           ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 3),
+        Text('KF', style: TextStyle(color: AppTheme.warning, fontSize: 7, fontWeight: FontWeight.w700)),
+      ],
     );
   }
 
-  // ========== Helpers ==========
+  // ============================================================
+  // Ripple Edit Helper (v0.7.0)
+  // ============================================================
 
-  IconData _iconForTrackType(TrackType type) {
-    switch (type) {
-      case TrackType.video: return Icons.videocam;
-      case TrackType.overlay: return Icons.subtitles;
-      case TrackType.audio: return Icons.graphic_eq;
+  void _applyRipple(Track track, models.Clip movedClip, int deltaMs, EditorController ctrl) {
+    for (final clip in track.clips) {
+      if (clip.id == movedClip.id) continue;
+      if (clip.timelineStartMs > movedClip.timelineStartMs) {
+        // Shift clip by delta
+        final newStart = clip.timelineStartMs + deltaMs;
+        if (newStart >= 0) {
+          ctrl.moveClipFrom(track.id, clip.id, clip.timelineStartMs, newStart);
+        }
+      }
     }
   }
 
+  // ============================================================
+  // Helpers
+  // ============================================================
+
   Color _colorForTrackType(TrackType type) {
     switch (type) {
-      case TrackType.video: return AppTheme.primary;
-      case TrackType.overlay: return Colors.amber;
-      case TrackType.audio: return AppTheme.accent;
+      case TrackType.video: return AppTheme.clipVideo.withValues(alpha: 0.06);
+      case TrackType.overlay: return AppTheme.clipOverlay.withValues(alpha: 0.06);
+      case TrackType.audio: return AppTheme.clipAudio.withValues(alpha: 0.04);
     }
   }
 
   Color _colorForClipType(models.ClipType type) {
     switch (type) {
-      case models.ClipType.video: return AppTheme.primary;
-      case models.ClipType.audio: return AppTheme.accent;
-      case models.ClipType.image: return Colors.teal;
-      case models.ClipType.text: return Colors.amber;
-      case models.ClipType.overlay: return Colors.orange;
+      case models.ClipType.video: return AppTheme.clipVideo;
+      case models.ClipType.audio: return AppTheme.clipAudio;
+      case models.ClipType.image: return AppTheme.clipImage;
+      case models.ClipType.text: return AppTheme.clipText;
+      case models.ClipType.overlay: return AppTheme.clipOverlay;
+      case models.ClipType.sticker: return AppTheme.clipSticker;
+    }
+  }
+
+  IconData _iconForTrackType(TrackType type) {
+    switch (type) {
+      case TrackType.video: return Icons.videocam_rounded;
+      case TrackType.overlay: return Icons.subtitles_rounded;
+      case TrackType.audio: return Icons.graphic_eq_rounded;
     }
   }
 
   IconData _iconForClipType(models.ClipType type) {
     switch (type) {
-      case models.ClipType.video: return Icons.movie;
-      case models.ClipType.audio: return Icons.music_note;
-      case models.ClipType.image: return Icons.image;
-      case models.ClipType.text: return Icons.title;
-      case models.ClipType.overlay: return Icons.layers;
+      case models.ClipType.video: return Icons.movie_rounded;
+      case models.ClipType.audio: return Icons.music_note_rounded;
+      case models.ClipType.image: return Icons.image_rounded;
+      case models.ClipType.text: return Icons.title_rounded;
+      case models.ClipType.overlay: return Icons.layers_rounded;
+      case models.ClipType.sticker: return Icons.emoji_emotions_rounded;
     }
   }
 }
 
-// ========== Trim Handle Widget — v0.5.5 ==========
+// ============================================================
+// Trim Origin Helper (v0.7.0 — stores pre-drag bounds for single undo entry)
+// ============================================================
+
+class _TrimOrigin {
+  final String trackId;
+  final int originalStartMs;
+  final int originalDurationMs;
+  const _TrimOrigin(this.trackId, this.originalStartMs, this.originalDurationMs);
+}
+
+// ============================================================
+// Trim Handle Widget
+// ============================================================
 
 class _TrimHandle extends StatelessWidget {
   final Function(DragStartDetails) onDragStart;
   final Function(DragUpdateDetails) onDragUpdate;
   final Function(DragEndDetails) onDragEnd;
 
-  const _TrimHandle({
-    required this.onDragStart,
-    required this.onDragUpdate,
-    required this.onDragEnd,
-  });
+  const _TrimHandle({required this.onDragStart, required this.onDragUpdate, required this.onDragEnd});
 
   @override
   Widget build(BuildContext context) {
@@ -852,15 +1091,15 @@ class _TrimHandle extends StatelessWidget {
         onHorizontalDragEnd: onDragEnd,
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.12),
+            color: Colors.white.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(3),
           ),
           child: Center(
             child: Container(
               width: 2,
-              height: 20,
+              height: 16,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.6),
+                color: Colors.white.withValues(alpha: 0.5),
                 borderRadius: BorderRadius.circular(1),
               ),
             ),
@@ -871,7 +1110,9 @@ class _TrimHandle extends StatelessWidget {
   }
 }
 
-// ========== Timeline Ruler Painter ==========
+// ============================================================
+// Timeline Ruler Painter — v0.7.0 Enhanced
+// ============================================================
 
 class TimelineRulerPainter extends CustomPainter {
   final double pxPerSec;
@@ -883,7 +1124,7 @@ class TimelineRulerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = AppTheme.textMuted.withValues(alpha: 0.5)
+      ..color = AppTheme.textMuted.withValues(alpha: 0.4)
       ..strokeWidth = 1.0;
 
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
@@ -896,7 +1137,8 @@ class TimelineRulerPainter extends CustomPainter {
       double x = s * pxPerSec;
       if (x > size.width) break;
 
-      canvas.drawLine(Offset(x, size.height - 8), Offset(x, size.height), paint);
+      // Major tick
+      canvas.drawLine(Offset(x, size.height - 10), Offset(x, size.height), paint..color = AppTheme.textSecondary.withValues(alpha: 0.5));
 
       // Sub-grid snap indicators
       if (snapEngine != null && snapEngine!.mode != SnapMode.off) {
@@ -905,18 +1147,19 @@ class TimelineRulerPainter extends CustomPainter {
           for (int sub = 1; sub < (stepSec / gridSec); sub++) {
             final subX = (s + sub * gridSec) * pxPerSec;
             if (subX > 0 && subX < size.width) {
-              canvas.drawLine(Offset(subX, size.height - 4), Offset(subX, size.height), paint..color = AppTheme.divider);
+              canvas.drawLine(Offset(subX, size.height - 5), Offset(subX, size.height), paint..color = AppTheme.divider);
             }
           }
         }
       }
 
+      // Time label
       textPainter.text = TextSpan(
         text: '${s}s',
-        style: const TextStyle(color: AppTheme.textMuted, fontSize: 9),
+        style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontFamily: 'monospace'),
       );
       textPainter.layout();
-      textPainter.paint(canvas, Offset(x + 2, 4));
+      textPainter.paint(canvas, Offset(x + 2, 3));
     }
   }
 
@@ -925,5 +1168,117 @@ class TimelineRulerPainter extends CustomPainter {
     return oldDelegate.pxPerSec != pxPerSec ||
         oldDelegate.totalDurationSec != totalDurationSec ||
         oldDelegate.snapEngine != snapEngine;
+  }
+}
+
+// ============================================================
+// Waveform Painter (v0.7.0)
+// ============================================================
+
+class WaveformPainter extends CustomPainter {
+  final Float32List samples;
+  final Color color;
+  final double pxPerSec;
+
+  WaveformPainter({required this.samples, required this.color, required this.pxPerSec});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (samples.isEmpty) return;
+
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.5)
+      ..style = PaintingStyle.fill;
+
+    final midY = size.height / 2;
+    final sampleWidth = size.width / samples.length;
+
+    // Draw waveform bars
+    for (int i = 0; i < samples.length; i++) {
+      final sample = samples[i];
+      final barHeight = (sample * size.height * 0.8).clamp(1.0, size.height * 0.9);
+      final x = i * sampleWidth;
+      final y = midY - barHeight / 2;
+
+      paint.color = color.withValues(alpha: 0.3 + (sample.abs() * 0.4));
+      canvas.drawRect(Rect.fromLTRB(x, y, x + sampleWidth - 1, y + barHeight), paint);
+    }
+
+    // Center line
+    final linePaint = Paint()
+      ..color = color.withValues(alpha: 0.2)
+      ..strokeWidth = 0.5;
+    canvas.drawLine(Offset(0, midY), Offset(size.width, midY), linePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant WaveformPainter oldDelegate) {
+    return oldDelegate.samples != samples || oldDelegate.color != color || oldDelegate.pxPerSec != pxPerSec;
+  }
+}
+
+// ============================================================
+// Mini-map Painter (v0.7.0)
+// ============================================================
+
+class MiniMapPainter extends CustomPainter {
+  final List<Track> tracks;
+  final double totalWidth;
+  final double scale;
+  final double playheadSec;
+  final double pxPerSec;
+
+  MiniMapPainter({
+    required this.tracks,
+    required this.totalWidth,
+    required this.scale,
+    required this.playheadSec,
+    required this.pxPerSec,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final barHeight = size.height / max(tracks.length, 1);
+
+    for (int i = 0; i < tracks.length; i++) {
+      final track = tracks[i];
+      if (!track.isVisible) continue;
+
+      final color = _colorForTrackType(track.type);
+      for (final clip in track.clips) {
+        final left = (clip.timelineStartMs / 1000.0 * pxPerSec) * scale;
+        final width = (clip.durationMs / 1000.0 * pxPerSec) * scale;
+        final top = i * barHeight;
+
+        canvas.drawRect(
+          Rect.fromLTRB(left.clamp(0, totalWidth), top + 0.5, (left + width).clamp(0, totalWidth), top + barHeight - 0.5),
+          Paint()..color = color.withValues(alpha: 0.5),
+        );
+      }
+    }
+
+    // Playhead indicator
+    final playheadX = playheadSec * pxPerSec * scale;
+    canvas.drawLine(
+      Offset(playheadX.clamp(0, totalWidth), 0),
+      Offset(playheadX.clamp(0, totalWidth), size.height),
+      Paint()..color = AppTheme.accent..strokeWidth = 1.5,
+    );
+  }
+
+  Color _colorForTrackType(TrackType type) {
+    switch (type) {
+      case TrackType.video: return AppTheme.clipVideo;
+      case TrackType.overlay: return AppTheme.clipOverlay;
+      case TrackType.audio: return AppTheme.clipAudio;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant MiniMapPainter oldDelegate) {
+    return oldDelegate.tracks != tracks ||
+        oldDelegate.playheadSec != playheadSec ||
+        oldDelegate.pxPerSec != pxPerSec ||
+        oldDelegate.scale != scale;
   }
 }

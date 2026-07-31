@@ -34,7 +34,7 @@ class _ExportDialogState extends State<ExportDialog> {
   Timer? _progressTimer;
   DateTime? _exportStartTime;
 
-  // v0.5.5: Export presets
+  // v0.7.0: Enhanced export presets
   static const _presets = <ExportPreset>[
     ExportPreset(
       name: 'YouTube 1080p',
@@ -53,12 +53,28 @@ class _ExportDialogState extends State<ExportDialog> {
       description: 'H.265 • 35 Mbps • 60fps',
     ),
     ExportPreset(
-      name: 'TikTok 9:16',
-      label: 'TikTok / Reels',
+      name: 'YouTube Shorts',
+      label: 'YouTube Shorts',
       icon: Icons.smartphone,
       width: 1080, height: 1920, fps: 30,
       format: 'MP4', codec: 'H.264', bitrateMbps: 8, includeAudio: true,
       description: '9:16 • H.264 • 8 Mbps • 30fps',
+    ),
+    ExportPreset(
+      name: 'TikTok 9:16',
+      label: 'TikTok / Reels',
+      icon: Icons.phone_iphone,
+      width: 1080, height: 1920, fps: 30,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 8, includeAudio: true,
+      description: '9:16 • H.264 • 8 Mbps • 30fps',
+    ),
+    ExportPreset(
+      name: 'Instagram Story',
+      label: 'Instagram Story',
+      icon: Icons.camera_alt,
+      width: 1080, height: 1920, fps: 30,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 7, includeAudio: true,
+      description: '9:16 • H.264 • 7 Mbps • 30fps',
     ),
     ExportPreset(
       name: 'Instagram 1:1',
@@ -83,6 +99,22 @@ class _ExportDialogState extends State<ExportDialog> {
       width: 1920, height: 1080, fps: 30,
       format: 'MP4', codec: 'VP9', bitrateMbps: 8, includeAudio: true,
       description: 'VP9 • 8 Mbps • 30fps',
+    ),
+    ExportPreset(
+      name: 'GIF Export',
+      label: 'Animated GIF',
+      icon: Icons.gif_rounded,
+      width: 480, height: 480, fps: 15,
+      format: 'GIF', codec: 'GIF', bitrateMbps: 0, includeAudio: false,
+      description: 'GIF • 480x480 • 15fps',
+    ),
+    ExportPreset(
+      name: 'Audio Only',
+      label: 'Audio Only (MP3)',
+      icon: Icons.audiotrack_rounded,
+      width: 0, height: 0, fps: 0,
+      format: 'MP3', codec: 'MP3', bitrateMbps: 3, includeAudio: true,
+      description: 'MP3 • 320 kbps',
     ),
     ExportPreset(
       name: 'Archive ProRes',
@@ -510,44 +542,59 @@ class _ExportDialogState extends State<ExportDialog> {
 
           const SizedBox(height: 12),
 
-          // Custom settings (shown when _customMode or any preset selected for detail)
+          // v0.7.0: Custom settings (shown when _customMode or any preset selected for detail)
           if (_customMode) ...[
-            _buildDropdown('Resolution', _selectedRes,
-                ['720p (HD)', '1080p (Full HD)', '4K (Ultra HD)'], _onResolutionChanged, Icons.video_settings),
-            const SizedBox(height: 10),
-            _buildDropdown('Frame Rate', _selectedFps,
-                ['30 FPS', '60 FPS'], _onFpsChanged, Icons.movie),
-            const SizedBox(height: 10),
-            _buildDropdown('Container Format', _selectedFormat,
-                ['MP4', 'MOV', 'GIF', 'MP3'], _onFormatChanged, Icons.file_present),
-
             if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+              _buildDropdown('Resolution', _selectedRes,
+                  ['720p (HD)', '1080p (Full HD)', '4K (Ultra HD)'], _onResolutionChanged, Icons.video_settings),
               const SizedBox(height: 10),
-              _buildDropdown('Video Codec', _selectedCodec,
-                  _codecOptions, _onCodecChanged, Icons.code),
-            ],
-
-            if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+              _buildDropdown('Frame Rate', _selectedFps,
+                  ['24 FPS', '30 FPS', '60 FPS'], _onFpsChanged, Icons.movie),
+            ] else if (_selectedFormat == 'GIF') ...[
+              _buildDropdown('GIF Size', _selectedRes,
+                  ['240p', '360p', '480p', '720p'], _onResolutionChanged, Icons.aspect_ratio),
               const SizedBox(height: 10),
-              _buildSlider('Bitrate: ${_bitrateMbps.toStringAsFixed(0)} Mbps',
-                  _bitrateMbps, 1.0, 50.0, _onBitrateChanged),
+              _buildDropdown('GIF FPS', _selectedFps,
+                  ['10 FPS', '15 FPS', '24 FPS'], _onFpsChanged, Icons.movie),
+            ] else if (_selectedFormat == 'MP3') ...[
+              _buildDropdown('Audio Bitrate', _selectedFps,
+                  ['128 kbps', '192 kbps', '256 kbps', '320 kbps'], _onBitrateQualityChanged, Icons.audiotrack),
+              const SizedBox(height: 10),
             ],
+            const SizedBox(height: 10),
 
             if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  const Icon(Icons.audiotrack, color: AppTheme.textMuted, size: 16),
-                  const SizedBox(width: 6),
-                  const Text('Include Audio', style: TextStyle(color: AppTheme.textMain, fontSize: 13)),
-                  const Spacer(),
-                  Switch(
-                    value: _includeAudio,
-                    onChanged: (v) => setState(() => _includeAudio = v),
-                    activeThumbColor: AppTheme.primary,
-                  ),
-                ],
-              ),
+              _buildDropdown('Container Format', _selectedFormat,
+                  ['MP4', 'MOV', 'GIF', 'MP3'], _onFormatChanged, Icons.file_present),
+
+              if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+                const SizedBox(height: 10),
+                _buildDropdown('Video Codec', _selectedCodec,
+                    _codecOptions, _onCodecChanged, Icons.code),
+              ],
+
+              if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+                const SizedBox(height: 10),
+                _buildSlider('Bitrate: ${_bitrateMbps.toStringAsFixed(0)} Mbps',
+                    _bitrateMbps, 1.0, 50.0, _onBitrateChanged),
+              ],
+
+              if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const Icon(Icons.audiotrack, color: AppTheme.textMuted, size: 16),
+                    const SizedBox(width: 6),
+                    const Text('Include Audio', style: TextStyle(color: AppTheme.textMain, fontSize: 13)),
+                    const Spacer(),
+                    Switch(
+                      value: _includeAudio,
+                      onChanged: (v) => setState(() => _includeAudio = v),
+                      activeThumbColor: AppTheme.primary,
+                    ),
+                  ],
+                ),
+              ],
             ],
           ],
 
@@ -638,19 +685,46 @@ class _ExportDialogState extends State<ExportDialog> {
   }
 
   void _onResolutionChanged(String? val) { if (val != null) setState(() => _selectedRes = val); }
-  void _onFpsChanged(String? val) { if (val != null) setState(() => _selectedFps = val); }
+  void _onFpsChanged(String? val) {
+    if (val != null) {
+      setState(() {
+        _selectedFps = val;
+        if (val.contains('24')) {
+          _selectedFps = '24 FPS';
+        } else if (val.contains('30')) {
+          _selectedFps = '30 FPS';
+        } else if (val.contains('60')) {
+          _selectedFps = '60 FPS';
+        } else if (val.contains('15')) {
+          _selectedFps = '15 FPS';
+        } else if (val.contains('10')) {
+          _selectedFps = '10 FPS';
+        } else {
+          _selectedFps = val;
+        }
+      });
+    }
+  }
+  void _onBitrateQualityChanged(String? val) { if (val != null) setState(() => _selectedFps = val); }
   void _onFormatChanged(String? val) {
     if (val != null) {
       setState(() {
         _selectedFormat = val;
         if (val == 'GIF') {
           _selectedCodec = 'GIF';
+          _selectedRes = '480p';
+          _selectedFps = '15 FPS';
         } else if (val == 'MP3') {
           _selectedCodec = 'MP3';
+          _selectedFps = '320 kbps';
         } else if (val == 'MOV') {
           _selectedCodec = 'H.264';
+          _selectedRes = '1080p (Full HD)';
+          _selectedFps = '60 FPS';
         } else {
           _selectedCodec = 'H.264';
+          _selectedRes = '1080p (Full HD)';
+          _selectedFps = '60 FPS';
         }
       });
     }

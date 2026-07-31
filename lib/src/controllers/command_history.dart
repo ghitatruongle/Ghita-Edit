@@ -270,6 +270,9 @@ class CommandHistory extends ChangeNotifier {
   int get undoCount => _undoStack.length;
   int get redoCount => _redoStack.length;
 
+  List<EditCommand> get undoStack => List.unmodifiable(_undoStack);
+  List<EditCommand> get redoStack => List.unmodifiable(_redoStack);
+
   /// Execute a command and push it to the undo stack.
   void execute(EditCommand command, Project project) {
     command.execute(project);

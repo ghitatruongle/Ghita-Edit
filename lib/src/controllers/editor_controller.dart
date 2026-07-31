@@ -96,7 +96,7 @@ class EditorController extends ChangeNotifier {
       notifyListeners();
     } catch (e, st) {
       if (!_disposed) {
-        _statusMessage = 'Error: $e${st != null ? '\n$st' : ''}';
+        _statusMessage = 'Error: $e\n$st';
         notifyListeners();
       }
     }
@@ -373,6 +373,24 @@ class EditorController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Set track visibility.
+  void setTrackVisible(String trackId, bool visible) {
+    if (_disposed) return;
+    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
+    if (track.id.isEmpty) return;
+    track.isVisible = visible;
+    notifyListeners();
+  }
+
+  /// Set track lock state.
+  void setTrackLock(String trackId, bool locked) {
+    if (_disposed) return;
+    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
+    if (track.id.isEmpty) return;
+    track.isLocked = locked;
+    notifyListeners();
+  }
+
   /// Set track volume.
   void setTrackVolume(String trackId, double volume) {
     if (_disposed) return;
@@ -477,6 +495,9 @@ class EditorController extends ChangeNotifier {
     commandHistory.clear();
     _positionMs = 0;
     _isPlaying = false;
+    _volume = 1.0;
+    _activeFilterType = 0;
+    _filterIntensity = 1.0;
     if (_engine.isReady) _engine.pause();
     _statusMessage = 'New project created';
     notifyListeners();
@@ -510,6 +531,9 @@ class EditorController extends ChangeNotifier {
       commandHistory.clear();
       _positionMs = 0;
       _isPlaying = false;
+      _volume = 1.0;
+      _activeFilterType = 0;
+      _filterIntensity = 1.0;
       _statusMessage = 'Loaded: ${project.name}';
       notifyListeners();
       return true;
@@ -638,6 +662,7 @@ class EditorController extends ChangeNotifier {
       case ClipType.image:
       case ClipType.text:
       case ClipType.overlay:
+      case ClipType.sticker:
         return 'track_overlay_1';
     }
   }

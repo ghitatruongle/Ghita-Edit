@@ -92,6 +92,17 @@ class Project {
     }
   }
 
+  /// Select all clips across all tracks.
+  void selectAll() {
+    _selectedClipIds.clear();
+    for (final track in tracks) {
+      for (final clip in track.clips) {
+        _selectedClipIds.add(clip.id);
+      }
+    }
+    _syncClipSelectionFlags();
+  }
+
   /// Select a clip by ID, clearing previous selection (single-select mode).
   void selectClip(String clipId) {
     _selectedClipIds.clear();

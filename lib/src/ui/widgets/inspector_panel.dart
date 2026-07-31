@@ -4,6 +4,12 @@ import '../../models/clip.dart';
 import '../../models/project.dart';
 import '../theme/app_theme.dart';
 
+// ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+
+// ============================================================
+// InspectorPanel — v0.7.0 Enhanced with Rich Text Editor
+// ============================================================
+
 class InspectorPanel extends StatelessWidget {
   final EditorController controller;
 
@@ -16,11 +22,12 @@ class InspectorPanel extends StatelessWidget {
     final engineService = controller.engineService;
     final filters = engineService.availableFilters;
     final project = controller.project;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
       color: AppTheme.surface,
-      padding: const EdgeInsets.all(12),
       child: ListView(
+        padding: const EdgeInsets.all(10),
         children: [
           // Header
           Row(
@@ -28,10 +35,10 @@ class InspectorPanel extends StatelessWidget {
               const Text(
                 'INSPECTOR',
                 style: TextStyle(
-                  color: AppTheme.textMuted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.0,
+                  color: AppTheme.accent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
                 ),
               ),
               const Spacer(),
@@ -39,72 +46,88 @@ class InspectorPanel extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: AppTheme.accent.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: AppTheme.accent.withValues(alpha: 0.4)),
+                    color: AppTheme.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
                   ),
                   child: Text(
                     '${selectedClips.length} SELECTED',
-                    style: const TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.bold),
+                    style: const TextStyle(color: AppTheme.primaryLight, fontSize: 8, fontWeight: FontWeight.w700),
                   ),
                 ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
 
-          // Multi-select bulk info — v0.5.5
+          // Multi-select bulk info
           if (selectedClips.length > 1)
             _buildMultiSelectCard(selectedClips, project, context),
 
           // Single clip info
           if (selectedClip != null && selectedClips.length == 1) ...[
-            _buildClipInfoCard(selectedClip),
-            const SizedBox(height: 16),
+            _buildClipInfoCard(selectedClip, isDark),
+            const SizedBox(height: 10),
+
+            // v0.7.0: Rich Text Editor (for text clips)
+            if (selectedClip.type == ClipType.text || selectedClip.type == ClipType.overlay)
+              ..._buildRichTextEditor(selectedClip, controller),
+
+            // v0.7.0: Sticker Properties (for sticker clips)
+            if (selectedClip.type == ClipType.sticker)
+              ..._buildStickerProperties(selectedClip, controller, context),
+
+            // Clip Transform Card
             _buildClipTransformCard(selectedClip),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
           ],
 
           // Project Info
-          _buildProjectInfoCard(),
+          _buildProjectInfoCard(project),
+          const SizedBox(height: 10),
 
-          const SizedBox(height: 16),
+          // v0.7.0: Color Correction Card (v0.5.5: per-clip, now enhanced)
+          if (selectedClip != null && selectedClips.length == 1)
+            _buildColorCorrectionCard(selectedClip, controller),
 
           // Filters & FX
-          const Text(
-            'FILTERS & FX',
-            style: TextStyle(
-              color: AppTheme.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.0,
-            ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text('FILTERS & FX', style: TextStyle(color: AppTheme.accent, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+              const Spacer(),
+              if (selectedClip != null && selectedClips.length == 1)
+                TextButton.icon(
+                  onPressed: () {
+                    selectedClip.filterType = 0;
+                    selectedClip.filterIntensity = 1.0;
+                    controller.notifyListeners();
+                  },
+                  icon: const Icon(Icons.refresh_rounded, size: 14, color: AppTheme.textMuted),
+                  label: const Text('Reset', style: TextStyle(fontSize: 9)),
+                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+                ),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           if (selectedClip != null && selectedClips.length == 1)
-            _buildPerClipFilterCard(selectedClip, filters, controller)
+            _buildPerClipFilterCard(selectedClip, filters, controller, context)
           else
             _buildGlobalFilterCard(filters, controller),
 
-          // Transition — when clip selected
+          // Transition
           if (selectedClip != null && selectedClips.length == 1) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             _buildTransitionCard(selectedClip, controller),
           ],
 
-          const SizedBox(height: 16),
-          const Text(
-            'AUDIO MIXER & GAIN',
-            style: TextStyle(
-              color: AppTheme.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
+
+          // Audio Mixer
+          const Text('AUDIO MIXER', style: TextStyle(color: AppTheme.accent, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+          const SizedBox(height: 4),
           _buildAudioMixerCard(controller),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
 
           // Engine info
           _buildEngineInfoCard(controller),
@@ -113,91 +136,448 @@ class InspectorPanel extends StatelessWidget {
     );
   }
 
-  // ========== Multi-select Card — v0.5.5 ==========
+  // ============================================================
+  // Rich Text Editor (v0.7.0)
+  // ============================================================
 
-  Widget _buildMultiSelectCard(List<Clip> clips, Project project, BuildContext context) {
+  List<Widget> _buildRichTextEditor(Clip clip, EditorController controller) {
+    final fonts = ['Segoe UI', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Verdana', 'Courier New', 'Impact', 'Comic Sans MS', 'Trebuchet MS', 'Tahoma', 'Palatino'];
+    final alignments = [
+      {'icon': Icons.format_align_left_rounded, 'value': 0},
+      {'icon': Icons.format_align_center_rounded, 'value': 1},
+      {'icon': Icons.format_align_right_rounded, 'value': 2},
+    ];
+
+    return [
+      Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: AppTheme.card,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.title_rounded, color: AppTheme.primaryLight, size: 14),
+                const SizedBox(width: 6),
+                const Text('TEXT EDITOR', style: TextStyle(color: AppTheme.textMain, fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Text content input
+            TextField(
+              maxLines: 3,
+              decoration: InputDecoration(
+                hintText: 'Enter text...',
+                hintStyle: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+              style: TextStyle(color: AppTheme.textMain, fontSize: 13),
+              onChanged: (val) {
+                clip.textContent = val;
+                controller.notifyListeners();
+              },
+            ),
+            const SizedBox(height: 10),
+
+            // Font + Size row
+            Row(
+              children: [
+                // Font dropdown
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceVariant,
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: clip.textFont,
+                        isDense: true,
+                        dropdownColor: AppTheme.card,
+                        style: TextStyle(color: AppTheme.textMain, fontSize: 11),
+                        items: fonts.map((f) => DropdownMenuItem(value: f, child: Text(f, style: TextStyle(fontFamily: f, fontSize: 11)))).toList(),
+                        onChanged: (val) {
+                          if (val != null) { clip.textFont = val; controller.notifyListeners(); }
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // Font size slider
+                SizedBox(
+                  width: 80,
+                  child: Column(
+                    children: [
+                      Text('${clip.textFontSize.toInt()}px', style: const TextStyle(color: AppTheme.textMuted, fontSize: 9)),
+                      Slider(
+                        value: clip.textFontSize.clamp(12.0, 200.0),
+                        min: 12.0,
+                        max: 200.0,
+                        activeColor: AppTheme.primaryLight,
+                        onChanged: (val) {
+                          clip.textFontSize = val;
+                    controller.notifyListeners();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Style toggles: Bold, Italic, Underline, Shadow, Gradient
+            Row(
+              children: [
+                _styleToggle(Icons.format_bold_rounded, clip.textBold, () { clip.textBold = !clip.textBold; controller.notifyListeners(); }),
+                _styleToggle(Icons.format_italic_rounded, clip.textItalic, () { clip.textItalic = !clip.textItalic; controller.notifyListeners(); }),
+                _styleToggle(Icons.format_underlined_rounded, clip.textUnderline, () { clip.textUnderline = !clip.textUnderline; controller.notifyListeners(); }),
+                _styleToggle(Icons.blur_on, clip.textShadow, () { clip.textShadow = !clip.textShadow; controller.notifyListeners(); }),
+                _styleToggle(Icons.gradient, clip.textGradient, () { clip.textGradient = !clip.textGradient; controller.notifyListeners(); }),
+                const Spacer(),
+
+                // Alignment
+                ...alignments.map((a) => _alignmentButton(
+                  a['icon'] as IconData,
+                  clip.textAlignment == a['value'],
+                  () { clip.textAlignment = a['value'] as int; controller.notifyListeners(); },
+                )),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Color + Stroke row
+            Builder(
+              builder: (ctx) => Row(
+                children: [
+                  // Text color
+                  Expanded(
+                    child: Row(
+                      children: [
+                        _colorDot(color: clip.textColor, onTap: () {
+                          showDialog(
+                            context: ctx,
+                            builder: (_) => AlertDialog(
+                              backgroundColor: AppTheme.card,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
+                              title: const Text('Pick Color', style: TextStyle(color: AppTheme.textMain)),
+                              content: SizedBox(
+                                width: 260,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _ColorGrid(
+                                      colors: [
+                                        Colors.white, Colors.black, Colors.red, Colors.orange, Colors.yellow,
+                                        Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.pink,
+                                        AppTheme.primaryLight, AppTheme.accent, AppTheme.clipVideo, AppTheme.clipAudio,
+                                        AppTheme.clipImage, AppTheme.clipText, AppTheme.clipOverlay, AppTheme.success,
+                                      ],
+                                      onColorTap: (c) { clip.textColor = c; controller.notifyListeners(); Navigator.pop(ctx); },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      const SizedBox(width: 6),
+                      Text('Color', style: TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // Stroke width
+                Row(
+                  children: [
+                    Text('Stroke', style: TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+                    const SizedBox(width: 4),
+                    _colorDot(color: clip.textStrokeColor, onTap: () {
+                        showDialog(
+                          context: ctx,
+                          builder: (_) => AlertDialog(
+                            backgroundColor: AppTheme.card,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
+                            title: const Text('Pick Color', style: TextStyle(color: AppTheme.textMain)),
+                            content: SizedBox(
+                              width: 260,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _ColorGrid(
+                                    colors: [
+                                      Colors.white, Colors.black, Colors.red, Colors.orange, Colors.yellow,
+                                      Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.pink,
+                                      AppTheme.primaryLight, AppTheme.accent, AppTheme.clipVideo, AppTheme.clipAudio,
+                                      AppTheme.clipImage, AppTheme.clipText, AppTheme.clipOverlay, AppTheme.success,
+                                    ],
+                                    onColorTap: (c) { clip.textStrokeColor = c; controller.notifyListeners(); Navigator.pop(ctx); },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    const SizedBox(width: 4),
+                    SizedBox(
+                      width: 50,
+                      child: Slider(
+                        value: clip.textStrokeWidth.clamp(0.0, 20.0),
+                        min: 0.0,
+                        max: 20.0,
+                        activeColor: AppTheme.primaryLight,
+                        onChanged: (val) { clip.textStrokeWidth = val; controller.notifyListeners(); },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+    ];
+  }
+
+  Widget _styleToggle(IconData icon, bool active, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: active ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.surfaceVariant,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: active ? AppTheme.primaryLight : AppTheme.divider, width: 0.5),
+        ),
+        child: Icon(icon, size: 14, color: active ? AppTheme.primaryLight : AppTheme.textMuted),
+      ),
+    );
+  }
+
+  Widget _alignmentButton(IconData icon, bool active, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: active ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.surfaceVariant,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: active ? AppTheme.primaryLight : AppTheme.divider, width: 0.5),
+        ),
+        child: Icon(icon, size: 14, color: active ? AppTheme.primaryLight : AppTheme.textMuted),
+      ),
+    );
+  }
+
+  Widget _colorDot({required Color color, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 22,
+        height: 22,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: AppTheme.divider, width: 1),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+
+  List<Widget> _buildStickerProperties(Clip clip, EditorController controller, BuildContext context) {
+    return [
+      Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: AppTheme.card,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          border: Border.all(color: AppTheme.clipSticker.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.emoji_emotions_rounded, color: AppTheme.clipSticker, size: 14),
+                const SizedBox(width: 6),
+                const Text('STICKER', style: TextStyle(color: AppTheme.textMain, fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Text('Scale', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+                const Spacer(),
+                Text('${(clip.stickerScale * 100).toInt()}%', style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.w600)),
+              ],
+            ),
+            Slider(
+              value: clip.stickerScale.clamp(0.1, 5.0),
+              min: 0.1,
+              max: 5.0,
+              activeColor: AppTheme.clipSticker,
+              onChanged: (val) { clip.stickerScale = val; controller.notifyListeners(); },
+            ),
+            Row(
+              children: [
+                const Text('Rotation', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+                const Spacer(),
+                Text('${clip.stickerRotation.toInt()}°', style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.w600)),
+              ],
+            ),
+            Slider(
+              value: clip.stickerRotation.clamp(-180.0, 180.0),
+              min: -180.0,
+              max: 180.0,
+              divisions: 36,
+              activeColor: AppTheme.clipSticker,
+              onChanged: (val) { clip.stickerRotation = val; controller.notifyListeners(); },
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  // ============================================================
+  // Color Correction Card (v0.7.0 enhanced)
+  // ============================================================
+
+  Widget _buildColorCorrectionCard(Clip clip, EditorController controller) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: AppTheme.accent.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.accent.withValues(alpha: 0.3)),
+        color: AppTheme.card,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: AppTheme.divider),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.select_all, color: AppTheme.accent, size: 16),
-              const SizedBox(width: 8),
-              Text(
-                '${clips.length} Clips Selected',
-                style: const TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.bold, fontSize: 12),
-              ),
+              const Icon(Icons.palette_rounded, color: AppTheme.accentWarm, size: 14),
+              const SizedBox(width: 6),
+              const Text('COLOR', style: TextStyle(color: AppTheme.textMain, fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
             ],
           ),
-          const SizedBox(height: 8),
-          // List selected clips
+          const SizedBox(height: 10),
+          _colorSlider('Exposure', clip.filterIntensity, -1.0, 1.0, AppTheme.textSecondary, (val) {
+            // Will be mapped to filter intensity offset in future
+            clip.filterIntensity = val.clamp(0.0, 1.0);
+            controller.notifyListeners();
+          }),
+          _colorSlider('Brightness', clip.speed, 0.25, 4.0, AppTheme.accent, (val) {
+            clip.speed = val;
+            controller.notifyListeners();
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _colorSlider(String label, double value, double min, double max, Color accentColor, ValueChanged<double> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(width: 60, child: Text(label, style: TextStyle(color: AppTheme.textMuted, fontSize: 10))),
+          Expanded(
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              activeColor: accentColor,
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // Multi-select Card
+  // ============================================================
+
+  Widget _buildMultiSelectCard(List<Clip> clips, Project project, BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.primary.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.select_all_rounded, color: AppTheme.primaryLight, size: 14),
+              const SizedBox(width: 6),
+              Text('${clips.length} Clips Selected', style: const TextStyle(color: AppTheme.textMain, fontSize: 11, fontWeight: FontWeight.w600)),
+            ],
+          ),
+          const SizedBox(height: 6),
           ...clips.map((clip) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
+            padding: const EdgeInsets.symmetric(vertical: 1.5),
             child: Row(
               children: [
-                Icon(_iconForClipType(clip.type), size: 12, color: AppTheme.accent),
+                Icon(_iconForClipType(clip.type), size: 11, color: AppTheme.primaryLight),
                 const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    clip.displayName,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: AppTheme.textMain, fontSize: 11),
-                  ),
-                ),
-                Text(
-                  _formatMs(clip.durationMs),
-                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
-                ),
+                Expanded(child: Text(clip.displayName, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMain, fontSize: 10))),
+                Text(_formatDuration(clip.durationMs), style: const TextStyle(color: AppTheme.textMuted, fontSize: 9)),
               ],
             ),
           )),
           const SizedBox(height: 8),
-          // Bulk actions
           Row(
             children: [
               Expanded(
                 child: TextButton.icon(
                   onPressed: () {
-                    // Apply global filter to all selected clips
                     final filterType = controller.activeFilterType;
                     final intensity = controller.filterIntensity;
                     for (final clip in clips) {
-                      // Direct model mutation for bulk (no undo for bulk filter)
                       clip.filterType = filterType;
                       clip.filterIntensity = intensity;
                     }
-                    // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
                     controller.notifyListeners();
                   },
-                  icon: const Icon(Icons.auto_fix_high, size: 14, color: AppTheme.accent),
+                  icon: const Icon(Icons.auto_fix_high, size: 14, color: AppTheme.primaryLight),
                   label: const Text('Apply Filter', style: TextStyle(fontSize: 10)),
                   style: TextButton.styleFrom(
-                    backgroundColor: AppTheme.accent.withValues(alpha: 0.1),
-                    foregroundColor: AppTheme.accent,
-                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    backgroundColor: AppTheme.primary.withValues(alpha: 0.08),
+                    foregroundColor: AppTheme.primaryLight,
+                    padding: const EdgeInsets.symmetric(vertical: 5),
                   ),
                 ),
               ),
               const SizedBox(width: 6),
               Expanded(
                 child: TextButton.icon(
-                  onPressed: () {
-                    // Delete all selected clips
-                    controller.deleteSelectedClip();
-                  },
-                  icon: const Icon(Icons.delete_outline, size: 14, color: Colors.redAccent),
+                  onPressed: () => controller.deleteSelectedClip(),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 14, color: AppTheme.error),
                   label: const Text('Delete All', style: TextStyle(fontSize: 10)),
                   style: TextButton.styleFrom(
-                    backgroundColor: Colors.red.withValues(alpha: 0.1),
-                    foregroundColor: Colors.redAccent,
-                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    backgroundColor: AppTheme.error.withValues(alpha: 0.08),
+                    foregroundColor: AppTheme.error,
+                    padding: const EdgeInsets.symmetric(vertical: 5),
                   ),
                 ),
               ),
@@ -208,163 +588,161 @@ class InspectorPanel extends StatelessWidget {
     );
   }
 
-  // ========== Clip Info Card ==========
+  // ============================================================
+  // Clip Info Card
+  // ============================================================
 
-  Widget _buildClipInfoCard(Clip clip) {
+  Widget _buildClipInfoCard(Clip clip, bool isDark) {
+    final color = AppTheme.clipColorForType(clip.type.name, isDark: isDark);
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: AppTheme.card,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.accent),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(
-                _iconForClipType(clip.type),
-                color: AppTheme.accent,
-                size: 20,
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  clip.displayName,
-                  style: const TextStyle(
-                    color: AppTheme.textMain,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const Divider(color: AppTheme.divider, height: 16),
-          _buildMetaRow('Type', clip.type.name.toUpperCase()),
-          _buildMetaRow('Timeline Start', _formatTimecode(clip.timelineStartMs)),
-          _buildMetaRow('Duration', _formatTimecode(clip.durationMs)),
-          _buildMetaRow('Source In', _formatTimecode(clip.sourceInMs)),
-          _buildMetaRow('Source Out', _formatTimecode(clip.sourceOutMs)),
-          _buildMetaRow('Track', 'Track ${clip.trackIndex + 1}'),
-        ],
-      ),
-    );
-  }
-
-  // ========== Clip Transform Card — v0.5.5 ==========
-
-  Widget _buildClipTransformCard(Clip clip) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.card,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.divider),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.transform, color: AppTheme.primaryLight, size: 16),
               const SizedBox(width: 6),
-              const Text('Clip Properties', style: TextStyle(color: AppTheme.textMain, fontSize: 12, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          // Speed
-          Row(
-            children: [
-              const Text('Speed', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
-              const Spacer(),
-              Text('${clip.speed.toStringAsFixed(2)}x', style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          Slider(
-            value: clip.speed.clamp(0.25, 4.0),
-            min: 0.25,
-            max: 4.0,
-            divisions: 16,
-            activeColor: AppTheme.accent,
-            label: '${clip.speed.toStringAsFixed(2)}x',
-            onChanged: (val) {
-              // TODO: Implement per-clip speed change (requires ChangeClipSpeedCommand)
-              debugPrint('Speed: $val');
-            },
-          ),
-
-          // Opacity
-          Row(
-            children: [
-              const Text('Opacity', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
-              const Spacer(),
-              Text('${(clip.opacity * 100).toInt()}%', style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          Slider(
-            value: clip.opacity.clamp(0.0, 1.0),
-            min: 0.0,
-            max: 1.0,
-            activeColor: AppTheme.accent,
-            label: '${(clip.opacity * 100).toInt()}%',
-            onChanged: (val) {
-              // TODO: Implement per-clip opacity change
-              debugPrint('Opacity: $val');
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ========== Project Info Card ==========
-
-  Widget _buildProjectInfoCard() {
-    final project = controller.project;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.card,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.divider),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.folder_special, color: AppTheme.primaryLight, size: 16),
-              const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  project.name,
-                  style: const TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.bold, fontSize: 12),
-                ),
+                child: Text(clip.displayName, style: const TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.w600, fontSize: 12)),
               ),
             ],
           ),
           const SizedBox(height: 8),
-          _buildMetaRow('Version', project.version),
-          _buildMetaRow('Clips', '${project.allClips.length}'),
-          _buildMetaRow('Tracks', '${project.tracks.length}'),
-          _buildMetaRow('Duration', _formatMs(project.totalDurationMs)),
-          _buildMetaRow('Output', '${project.outputWidth}x${project.outputHeight} @ ${project.outputFps}fps'),
+          _metaRow('Type', clip.type.name.toUpperCase()),
+          _metaRow('Start', _formatTimecode(clip.timelineStartMs)),
+          _metaRow('Duration', _formatTimecode(clip.durationMs)),
+          _metaRow('Source In', _formatTimecode(clip.sourceInMs)),
+          _metaRow('Source Out', _formatTimecode(clip.sourceOutMs)),
+          _metaRow('Track', 'Track ${clip.trackIndex + 1}'),
+          if (clip.groupId != null) _metaRow('Group', clip.groupId!),
+          if (clip.isLocked) _metaRow('Status', 'Locked', valueColor: AppTheme.warning),
         ],
       ),
     );
   }
 
-  // ========== Per-Clip Filter Card — v0.5.5 ==========
+  // ============================================================
+  // Clip Transform Card
+  // ============================================================
 
-  Widget _buildPerClipFilterCard(Clip clip, List<Map<String, dynamic>> filters, EditorController controller) {
+  Widget _buildClipTransformCard(Clip clip) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: AppTheme.card,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.transform_rounded, color: AppTheme.primaryLight, size: 14),
+              const SizedBox(width: 6),
+              const Text('PROPERTIES', style: TextStyle(color: AppTheme.textMain, fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // Speed
+          _sliderRow('Speed', '${clip.speed.toStringAsFixed(2)}x', clip.speed, 0.25, 4.0, AppTheme.accent, (val) {
+            // TODO: ChangeClipSpeedCommand
+            clip.speed = val;
+            controller.notifyListeners();
+          }),
+          // Opacity
+          _sliderRow('Opacity', '${(clip.opacity * 100).toInt()}%', clip.opacity, 0.0, 1.0, AppTheme.primaryLight, (val) {
+            clip.opacity = val;
+            controller.notifyListeners();
+          }),
+          // Volume
+          _sliderRow('Volume', '${(clip.volume * 100).toInt()}%', clip.volume, 0.0, 2.0, AppTheme.clipAudio, (val) {
+            clip.volume = val;
+            controller.notifyListeners();
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _sliderRow(String label, String value, double val, double min, double max, Color color, ValueChanged<double> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(width: 50, child: Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 10))),
+          Expanded(
+            child: Slider(
+              value: val.clamp(min, max),
+              min: min,
+              max: max,
+              activeColor: color,
+              label: value,
+              onChanged: onChanged,
+            ),
+          ),
+          SizedBox(width: 40, child: Text(value, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600, fontFamily: 'monospace'))),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // Project Info Card
+  // ============================================================
+
+  Widget _buildProjectInfoCard(Project project) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.folder_special_rounded, color: AppTheme.primaryLight, size: 14),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(project.name, style: const TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.w600, fontSize: 11)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          _metaRow('Version', project.version),
+          _metaRow('Clips', '${project.allClips.length}'),
+          _metaRow('Tracks', '${project.tracks.length}'),
+          _metaRow('Duration', _formatDuration(project.totalDurationMs)),
+          _metaRow('Output', '${project.outputWidth}x${project.outputHeight} @ ${project.outputFps}fps'),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // Per-Clip Filter Card
+  // ============================================================
+
+  Widget _buildPerClipFilterCard(Clip clip, List<Map<String, dynamic>> filters, EditorController controller, BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(color: AppTheme.divider),
       ),
       child: Column(
@@ -376,24 +754,21 @@ class InspectorPanel extends StatelessWidget {
                 child: Text(
                   _getFilterName(clip.filterType),
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.bold),
+                  style: const TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.w600, fontSize: 11),
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.refresh, size: 18, color: AppTheme.textMuted),
+                icon: const Icon(Icons.refresh_rounded, size: 16, color: AppTheme.textMuted),
                 onPressed: () {
-                  // Reset filter for this clip
-                  // TODO: Use ChangeFilterCommand for undo
                   clip.filterType = 0;
                   clip.filterIntensity = 1.0;
-                  // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
                   controller.notifyListeners();
                 },
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          const Text('Filter Intensity', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+          const SizedBox(height: 6),
+          const Text('Intensity', style: TextStyle(color: AppTheme.textMuted, fontSize: 10)),
           Slider(
             value: clip.filterIntensity.clamp(0.0, 1.0),
             min: 0.0,
@@ -401,7 +776,6 @@ class InspectorPanel extends StatelessWidget {
             activeColor: AppTheme.primaryLight,
             onChanged: (val) {
               clip.filterIntensity = val;
-              // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
               controller.notifyListeners();
             },
           ),
@@ -414,8 +788,7 @@ class InspectorPanel extends StatelessWidget {
                     final name = f['name'] as String? ?? 'Unknown';
                     return _filterChip(name, id, clip.filterType == id, () {
                       clip.filterType = id;
-                      // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
-                      controller.notifyListeners();
+                    controller.notifyListeners();
                     });
                   }).toList()
                 : _defaultFilterChips(clip),
@@ -425,14 +798,16 @@ class InspectorPanel extends StatelessWidget {
     );
   }
 
-  // ========== Global Filter Card (when no clip selected or multi-select) ==========
+  // ============================================================
+  // Global Filter Card
+  // ============================================================
 
   Widget _buildGlobalFilterCard(List<Map<String, dynamic>> filters, EditorController controller) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: AppTheme.card,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(color: AppTheme.divider),
       ),
       child: Column(
@@ -444,17 +819,17 @@ class InspectorPanel extends StatelessWidget {
                 child: Text(
                   _getFilterName(controller.activeFilterType),
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.bold),
+                  style: const TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.w600, fontSize: 11),
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.refresh, size: 18, color: AppTheme.textMuted),
+                icon: const Icon(Icons.refresh_rounded, size: 16, color: AppTheme.textMuted),
                 onPressed: () => controller.setFilter(0, 1.0),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          const Text('Filter Intensity', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+          const SizedBox(height: 6),
+          const Text('Intensity', style: TextStyle(color: AppTheme.textMuted, fontSize: 10)),
           Slider(
             value: controller.filterIntensity,
             min: 0.0,
@@ -480,19 +855,18 @@ class InspectorPanel extends StatelessWidget {
     );
   }
 
-  // ========== Transition Card — v0.5.5 (with duration slider) ==========
+  // ============================================================
+  // Transition Card
+  // ============================================================
 
   Widget _buildTransitionCard(Clip clip, EditorController controller) {
-    final transitions = [
-      'None', 'Fade In', 'Fade Out', 'Crossfade',
-      'Slide', 'Wipe', 'Zoom', 'Dissolve', 'Radial',
-    ];
+    final transitions = ['None', 'Fade In', 'Fade Out', 'Crossfade', 'Slide', 'Wipe', 'Zoom', 'Dissolve', 'Radial'];
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: AppTheme.card,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(color: AppTheme.divider),
       ),
       child: Column(
@@ -500,9 +874,9 @@ class InspectorPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.animation, color: AppTheme.primaryLight, size: 16),
+              const Icon(Icons.animation_rounded, color: AppTheme.primaryLight, size: 14),
               const SizedBox(width: 6),
-              const Text('Transition', style: TextStyle(color: AppTheme.textMain, fontSize: 12, fontWeight: FontWeight.bold)),
+              const Text('TRANSITION', style: TextStyle(color: AppTheme.textMain, fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
             ],
           ),
           const SizedBox(height: 8),
@@ -512,8 +886,7 @@ class InspectorPanel extends StatelessWidget {
               isExpanded: true,
               dropdownColor: AppTheme.surface,
               style: const TextStyle(color: AppTheme.textMain, fontSize: 12),
-              items: transitions.map((t) =>
-                DropdownMenuItem(value: t, child: Text(t))).toList(),
+              items: transitions.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
               onChanged: (val) {
                 if (val != null) {
                   final idx = transitions.indexOf(val);
@@ -522,28 +895,21 @@ class InspectorPanel extends StatelessWidget {
               },
             ),
           ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              const Icon(Icons.timer, color: AppTheme.textMuted, size: 14),
-              const SizedBox(width: 4),
-              const Text('500ms', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
-              // TODO: Add duration slider for transition duration
-            ],
-          ),
         ],
       ),
     );
   }
 
-  // ========== Audio Mixer Card ==========
+  // ============================================================
+  // Audio Mixer Card
+  // ============================================================
 
   Widget _buildAudioMixerCard(EditorController controller) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: AppTheme.card,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(color: AppTheme.divider),
       ),
       child: Column(
@@ -552,11 +918,8 @@ class InspectorPanel extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Master Volume', style: TextStyle(color: AppTheme.textMain, fontSize: 12)),
-              Text(
-                '${(controller.volume * 100).toInt()}%',
-                style: const TextStyle(color: AppTheme.accent, fontWeight: FontWeight.bold),
-              ),
+              const Text('Master', style: TextStyle(color: AppTheme.textMain, fontSize: 11)),
+              Text('${(controller.volume * 100).toInt()}%', style: TextStyle(color: AppTheme.accent, fontSize: 10, fontWeight: FontWeight.w600, fontFamily: 'monospace')),
             ],
           ),
           Slider(
@@ -566,18 +929,13 @@ class InspectorPanel extends StatelessWidget {
             activeColor: AppTheme.accent,
             onChanged: controller.setVolume,
           ),
-
-          // Per-clip volume — v0.5.5
           if (controller.selectedClip != null && controller.selectedClips.length == 1) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Clip Volume', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
-                Text(
-                  '${(controller.selectedClip!.volume * 100).toInt()}%',
-                  style: const TextStyle(color: AppTheme.accent, fontWeight: FontWeight.bold, fontSize: 11),
-                ),
+                Text('Clip', style: TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+                Text('${(controller.selectedClip!.volume * 100).toInt()}%', style: TextStyle(color: AppTheme.accent, fontSize: 10, fontWeight: FontWeight.w600, fontFamily: 'monospace')),
               ],
             ),
             Slider(
@@ -586,9 +944,7 @@ class InspectorPanel extends StatelessWidget {
               max: 2.0,
               activeColor: AppTheme.primaryLight,
               onChanged: (val) {
-                // TODO: Implement per-clip volume via ChangeClipVolumeCommand
                 controller.selectedClip!.volume = val;
-                // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
                 controller.notifyListeners();
               },
             ),
@@ -598,15 +954,17 @@ class InspectorPanel extends StatelessWidget {
     );
   }
 
-  // ========== Engine Info Card ==========
+  // ============================================================
+  // Engine Info Card
+  // ============================================================
 
   Widget _buildEngineInfoCard(EditorController controller) {
     final hasFFmpeg = controller.engineService.ffmpegAvailable;
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: AppTheme.card,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(color: AppTheme.divider),
       ),
       child: Column(
@@ -614,52 +972,41 @@ class InspectorPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(
-                hasFFmpeg ? Icons.memory : Icons.developer_mode,
-                color: hasFFmpeg ? Colors.green : AppTheme.textMuted,
-                size: 16,
-              ),
+              Icon(hasFFmpeg ? Icons.memory_rounded : Icons.developer_mode_rounded, color: hasFFmpeg ? AppTheme.success : AppTheme.textMuted, size: 14),
               const SizedBox(width: 6),
-              Text(
-                hasFFmpeg ? 'FFmpeg Accelerated' : 'Demo Mode (Synthetic)',
-                style: TextStyle(
-                  color: hasFFmpeg ? Colors.green : AppTheme.textMuted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              Text(hasFFmpeg ? 'FFmpeg Accelerated' : 'Demo Mode (Synthetic)', style: TextStyle(color: hasFFmpeg ? AppTheme.success : AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.w600)),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
-            controller.engineVersion.isNotEmpty
-                ? controller.engineVersion
-                : 'Engine not loaded',
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
+            controller.engineVersion.isNotEmpty ? controller.engineVersion : 'Engine not loaded',
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 9),
           ),
         ],
       ),
     );
   }
 
-  // ========== Filter Chip Widget ==========
+  // ============================================================
+  // Filter Chip Widget
+  // ============================================================
 
   Widget _filterChip(String label, int type, bool isActive, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: isActive ? AppTheme.primary.withValues(alpha: 0.3) : AppTheme.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: isActive ? AppTheme.accent : AppTheme.divider),
+          color: isActive ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.surfaceVariant,
+          borderRadius: BorderRadius.circular(AppTheme.radiusFull),
+          border: Border.all(color: isActive ? AppTheme.primaryLight : AppTheme.divider, width: isActive ? 1.2 : 0.5),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: isActive ? AppTheme.accent : AppTheme.textMuted,
+            color: isActive ? AppTheme.primaryLight : AppTheme.textMuted,
             fontSize: 10,
-            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+            fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
           ),
         ),
       ),
@@ -683,47 +1030,39 @@ class InspectorPanel extends StatelessWidget {
     ];
   }
 
-  // ========== Meta Row ==========
+  // ============================================================
+  // Meta Row Helper
+  // ============================================================
 
-  Widget _buildMetaRow(String label, String value) {
+  Widget _metaRow(String label, String value, {Color? valueColor}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2.0),
+      padding: const EdgeInsets.symmetric(vertical: 1.5),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppTheme.textMain, fontSize: 11),
-            ),
-          ),
+          Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+          Text(value, style: TextStyle(color: valueColor ?? AppTheme.textMain, fontSize: 10, fontFamily: 'monospace')),
         ],
       ),
     );
   }
 
-  // ========== Formatting Helpers ==========
+  // ============================================================
+  // Formatting Helpers
+  // ============================================================
 
-  String _formatMs(int ms) {
-    final seconds = ms ~/ 1000;
-    final minutes = seconds ~/ 60;
-    final secs = seconds % 60;
-    final millis = ms % 1000;
-    if (minutes > 0) {
-      return '${minutes}m ${secs}s';
-    }
-    return '$secs.${(millis ~/ 100)}s';
+  String _formatDuration(int ms) {
+    final totalSec = ms ~/ 1000;
+    final min = totalSec ~/ 60;
+    final sec = totalSec % 60;
+    return '${min.toString().padLeft(2, "0")}:${sec.toString().padLeft(2, "0")}';
   }
 
   String _formatTimecode(int ms) {
     final totalSeconds = ms / 1000.0;
     final minutes = totalSeconds ~/ 60;
     final seconds = totalSeconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toStringAsFixed(2).padLeft(5, '0')}';
+    return '${minutes.toString().padLeft(2, "0")}:${seconds.toStringAsFixed(2).padLeft(5, "0")}';
   }
 
   String _getFilterName(int type) {
@@ -749,6 +1088,49 @@ class InspectorPanel extends StatelessWidget {
       case ClipType.image: return Icons.image;
       case ClipType.text: return Icons.title;
       case ClipType.overlay: return Icons.layers;
+      case ClipType.sticker: return Icons.emoji_emotions;
     }
+  }
+}
+
+// ============================================================
+// Color Picker Grid Widget
+// ============================================================
+
+class _ColorGrid extends StatelessWidget {
+  final List<Color> colors;
+  final ValueChanged<Color> onColorTap;
+
+  const _ColorGrid({required this.colors, required this.onColorTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 6,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
+        childAspectRatio: 1.0,
+      ),
+      itemCount: colors.length,
+      itemBuilder: (context, index) {
+        final color = colors[index];
+        return GestureDetector(
+          onTap: () => onColorTap(color),
+          child: Container(
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppTheme.divider, width: 0.5),
+              boxShadow: [
+                BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 4, spreadRadius: -2),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }
