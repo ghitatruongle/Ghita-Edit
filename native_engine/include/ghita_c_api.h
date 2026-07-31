@@ -136,6 +136,25 @@ GHITA_API int ghita_engine_clear_clip_keyframes(GhitaEngineContext* ctx, int cli
 /** @brief Returns whether FFmpeg is available in this build. */
 GHITA_API bool ghita_engine_has_ffmpeg(GhitaEngineContext* ctx);
 
+// ========== v0.5.5 New API ==========
+
+/** @brief Sets playback rate multiplier (0.25 to 4.0). */
+GHITA_API void ghita_engine_set_playback_rate(GhitaEngineContext* ctx, float rate);
+
+/** @brief Gets current playback rate multiplier. */
+GHITA_API float ghita_engine_get_playback_rate(GhitaEngineContext* ctx);
+
+/** @brief Sets keyframe interpolation type for a clip.
+ *  @return 0 on success, -1 on error. */
+GHITA_API int ghita_engine_set_clip_keyframe_interpolation(GhitaEngineContext* ctx, int clipId, int interpolationType);
+
+/** @brief Gets keyframe interpolation type for a clip. */
+GHITA_API int ghita_engine_get_clip_keyframe_interpolation(GhitaEngineContext* ctx, int clipId);
+
+/** @brief Renders a text overlay on the frame buffer (basic rasterizer stub). */
+GHITA_API bool ghita_engine_render_text_overlay(GhitaEngineContext* ctx, uint8_t* outBuffer, int width, int height,
+                                                  const char* text, int fontSize, float r, float g, float b, float a);
+
 #ifdef __cplusplus
 }
 #endif

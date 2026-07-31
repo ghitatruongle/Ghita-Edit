@@ -8,7 +8,7 @@ struct GhitaEngineContext {
 };
 
 // Static string is safe to return because it lives for the process lifetime
-static const char VERSION_STRING[] = "Ghita Core Engine v0.4.5 (C++/Flutter)";
+static const char VERSION_STRING[] = "Ghita Core Engine v0.5.5 (C++/Flutter)";
 
 // Thread-local buffer for JSON return values (FFI-safe)
 static thread_local std::string t_jsonBuffer;
@@ -208,6 +208,61 @@ GHITA_API bool ghita_engine_has_ffmpeg(GhitaEngineContext* ctx) {
 #else
     return false;
 #endif
+}
+
+// ========== v0.5.5 New API ==========
+
+GHITA_API void ghita_engine_set_playback_rate(GhitaEngineContext* ctx, float rate) {
+    if (ctx) ctx->engine.setPlaybackRate(rate);
+}
+
+GHITA_API float ghita_engine_get_playback_rate(GhitaEngineContext* ctx) {
+    if (!ctx) return 1.0f;
+    return ctx->engine.getPlaybackRate();
+}
+
+GHITA_API int ghita_engine_set_clip_keyframe_interpolation(GhitaEngineContext* ctx, int clip_id, int interpolation_type) {
+    if (!ctx) return -1;
+    return ctx->engine.setClipKeyframeInterpolation(clip_id, static_cast<KeyframeInterpolation>(interpolation_type)) ? 0 : -1;
+}
+
+GHITA_API int ghita_engine_get_clip_keyframe_interpolation(GhitaEngineContext* ctx, int clip_id) {
+    if (!ctx) return 0;
+    return static_cast<int>(ctx->engine.getClipKeyframeInterpolation(clip_id));
+}
+
+GHITA_API bool ghita_engine_render_text_overlay(GhitaEngineContext* ctx, uint8_t* out_buffer, int width, int height,
+                                                  const char* text, int font_size, float r, float g, float b, float a) {
+    if (!ctx || !out_buffer || !text || width <= 0 || height <= 0) return false;
+    // v0.5.5: Basic text rasterizer stub — renders text as a solid color rectangle
+    // with the text string encoded in the alpha channel of the top-left corner pixels.
+    // A proper text rasterizer (FreeType/Harfbuzz) would be integrated in a future version.
+    const int textLen = static_cast<int>(std::strlen(text));
+    const int boxW = std::min(width, std::max(40, textLen * font_size / 2));
+    const int boxH = std::min(height, font_size * 2);
+    const int boxX = 20;
+    const int boxY = height - boxH - 20;
+
+    for (int y = boxY; y < boxY + boxH && y < height; ++y) {
+        for (int x = boxX; x < boxX + boxW && x < width; ++x) {
+            int idx = (y * width + x) * 4;
+            out_buffer[idx]     = static_cast<uint8_t>(r * 255);
+            out_buffer[idx + 1] = static_cast<uint8_t>(g * 255);
+            out_buffer[idx + 2] = static_cast<uint8_t>(b * 255);
+            out_buffer[idx + 3] = static_cast<uint8_t>(a * 255);
+        }
+    }
+
+    // Encode text string in pixel data (for debugging / placeholder)
+    for (int i = 0; i < textLen && (boxX + i) < boxX + boxW && boxY < height; ++i) {
+        int idx = (boxY * width + boxX + i) * 4;
+        out_buffer[idx]     = static_cast<uint8_t>(text[i] % 256);
+        out_buffer[idx + 1] = static_cast<uint8_t>((text[i] >> 8) % 256);
+        out_buffer[idx + 2] = static_cast<uint8_t>(font_size);
+        out_buffer[idx + 3] = 200;
+    }
+
+    return true;
 }
 
 }

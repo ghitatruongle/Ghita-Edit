@@ -33,6 +33,12 @@ class Clip {
   /// Clip type for visual differentiation.
   ClipType type;
 
+  /// Playback speed multiplier (0.25x - 4.0x).
+  double speed;
+
+  /// Opacity (0.0 - 1.0).
+  double opacity;
+
   Clip({
     required this.id,
     required this.sourceFilePath,
@@ -47,6 +53,8 @@ class Clip {
     this.volume = 1.0,
     this.isSelected = false,
     this.type = ClipType.video,
+    this.speed = 1.0,
+    this.opacity = 1.0,
   }) : sourceOutMs = sourceOutMs ?? durationMs;
 
   /// Timeline end position in milliseconds.
@@ -67,6 +75,8 @@ class Clip {
     double? volume,
     bool? isSelected,
     ClipType? type,
+    double? speed,
+    double? opacity,
   }) {
     return Clip(
       id: id ?? this.id,
@@ -82,6 +92,8 @@ class Clip {
       volume: volume ?? this.volume,
       isSelected: isSelected ?? this.isSelected,
       type: type ?? this.type,
+      speed: speed ?? this.speed,
+      opacity: opacity ?? this.opacity,
     );
   }
 
@@ -125,6 +137,8 @@ class Clip {
         'filterIntensity': filterIntensity,
         'volume': volume,
         'type': type.index,
+        'speed': speed,
+        'opacity': opacity,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -140,6 +154,8 @@ class Clip {
         filterIntensity: (json['filterIntensity'] as num?)?.toDouble() ?? 1.0,
         volume: (json['volume'] as num?)?.toDouble() ?? 1.0,
         type: ClipType.values[(json['type'] as int?) ?? 0],
+        speed: (json['speed'] as num?)?.toDouble() ?? 1.0,
+        opacity: (json['opacity'] as num?)?.toDouble() ?? 1.0,
       );
 
   @override

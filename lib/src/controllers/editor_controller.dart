@@ -54,6 +54,8 @@ class EditorController extends ChangeNotifier {
   // --- Project Accessors ---
   List<Track> get tracks => project.tracks;
   Clip? get selectedClip => project.selectedClip;
+  List<Clip> get selectedClips => project.selectedClips;
+  int get selectedClipCount => project.selectedClipCount;
   bool get canUndo => commandHistory.canUndo;
   bool get canRedo => commandHistory.canRedo;
   bool get isProjectModified => project.modifiedAt.isAfter(project.createdAt);
@@ -264,9 +266,30 @@ class EditorController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Delete the currently selected clip.
+  /// Delete the currently selected clip(s). Deletes all selected clips in multi-select mode.
   void deleteSelectedClip() {
     if (_disposed) return;
+
+    if (project.selectedClipCount > 1) {
+      // Multi-delete: delete all selected clips
+      final selectedClips = project.selectedClips.toList();
+      if (selectedClips.isEmpty) {
+        _statusMessage = 'No clips selected';
+        notifyListeners();
+        return;
+      }
+      for (final sel in selectedClips) {
+        final track = project.trackForClip(sel.id);
+        if (track == null) continue;
+        final cmd = DeleteClipCommand(trackId: track.id, clip: sel);
+        commandHistory.execute(cmd, project);
+      }
+      _statusMessage = 'Deleted ${selectedClips.length} clips';
+      notifyListeners();
+      return;
+    }
+
+    // Single delete: backward compatible
     final sel = project.selectedClip;
     if (sel == null) {
       _statusMessage = 'No clip selected';
@@ -308,10 +331,67 @@ class EditorController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Select a clip by ID.
+  /// Trim the start of a clip at a new position (undoable).
+  void trimClipStart(String clipId, int newStartMs) {
+    if (_disposed) return;
+    final track = project.trackForClip(clipId);
+    if (track == null) return;
+    final clip = track.clips.firstWhere((c) => c.id == clipId, orElse: () => Clip(id: '', sourceFilePath: '', displayName: '', timelineStartMs: 0, durationMs: 0));
+    if (clip.id.isEmpty) return;
+    final cmd = TrimClipCommand(trackId: track.id, clipId: clipId, trimStart: true, newBoundaryMs: newStartMs);
+    commandHistory.execute(cmd, project);
+    notifyListeners();
+  }
+
+  /// Trim the end of a clip at a new position (undoable).
+  void trimClipEnd(String clipId, int newEndMs) {
+    if (_disposed) return;
+    final track = project.trackForClip(clipId);
+    if (track == null) return;
+    final clip = track.clips.firstWhere((c) => c.id == clipId, orElse: () => Clip(id: '', sourceFilePath: '', displayName: '', timelineStartMs: 0, durationMs: 0));
+    if (clip.id.isEmpty) return;
+    final cmd = TrimClipCommand(trackId: track.id, clipId: clipId, trimStart: false, newBoundaryMs: newEndMs);
+    commandHistory.execute(cmd, project);
+    notifyListeners();
+  }
+
+  /// Set track mute state.
+  void setTrackMute(String trackId, bool muted) {
+    if (_disposed) return;
+    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
+    if (track.id.isEmpty) return;
+    track.isMuted = muted;
+    _statusMessage = muted ? 'Track muted' : 'Track unmuted';
+    notifyListeners();
+  }
+
+  /// Set track volume.
+  void setTrackVolume(String trackId, double volume) {
+    if (_disposed) return;
+    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
+    if (track.id.isEmpty) return;
+    track.volume = volume.clamp(0.0, 2.0);
+    notifyListeners();
+  }
+
+  /// Select a clip by ID (single-select).
   void selectClip(String clipId) {
     if (_disposed) return;
     project.selectClip(clipId);
+    notifyListeners();
+  }
+
+  /// Toggle a clip in/out of the current multi-selection.
+  void toggleClipSelection(String clipId) {
+    if (_disposed) return;
+    project.toggleClipSelection(clipId);
+    notifyListeners();
+  }
+
+  /// Select a range of clips between two clip IDs (Shift+click).
+  void selectRange(String fromClipId, String toClipId) {
+    if (_disposed) return;
+    project.selectRange(fromClipId, toClipId);
     notifyListeners();
   }
 

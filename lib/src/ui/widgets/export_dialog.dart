@@ -15,12 +15,18 @@ class ExportDialog extends StatefulWidget {
 }
 
 class _ExportDialogState extends State<ExportDialog> {
+  // Preset selection
+  String? _selectedPreset;
+  bool _customMode = false;
+
+  // Manual settings (used when _customMode is true)
   String _selectedRes = '1080p (Full HD)';
   String _selectedFps = '60 FPS';
   String _selectedFormat = 'MP4';
   String _selectedCodec = 'H.264';
   double _bitrateMbps = 10.0;
   bool _includeAudio = true;
+
   String? _outputPath;
   bool _isExporting = false;
   double _exportProgress = 0.0;
@@ -28,13 +34,100 @@ class _ExportDialogState extends State<ExportDialog> {
   Timer? _progressTimer;
   DateTime? _exportStartTime;
 
+  // v0.5.5: Export presets
+  static const _presets = <ExportPreset>[
+    ExportPreset(
+      name: 'YouTube 1080p',
+      label: 'YouTube 1080p',
+      icon: Icons.play_circle_filled,
+      width: 1920, height: 1080, fps: 60,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 10, includeAudio: true,
+      description: 'H.264 • 10 Mbps • 60fps',
+    ),
+    ExportPreset(
+      name: 'YouTube 4K',
+      label: 'YouTube 4K',
+      icon: Icons.high_quality,
+      width: 3840, height: 2160, fps: 60,
+      format: 'MP4', codec: 'H.265', bitrateMbps: 35, includeAudio: true,
+      description: 'H.265 • 35 Mbps • 60fps',
+    ),
+    ExportPreset(
+      name: 'TikTok 9:16',
+      label: 'TikTok / Reels',
+      icon: Icons.smartphone,
+      width: 1080, height: 1920, fps: 30,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 8, includeAudio: true,
+      description: '9:16 • H.264 • 8 Mbps • 30fps',
+    ),
+    ExportPreset(
+      name: 'Instagram 1:1',
+      label: 'Instagram 1:1',
+      icon: Icons.camera,
+      width: 1080, height: 1080, fps: 30,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 6, includeAudio: true,
+      description: '1:1 • H.264 • 6 Mbps • 30fps',
+    ),
+    ExportPreset(
+      name: 'Twitter 720p',
+      label: 'Twitter / X',
+      icon: Icons.chat,
+      width: 1280, height: 720, fps: 30,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 5, includeAudio: true,
+      description: '720p • H.264 • 5 Mbps • 30fps',
+    ),
+    ExportPreset(
+      name: 'Web VP9',
+      label: 'Web (VP9)',
+      icon: Icons.public,
+      width: 1920, height: 1080, fps: 30,
+      format: 'MP4', codec: 'VP9', bitrateMbps: 8, includeAudio: true,
+      description: 'VP9 • 8 Mbps • 30fps',
+    ),
+    ExportPreset(
+      name: 'Archive ProRes',
+      label: 'Archive (ProRes)',
+      icon: Icons.archive,
+      width: 1920, height: 1080, fps: 60,
+      format: 'MOV', codec: 'ProRes', bitrateMbps: 200, includeAudio: true,
+      description: 'ProRes • 200 Mbps • 60fps • MOV',
+    ),
+    ExportPreset(
+      name: 'Custom',
+      label: 'Custom...',
+      icon: Icons.tune,
+      width: 1920, height: 1080, fps: 60,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 10, includeAudio: true,
+      description: 'Manual configuration',
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    // Default to first preset
+    _selectedPreset = _presets.first.name;
+  }
+
   @override
   void dispose() {
     _progressTimer?.cancel();
     super.dispose();
   }
 
+  ExportPreset? _getPreset(String name) {
+    try {
+      return _presets.firstWhere((p) => p.name == name);
+    } on StateError {
+      return null;
+    }
+  }
+
   int get resWidth {
+    if (!_customMode && _selectedPreset != null) {
+      final preset = _getPreset(_selectedPreset!);
+      if (preset != null) return preset.width;
+    }
     switch (_selectedRes) {
       case '720p (HD)': return 1280;
       case '4K (Ultra HD)': return 3840;
@@ -43,6 +136,10 @@ class _ExportDialogState extends State<ExportDialog> {
   }
 
   int get resHeight {
+    if (!_customMode && _selectedPreset != null) {
+      final preset = _getPreset(_selectedPreset!);
+      if (preset != null) return preset.height;
+    }
     switch (_selectedRes) {
       case '720p (HD)': return 720;
       case '4K (Ultra HD)': return 2160;
@@ -51,10 +148,23 @@ class _ExportDialogState extends State<ExportDialog> {
   }
 
   int get _fps {
+    if (!_customMode && _selectedPreset != null) {
+      final preset = _getPreset(_selectedPreset!);
+      if (preset != null) return preset.fps;
+    }
     return _selectedFps.startsWith('30') ? 30 : 60;
   }
 
   String get _formatExtension {
+    if (!_customMode && _selectedPreset != null) {
+      final preset = _getPreset(_selectedPreset!);
+      if (preset != null) {
+        if (preset.format == 'MP4') return 'mp4';
+        if (preset.format == 'MOV') return 'mov';
+        if (preset.format == 'GIF') return 'gif';
+        if (preset.format == 'MP3') return 'mp3';
+      }
+    }
     if (_selectedFormat == 'MOV') return 'mov';
     if (_selectedFormat == 'GIF') return 'gif';
     if (_selectedFormat == 'MP3') return 'mp3';
@@ -62,18 +172,31 @@ class _ExportDialogState extends State<ExportDialog> {
   }
 
   String get _nativeCodecName {
+    if (!_customMode && _selectedPreset != null) {
+      final preset = _getPreset(_selectedPreset!);
+      if (preset != null) {
+        switch (preset.codec) {
+          case 'H.265': return 'h265';
+          case 'VP9': return 'vp9';
+          case 'ProRes': return 'prores';
+          default: return 'h264';
+        }
+      }
+    }
     switch (_selectedCodec) {
       case 'H.265': return 'h265';
       case 'VP9': return 'vp9';
+      case 'ProRes': return 'prores';
       default: return 'h264';
     }
   }
 
   String get _estimatedFileSize {
-    // Rough estimate: bitrate * duration / 8
     final totalSeconds = widget.controller.durationMs ~/ 1000;
     if (totalSeconds <= 0) return 'Unknown';
-    final bits = _bitrateMbps * 1000000 * totalSeconds;
+    final preset = _customMode ? null : _getPreset(_selectedPreset ?? '');
+    final bitrate = (preset?.bitrateMbps ?? _bitrateMbps.toInt()).toDouble() * 1000000;
+    final bits = bitrate * totalSeconds;
     final bytes = bits ~/ 8;
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
     if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
@@ -89,6 +212,18 @@ class _ExportDialogState extends State<ExportDialog> {
     return '${elapsed.inMinutes}:${elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
   }
 
+  String get _aspectRatioLabel {
+    final w = resWidth;
+    final h = resHeight;
+    final gcd = _gcd(w, h);
+    return '${w ~/ gcd}:${h ~/ gcd}';
+  }
+
+  int _gcd(int a, int b) {
+    while (b != 0) { final t = b; b = a % b; a = t; }
+    return a;
+  }
+
   Future<void> _pickOutputPath() async {
     try {
       final result = await FilePicker.platform.saveFile(
@@ -101,6 +236,29 @@ class _ExportDialogState extends State<ExportDialog> {
         setState(() => _outputPath = result);
       }
     } catch (_) {}
+  }
+
+  void _applyPreset(String presetName) {
+    setState(() {
+      _selectedPreset = presetName;
+      _customMode = presetName == 'Custom';
+      if (!_customMode) {
+        final preset = _presets.firstWhere((p) => p.name == presetName);
+        _selectedFormat = preset.format;
+        _selectedCodec = preset.codec;
+        _bitrateMbps = preset.bitrateMbps.toDouble();
+        _includeAudio = preset.includeAudio;
+        // Map resolution
+        if (preset.width == 3840) {
+          _selectedRes = '4K (Ultra HD)';
+        } else if (preset.width == 1280) {
+          _selectedRes = '720p (HD)';
+        } else {
+          _selectedRes = '1080p (Full HD)';
+        }
+        _selectedFps = '${preset.fps} FPS';
+      }
+    });
   }
 
   void _startExport() {
@@ -136,14 +294,13 @@ class _ExportDialogState extends State<ExportDialog> {
       return;
     }
 
-    // v0.4.5: Use extended export with codec/bitrate/audio
     final result = engineService.startExportEx(
       outputPath,
       resWidth,
       resHeight,
       _fps,
       _nativeCodecName,
-      (_bitrateMbps * 1000000).toInt(),
+      (_customMode ? _bitrateMbps : (_getPreset(_selectedPreset ?? '')?.bitrateMbps ?? 10)) * 1000000 ~/ 1,
       _includeAudio,
     );
 
@@ -208,8 +365,8 @@ class _ExportDialogState extends State<ExportDialog> {
 
   bool get _widgetReady => widget.controller.isEngineReady;
 
-  // v0.4.5: Codec options by format
   List<String> get _codecOptions {
+    if (!_customMode) return [];
     switch (_selectedFormat) {
       case 'MOV': return ['H.264', 'ProRes'];
       case 'GIF': return ['GIF'];
@@ -237,7 +394,7 @@ class _ExportDialogState extends State<ExportDialog> {
         ],
       ),
       content: SizedBox(
-        width: 480,
+        width: 520,
         child: _isExporting ? _buildExportingView() : _buildSettingsView(),
       ),
       actions: _isExporting
@@ -277,7 +434,7 @@ class _ExportDialogState extends State<ExportDialog> {
         ),
         const SizedBox(height: 8),
         Text(
-          '$_selectedRes • $_selectedFps • $_selectedCodec',
+          '${resWidth}x$resHeight • $_fps FPS • $_nativeCodecName',
           style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
         ),
         const SizedBox(height: 16),
@@ -329,48 +486,98 @@ class _ExportDialogState extends State<ExportDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildDropdown('Resolution', _selectedRes,
-              ['720p (HD)', '1080p (Full HD)', '4K (Ultra HD)'], _onResolutionChanged, Icons.video_settings),
-          const SizedBox(height: 10),
-          _buildDropdown('Frame Rate', _selectedFps,
-              ['30 FPS', '60 FPS'], _onFpsChanged, Icons.movie),
-          const SizedBox(height: 10),
-          _buildDropdown('Container Format', _selectedFormat,
-              ['MP4', 'MOV', 'GIF', 'MP3'], _onFormatChanged, Icons.file_present),
+          // v0.5.5: Preset chips row
+          const Text('Export Presets', style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: _presets.map((preset) {
+                final isSelected = _selectedPreset == preset.name && !_customMode;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: _PresetChip(
+                    label: preset.label,
+                    icon: preset.icon,
+                    description: preset.description,
+                    isSelected: isSelected,
+                    onTap: () => _applyPreset(preset.name),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
 
-          // v0.4.5: Codec selector
-          if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+          const SizedBox(height: 12),
+
+          // Custom settings (shown when _customMode or any preset selected for detail)
+          if (_customMode) ...[
+            _buildDropdown('Resolution', _selectedRes,
+                ['720p (HD)', '1080p (Full HD)', '4K (Ultra HD)'], _onResolutionChanged, Icons.video_settings),
             const SizedBox(height: 10),
-            _buildDropdown('Video Codec', _selectedCodec,
-                _codecOptions, _onCodecChanged, Icons.code),
+            _buildDropdown('Frame Rate', _selectedFps,
+                ['30 FPS', '60 FPS'], _onFpsChanged, Icons.movie),
+            const SizedBox(height: 10),
+            _buildDropdown('Container Format', _selectedFormat,
+                ['MP4', 'MOV', 'GIF', 'MP3'], _onFormatChanged, Icons.file_present),
+
+            if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+              const SizedBox(height: 10),
+              _buildDropdown('Video Codec', _selectedCodec,
+                  _codecOptions, _onCodecChanged, Icons.code),
+            ],
+
+            if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+              const SizedBox(height: 10),
+              _buildSlider('Bitrate: ${_bitrateMbps.toStringAsFixed(0)} Mbps',
+                  _bitrateMbps, 1.0, 50.0, _onBitrateChanged),
+            ],
+
+            if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  const Icon(Icons.audiotrack, color: AppTheme.textMuted, size: 16),
+                  const SizedBox(width: 6),
+                  const Text('Include Audio', style: TextStyle(color: AppTheme.textMain, fontSize: 13)),
+                  const Spacer(),
+                  Switch(
+                    value: _includeAudio,
+                    onChanged: (v) => setState(() => _includeAudio = v),
+                    activeThumbColor: AppTheme.primary,
+                  ),
+                ],
+              ),
+            ],
           ],
 
-          // v0.4.5: Bitrate slider
-          if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
-            const SizedBox(height: 10),
-            _buildSlider('Bitrate: ${_bitrateMbps.toStringAsFixed(0)} Mbps',
-                _bitrateMbps, 1.0, 50.0, _onBitrateChanged),
-          ],
-
-          // v0.4.5: Include audio toggle
-          if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
-            const SizedBox(height: 6),
-            Row(
+          // Always show aspect ratio info
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppTheme.background,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: Row(
               children: [
-                const Icon(Icons.audiotrack, color: AppTheme.textMuted, size: 16),
-                const SizedBox(width: 6),
-                const Text('Include Audio', style: TextStyle(color: AppTheme.textMain, fontSize: 13)),
+                const Icon(Icons.aspect_ratio, color: AppTheme.accent, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  '$_aspectRatioLabel aspect ratio',
+                  style: const TextStyle(color: AppTheme.textMain, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
                 const Spacer(),
-                Switch(
-                  value: _includeAudio,
-                  onChanged: (v) => setState(() => _includeAudio = v),
-                  activeThumbColor: AppTheme.primary,
+                Text(
+                  '${resWidth}x$resHeight',
+                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'monospace'),
                 ),
               ],
             ),
-          ],
+          ),
 
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
 
           // Estimated file size
           Row(
@@ -436,7 +643,6 @@ class _ExportDialogState extends State<ExportDialog> {
     if (val != null) {
       setState(() {
         _selectedFormat = val;
-        // Auto-select codec based on format
         if (val == 'GIF') {
           _selectedCodec = 'GIF';
         } else if (val == 'MP3') {
@@ -511,6 +717,100 @@ class _ExportDialogState extends State<ExportDialog> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ========== Export Preset Model — v0.5.5 ==========
+
+class ExportPreset {
+  final String name;
+  final String label;
+  final IconData icon;
+  final int width;
+  final int height;
+  final int fps;
+  final String format;
+  final String codec;
+  final int bitrateMbps;
+  final bool includeAudio;
+  final String description;
+
+  const ExportPreset({
+    required this.name,
+    required this.label,
+    required this.icon,
+    required this.width,
+    required this.height,
+    required this.fps,
+    required this.format,
+    required this.codec,
+    required this.bitrateMbps,
+    required this.includeAudio,
+    required this.description,
+  });
+}
+
+// ========== Preset Chip Widget — v0.5.5 ==========
+
+class _PresetChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final String description;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _PresetChip({
+    required this.label,
+    required this.icon,
+    required this.description,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primary.withValues(alpha: 0.25) : AppTheme.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? AppTheme.accent : AppTheme.divider,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 14, color: isSelected ? AppTheme.accent : AppTheme.textMuted),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: isSelected ? AppTheme.accent : AppTheme.textMain,
+                    fontSize: 11,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ],
+            ),
+            if (description.isNotEmpty)
+              Text(
+                description,
+                style: TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 9,
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -25,9 +25,9 @@ void main() {
       expect(labelSmall.fontSize, equals(10));
     });
 
-    test('appVersion string matches v0.4.5 convention', () {
+    test('appVersion string matches v0.5.5 convention', () {
       expect(AppTheme.appVersion, startsWith('v'));
-      expect(AppTheme.appVersion, contains('0.4.5'));
+      expect(AppTheme.appVersion, contains('0.5.5'));
     });
   });
 
@@ -39,8 +39,11 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
 
       await tester.pumpWidget(
-        const MaterialApp(
-          home: EditorView(),
+        MaterialApp(
+          home: EditorView(
+            themeMode: ThemeMode.dark,
+            onThemeModeChanged: (mode) async {},
+          ),
         ),
       );
 
@@ -57,8 +60,11 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
 
       await tester.pumpWidget(
-        const MaterialApp(
-          home: EditorView(),
+        MaterialApp(
+          home: EditorView(
+            themeMode: ThemeMode.dark,
+            onThemeModeChanged: (mode) async {},
+          ),
         ),
       );
 
@@ -76,8 +82,11 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
 
       await tester.pumpWidget(
-        const MaterialApp(
-          home: EditorView(),
+        MaterialApp(
+          home: EditorView(
+            themeMode: ThemeMode.dark,
+            onThemeModeChanged: (mode) async {},
+          ),
         ),
       );
       await tester.pump(const Duration(seconds: 1));
@@ -95,8 +104,11 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
 
       await tester.pumpWidget(
-        const MaterialApp(
-          home: EditorView(),
+        MaterialApp(
+          home: EditorView(
+            themeMode: ThemeMode.dark,
+            onThemeModeChanged: (mode) async {},
+          ),
         ),
       );
 

@@ -317,6 +317,57 @@ class EngineService {
     return bindings.clearClipKeyframes(_ctx!, clipId) == 0;
   }
 
+  // v0.5.5: Keyframe interpolation
+  bool setClipKeyframeInterpolation(int clipId, int interpolationType) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return false;
+    return bindings.setClipKeyframeInterpolation(_ctx!, clipId, interpolationType) == 0;
+  }
+
+  int getClipKeyframeInterpolation(int clipId) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return 0;
+    return bindings.getClipKeyframeInterpolation(_ctx!, clipId);
+  }
+
+  // v0.5.5: Playback rate control
+  void setPlaybackRate(double rate) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return;
+    bindings.setPlaybackRate(_ctx!, rate.clamp(0.25, 4.0).toDouble());
+  }
+
+  double getPlaybackRate() {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return 1.0;
+    return bindings.getPlaybackRate(_ctx!);
+  }
+
+  // v0.5.5: Text overlay rendering (basic rasterizer stub)
+  bool renderTextOverlay(Uint8List buffer, int width, int height,
+                         String text, int fontSize, double r, double g, double b, double a) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return false;
+
+    final bufferPtr = calloc<Uint8>(buffer.length);
+    final textPtr = text.toNativeUtf8();
+    try {
+      bufferPtr.asTypedList(buffer.length).setAll(0, buffer);
+      return bindings.renderTextOverlay(
+        _ctx!, bufferPtr, width, height,
+        textPtr, fontSize, r, g, b, a
+      );
+    } finally {
+      calloc.free(bufferPtr);
+      calloc.free(textPtr);
+    }
+  }
+
   bool _tickFrame() {
     if (_disposed || !_isRunning || !isReady || _framePointer == null) return false;
     final bindings = _bindings;

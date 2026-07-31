@@ -4,6 +4,7 @@ import 'package:ghita_edit/src/controllers/command_history.dart';
 import 'package:ghita_edit/src/models/clip.dart';
 import 'package:ghita_edit/src/models/track.dart';
 import 'package:ghita_edit/src/models/project.dart';
+import 'package:ghita_edit/src/ui/widgets/timeline_panel.dart';
 
 void main() {
   group('EditorController initialization', () {
@@ -224,7 +225,7 @@ void main() {
     tearDown(() => controller.dispose());
 
     test('split at playhead creates two clips', () {
-      controller.seek(5000); // Seek to 5s into a 10s clip
+      controller.seek(5000);
       controller.splitAtPlayhead();
       final videoTrack = controller.project.tracks[0];
       expect(videoTrack.clips.length, equals(2));
@@ -290,7 +291,7 @@ void main() {
       controller.importMedia('test.mp4');
       final json = controller.project.toJsonString();
       expect(json.contains('test.mp4'), isTrue);
-      expect(json.contains('0.4.5'), isTrue);
+      expect(json.contains('0.5.5'), isTrue);
     });
 
     test('project deserializes from JSON', () {
@@ -453,6 +454,232 @@ void main() {
     test('defaults to empty before initialization', () {
       final controller = EditorController();
       expect(controller.engineVersion, isEmpty);
+      controller.dispose();
+    });
+  });
+
+  // ========== v0.5.5 New Tests ==========
+
+  group('multi-select clips', () {
+    late EditorController controller;
+
+    setUp(() {
+      controller = EditorController();
+      controller.importMedia('clip1.mp4');
+      controller.importMedia('clip2.mp4');
+      controller.importMedia('clip3.mp4');
+      // allClips returns a copy; patch IDs directly on the track clips
+      for (final track in controller.project.tracks) {
+        for (var i = 0; i < track.clips.length; i++) {
+          track.clips[i] = track.clips[i].copyWith(id: 'clip_${i + 1}');
+        }
+      }
+    });
+    tearDown(() => controller.dispose());
+
+    test('toggleClipSelection adds/removes from selection', () {
+      final c1 = controller.project.allClips[0].id;
+      final c2 = controller.project.allClips[1].id;
+
+      controller.toggleClipSelection(c1);
+      expect(controller.selectedClipCount, equals(1));
+      expect(controller.selectedClip?.id, equals(c1));
+
+      controller.toggleClipSelection(c2);
+      expect(controller.selectedClipCount, equals(2));
+      expect(controller.selectedClips.map((c) => c.id).contains(c2), isTrue);
+    });
+
+    test('selectRange selects clips between two IDs', () {
+      final c1 = controller.project.allClips[0].id;
+      final c3 = controller.project.allClips[2].id;
+
+      controller.selectRange(c1, c3);
+      expect(controller.selectedClipCount, equals(3));
+    });
+
+    test('deselectAll clears selection', () {
+      final c1 = controller.project.allClips[0].id;
+      controller.toggleClipSelection(c1);
+      expect(controller.selectedClipCount, equals(1));
+      controller.deselectAll();
+      expect(controller.selectedClipCount, equals(0));
+      expect(controller.selectedClip, isNull);
+    });
+
+    test('selectClip clears previous selection (single-select)', () {
+      final c1 = controller.project.allClips[0].id;
+      final c2 = controller.project.allClips[1].id;
+
+      controller.toggleClipSelection(c1);
+      controller.toggleClipSelection(c2);
+      expect(controller.selectedClipCount, equals(2));
+
+      controller.selectClip(c1);
+      expect(controller.selectedClipCount, equals(1));
+      expect(controller.selectedClip?.id, equals(c1));
+    });
+
+    test('multi-delete removes all selected clips', () {
+      final c1 = controller.project.allClips[0].id;
+      final c2 = controller.project.allClips[1].id;
+
+      controller.toggleClipSelection(c1);
+      controller.toggleClipSelection(c2);
+      expect(controller.selectedClipCount, equals(2));
+
+      controller.deleteSelectedClip();
+      expect(controller.project.allClips.length, equals(1));
+      expect(controller.statusMessage, contains('2 clips'));
+    });
+  });
+
+  group('trim operations', () {
+    late EditorController controller;
+
+    setUp(() {
+      controller = EditorController();
+      controller.importMedia('video.mp4');
+    });
+    tearDown(() => controller.dispose());
+
+    test('trimClipStart reduces clip duration and shifts start', () {
+      final clip = controller.project.allClips.first;
+      final originalStart = clip.timelineStartMs;
+      final originalDuration = clip.durationMs;
+      final originalSourceIn = clip.sourceInMs;
+
+      controller.trimClipStart(clip.id, originalStart + 1000);
+      expect(clip.timelineStartMs, equals(originalStart + 1000));
+      expect(clip.durationMs, lessThan(originalDuration));
+      expect(clip.sourceInMs, equals(originalSourceIn + 1000));
+    });
+
+    test('trimClipEnd increases clip duration', () {
+      final clip = controller.project.allClips.first;
+      final originalDuration = clip.durationMs;
+      final newEnd = clip.timelineStartMs + originalDuration + 2000;
+
+      controller.trimClipEnd(clip.id, newEnd);
+      expect(clip.durationMs, equals(originalDuration + 2000));
+      expect(clip.sourceOutMs, equals(clip.sourceInMs + originalDuration + 2000));
+    });
+
+    test('trim is undoable', () {
+      final clip = controller.project.allClips.first;
+      final originalDuration = clip.durationMs;
+
+      controller.trimClipEnd(clip.id, clip.timelineEndMs + 2000);
+      expect(clip.durationMs, equals(originalDuration + 2000));
+
+      controller.undo();
+      expect(clip.durationMs, equals(originalDuration));
+    });
+  });
+
+  group('Clip model extensions (v0.5.5)', () {
+    test('speed and opacity default to 1.0', () {
+      final clip = Clip(
+        id: 'test',
+        sourceFilePath: '/test.mp4',
+        displayName: 'test.mp4',
+        timelineStartMs: 0,
+        durationMs: 5000,
+      );
+      expect(clip.speed, equals(1.0));
+      expect(clip.opacity, equals(1.0));
+    });
+
+    test('speed and opacity serialize to JSON', () {
+      final clip = Clip(
+        id: 'c1',
+        sourceFilePath: '/test.mp4',
+        displayName: 'test.mp4',
+        timelineStartMs: 0,
+        durationMs: 5000,
+        speed: 1.5,
+        opacity: 0.8,
+      );
+
+      final json = clip.toJson();
+      expect(json['speed'], equals(1.5));
+      expect(json['opacity'], equals(0.8));
+
+      final restored = Clip.fromJson(json);
+      expect(restored.speed, equals(1.5));
+      expect(restored.opacity, equals(0.8));
+    });
+
+    test('copyWith preserves speed and opacity', () {
+      final clip = Clip(
+        id: 'test',
+        sourceFilePath: '/test.mp4',
+        displayName: 'test.mp4',
+        timelineStartMs: 0,
+        durationMs: 5000,
+        speed: 2.0,
+        opacity: 0.5,
+      );
+
+      final copy = clip.copyWith(id: 'copy');
+      expect(copy.speed, equals(2.0));
+      expect(copy.opacity, equals(0.5));
+    });
+  });
+
+  group('SnapEngine', () {
+    test('off mode never snaps', () {
+      final engine = SnapEngine(mode: SnapMode.off);
+      expect(engine.snap(1500, 100.0), isNull);
+    });
+
+    test('snaps to 1s grid when within threshold', () {
+      final engine = SnapEngine(mode: SnapMode.oneSecond, snapThresholdPx: 10.0);
+      // 1500ms is 1.5s, 0.5s away from 1s and 2s grid
+      // With pxPerSec=100, 500ms = 50px which is > 10px threshold
+      expect(engine.snap(1500, 100.0), isNull);
+
+      // 1050ms is 0.05s away from 1s grid, 5px at 100px/s
+      expect(engine.snap(1050, 100.0), equals(1000));
+    });
+
+    test('snaps to 0.5s grid', () {
+      final engine = SnapEngine(mode: SnapMode.halfSecond, snapThresholdPx: 10.0);
+      // 750ms is 0.25s from 0.5s and 0.75s grids
+      // 250ms * 100px/s = 25px > 10px threshold
+      expect(engine.snap(750, 100.0), isNull);
+
+      // 525ms is 25ms from 0.5s grid = 2.5px < 10px
+      expect(engine.snap(525, 100.0), equals(500));
+    });
+
+    test('exact grid points return themselves', () {
+      final engine = SnapEngine(mode: SnapMode.oneSecond);
+      expect(engine.snap(1000, 100.0), equals(1000));
+      expect(engine.snap(2000, 100.0), equals(2000));
+    });
+  });
+
+  group('track operations', () {
+    test('setTrackMute updates track state', () {
+      final controller = EditorController();
+      final trackId = controller.project.tracks[0].id;
+      expect(controller.project.tracks[0].isMuted, isFalse);
+
+      controller.setTrackMute(trackId, true);
+      expect(controller.project.tracks[0].isMuted, isTrue);
+      expect(controller.statusMessage, contains('muted'));
+
+      controller.setTrackMute(trackId, false);
+      expect(controller.project.tracks[0].isMuted, isFalse);
+      controller.dispose();
+    });
+
+    test('setTrackVolume updates track state', () {
+      final controller = EditorController();
+      final trackId = controller.project.tracks[0].id;
+      controller.setTrackVolume(trackId, 0.5);
+      expect(controller.project.tracks[0].volume, equals(0.5));
       controller.dispose();
     });
   });

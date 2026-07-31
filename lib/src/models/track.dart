@@ -134,6 +134,11 @@ class Track {
     }
   }
 
+  /// Public accessor for track index from type — v0.5.5
+  int get trackTypeIndex {
+    return _trackIndexFromType(type);
+  }
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,

@@ -136,6 +136,34 @@ typedef DartGhitaEngineClearClipKeyframes = int Function(Pointer<GhitaEngineCont
 typedef CGhitaEngineHasFFmpeg = Bool Function(Pointer<GhitaEngineContext> ctx);
 typedef DartGhitaEngineHasFFmpeg = bool Function(Pointer<GhitaEngineContext> ctx);
 
+// ========== v0.5.5 New API ==========
+
+// Playback rate
+typedef CGhitaEngineSetPlaybackRate = Void Function(Pointer<GhitaEngineContext> ctx, Float rate);
+typedef DartGhitaEngineSetPlaybackRate = void Function(Pointer<GhitaEngineContext> ctx, double rate);
+
+typedef CGhitaEngineGetPlaybackRate = Float Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineGetPlaybackRate = double Function(Pointer<GhitaEngineContext> ctx);
+
+// Keyframe interpolation
+typedef CGhitaEngineSetClipKeyframeInterpolation = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Int32 interpolationType);
+typedef DartGhitaEngineSetClipKeyframeInterpolation = int Function(Pointer<GhitaEngineContext> ctx, int clipId, int interpolationType);
+
+typedef CGhitaEngineGetClipKeyframeInterpolation = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId);
+typedef DartGhitaEngineGetClipKeyframeInterpolation = int Function(Pointer<GhitaEngineContext> ctx, int clipId);
+
+// Text overlay rendering
+typedef CGhitaEngineRenderTextOverlay = Bool Function(
+  Pointer<GhitaEngineContext> ctx,
+  Pointer<Uint8> outBuffer, Int32 width, Int32 height,
+  Pointer<Utf8> text, Int32 fontSize, Float r, Float g, Float b, Float a
+);
+typedef DartGhitaEngineRenderTextOverlay = bool Function(
+  Pointer<GhitaEngineContext> ctx,
+  Pointer<Uint8> outBuffer, int width, int height,
+  Pointer<Utf8> text, int fontSize, double r, double g, double b, double a
+);
+
 // ========== Bindings Class ==========
 
 class GhitaNativeBindings {
@@ -198,6 +226,13 @@ class GhitaNativeBindings {
   late DartGhitaEngineAddClipKeyframe addClipKeyframe;
   late DartGhitaEngineClearClipKeyframes clearClipKeyframes;
   late DartGhitaEngineHasFFmpeg hasFFmpeg;
+
+  // v0.5.5 New bindings
+  late DartGhitaEngineSetPlaybackRate setPlaybackRate;
+  late DartGhitaEngineGetPlaybackRate getPlaybackRate;
+  late DartGhitaEngineSetClipKeyframeInterpolation setClipKeyframeInterpolation;
+  late DartGhitaEngineGetClipKeyframeInterpolation getClipKeyframeInterpolation;
+  late DartGhitaEngineRenderTextOverlay renderTextOverlay;
 
   GhitaNativeBindings._internal() {
     _loadLibrary();
@@ -331,5 +366,12 @@ class GhitaNativeBindings {
     addClipKeyframe = _lib.lookupFunction<CGhitaEngineAddClipKeyframe, DartGhitaEngineAddClipKeyframe>('ghita_engine_add_clip_keyframe');
     clearClipKeyframes = _lib.lookupFunction<CGhitaEngineClearClipKeyframes, DartGhitaEngineClearClipKeyframes>('ghita_engine_clear_clip_keyframes');
     hasFFmpeg = _lib.lookupFunction<CGhitaEngineHasFFmpeg, DartGhitaEngineHasFFmpeg>('ghita_engine_has_ffmpeg');
+
+    // v0.5.5 New bindings
+    setPlaybackRate = _lib.lookupFunction<CGhitaEngineSetPlaybackRate, DartGhitaEngineSetPlaybackRate>('ghita_engine_set_playback_rate');
+    getPlaybackRate = _lib.lookupFunction<CGhitaEngineGetPlaybackRate, DartGhitaEngineGetPlaybackRate>('ghita_engine_get_playback_rate');
+    setClipKeyframeInterpolation = _lib.lookupFunction<CGhitaEngineSetClipKeyframeInterpolation, DartGhitaEngineSetClipKeyframeInterpolation>('ghita_engine_set_clip_keyframe_interpolation');
+    getClipKeyframeInterpolation = _lib.lookupFunction<CGhitaEngineGetClipKeyframeInterpolation, DartGhitaEngineGetClipKeyframeInterpolation>('ghita_engine_get_clip_keyframe_interpolation');
+    renderTextOverlay = _lib.lookupFunction<CGhitaEngineRenderTextOverlay, DartGhitaEngineRenderTextOverlay>('ghita_engine_render_text_overlay');
   }
 }

@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.ghita.ghita_edit"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

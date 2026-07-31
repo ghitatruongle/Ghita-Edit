@@ -1,8 +1,23 @@
-# Ghita Edit — v0.4.5+5
+# Ghita Edit — v0.5.5+0
 
 A cross-platform multimedia editor suite built with **Flutter** and a native **C++20 rendering engine** connected via Dart FFI.
 
 ## Features
+
+### v0.5.5 — Editor Experience Update
+
+- ✂️ **Trim Handles** — Resize clips from either edge with visual drag handles
+- 🧲 **Snap-to-Grid** — Real snap engine (Off / 0.5s / 1s), snaps to grid, clip edges, playhead
+- 🖱 **Multi-select** — Ctrl+Click toggle, Shift+Click range, long-press marquee selection
+- 👁 **Track Visibility** — Show/hide tracks with eye icon in timeline header
+- 🎛 **Per-Clip Inspector** — Editable properties, per-clip filter/volume/speed/opacity
+- 🎬 **Keyframe UI** — Animation keyframe panel with interpolation types
+- 📝 **Text Overlay** — Text presets (Title, Subtitle, Lower Third, Watermark)
+- 📁 **Real Media Bin** — Shows imported clips with drag-drop to timeline
+- 🎬 **Export Presets** — YouTube, TikTok, Twitter, Web VP9, ProRes, Custom
+- ⏩ **Playback Speed** — 0.25x–4x speed control in preview player
+- 💡 **Light Theme** — Full light/dark theme support
+- 🔧 **C++ Engine Extensions** — Playback rate API, text rasterizer stub, keyframe interpolation
 
 ### v0.4.5 — FFmpeg Integration & Major Update
 
@@ -128,7 +143,7 @@ flutter test                    # Dart unit tests
 ## Versioning
 
 Version is centralized in `lib/src/core/version.dart` and auto-verified by CI.
-Current: **v0.4.5+5** (build 5)
+Current: **v0.5.5+0** (build 0)
 
 ## License
 

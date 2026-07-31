@@ -22,6 +22,9 @@ class Project {
   /// Global playback position (not saved, runtime only).
   int playheadMs;
 
+  /// v0.5.5: Multi-select support via Set of clip IDs
+  final Set<String> _selectedClipIds = <String>{};
+
   Project({
     required this.name,
     this.filePath = '',
@@ -51,18 +54,37 @@ class Project {
   /// Get all clips across all tracks.
   List<Clip> get allClips => tracks.expand((t) => t.clips).toList();
 
-  /// Get the currently selected clip (if any).
+  /// Get the currently selected clip (first in selection set).
   Clip? get selectedClip {
-    for (final track in tracks) {
-      for (final clip in track.clips) {
-        if (clip.isSelected) return clip;
+    for (final id in _selectedClipIds) {
+      for (final track in tracks) {
+        for (final clip in track.clips) {
+          if (clip.id == id) return clip;
+        }
       }
     }
     return null;
   }
 
+  /// All currently selected clips, in selection order.
+  List<Clip> get selectedClips {
+    final result = <Clip>[];
+    for (final id in _selectedClipIds) {
+      for (final track in tracks) {
+        for (final clip in track.clips) {
+          if (clip.id == id) result.add(clip);
+        }
+      }
+    }
+    return result;
+  }
+
+  /// Number of currently selected clips.
+  int get selectedClipCount => _selectedClipIds.length;
+
   /// Deselect all clips.
   void deselectAll() {
+    _selectedClipIds.clear();
     for (final track in tracks) {
       for (final clip in track.clips) {
         clip.isSelected = false;
@@ -70,15 +92,55 @@ class Project {
     }
   }
 
-  /// Select a clip by ID.
+  /// Select a clip by ID, clearing previous selection (single-select mode).
   void selectClip(String clipId) {
+    _selectedClipIds.clear();
+    _selectedClipIds.add(clipId);
+    _syncClipSelectionFlags();
+  }
+
+  /// Toggle a clip in/out of the current selection (multi-select).
+  void toggleClipSelection(String clipId) {
+    if (_selectedClipIds.contains(clipId)) {
+      _selectedClipIds.remove(clipId);
+    } else {
+      _selectedClipIds.add(clipId);
+    }
+    _syncClipSelectionFlags();
+  }
+
+  /// Select a range of clips between two clip IDs (Shift+click range select).
+  void selectRange(String fromClipId, String toClipId) {
     deselectAll();
+    final allClips = _allClipsSortedByTime;
+    final fromIdx = allClips.indexWhere((c) => c.id == fromClipId);
+    final toIdx = allClips.indexWhere((c) => c.id == toClipId);
+    if (fromIdx == -1 || toIdx == -1) return;
+    final start = fromIdx < toIdx ? fromIdx : toIdx;
+    final end = fromIdx < toIdx ? toIdx : fromIdx;
+    for (int i = start; i <= end; i++) {
+      _selectedClipIds.add(allClips[i].id);
+    }
+    _syncClipSelectionFlags();
+  }
+
+  /// Add clip IDs to selection (for marquee selection).
+  void addToSelection(Set<String> clipIds) {
+    _selectedClipIds.addAll(clipIds);
+    _syncClipSelectionFlags();
+  }
+
+  List<Clip> get _allClipsSortedByTime {
+    final all = allClips;
+    all.sort((a, b) => a.timelineStartMs.compareTo(b.timelineStartMs));
+    return all;
+  }
+
+  /// Sync _selectedClipIds → clip.isSelected for UI widgets that read isSelected.
+  void _syncClipSelectionFlags() {
     for (final track in tracks) {
       for (final clip in track.clips) {
-        if (clip.id == clipId) {
-          clip.isSelected = true;
-          return;
-        }
+        clip.isSelected = _selectedClipIds.contains(clip.id);
       }
     }
   }

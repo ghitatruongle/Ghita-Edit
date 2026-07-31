@@ -40,6 +40,16 @@ enum class TransitionType {
 };
 
 /**
+ * @brief Keyframe interpolation types for animation curves.
+ */
+enum class KeyframeInterpolation {
+    Linear = 0,
+    EaseIn = 1,
+    EaseOut = 2,
+    Hold = 3
+};
+
+/**
  * @brief Media metadata structure returned by getMediaInfo.
  */
 struct MediaInfo {
@@ -331,6 +341,18 @@ public:
     bool addClipKeyframe(int clipId, int64_t timeMs, float value);
     bool clearClipKeyframes(int clipId);
 
+    // v0.5.5: Keyframe interpolation
+    bool setClipKeyframeInterpolation(int clipId, KeyframeInterpolation interpolation);
+    KeyframeInterpolation getClipKeyframeInterpolation(int clipId) const;
+
+    // v0.5.5: Playback rate control
+    void setPlaybackRate(float rate);
+    float getPlaybackRate() const { return m_playbackRate.load(); }
+
+    // v0.5.5: Text overlay rendering (basic rasterizer stub)
+    bool renderTextOverlay(uint8_t* outBuffer, int width, int height,
+                           const char* text, int fontSize, float r, float g, float b, float a);
+
     // Audio Waveform
     bool getAudioWaveform(float* outSamples, int sampleCount);
 
@@ -377,6 +399,9 @@ private:
 
     std::atomic<float> m_volume{1.0f};
     std::atomic<int> m_snappingFps{30};
+
+    // v0.5.5: Playback rate
+    std::atomic<float> m_playbackRate{1.0f};
 
     int m_activeFilterType{0};
     std::atomic<float> m_filterIntensity{1.0f};

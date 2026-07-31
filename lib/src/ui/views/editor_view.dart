@@ -9,7 +9,14 @@ import '../widgets/timeline_panel.dart';
 import '../widgets/export_dialog.dart';
 
 class EditorView extends StatefulWidget {
-  const EditorView({super.key});
+  final ThemeMode themeMode;
+  final Future<void> Function(ThemeMode) onThemeModeChanged;
+
+  const EditorView({
+    super.key,
+    required this.themeMode,
+    required this.onThemeModeChanged,
+  });
 
   @override
   State<EditorView> createState() => _EditorViewState();
@@ -79,10 +86,53 @@ class _EditorViewState extends State<EditorView> {
 
                 const Divider(height: 1, color: AppTheme.divider),
 
+          Expanded(
+            flex: 4,
+            child: Column(
+              children: [
                 Expanded(
-                  flex: 4,
+                  flex: 10,
                   child: TimelinePanel(controller: _controller),
                 ),
+                // v0.5.5: Status bar
+                Container(
+                  height: 24,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: const BoxDecoration(
+                    color: AppTheme.surface,
+                    border: Border(top: BorderSide(color: AppTheme.divider)),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        'v${AppTheme.appVersion}',
+                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 9),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        '${_controller.project.allClips.length} clips',
+                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 9),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${_controller.tracks.length} tracks',
+                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 9),
+                      ),
+                      const Spacer(),
+                      Text(
+                        _controller.isEngineReady ? 'C++ FFI Active' : 'Demo Mode',
+                        style: TextStyle(
+                          color: _controller.isEngineReady ? Colors.greenAccent : Colors.amberAccent,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
               ],
             ),
           );
@@ -199,6 +249,22 @@ class _EditorViewState extends State<EditorView> {
             _MenuItem('Sepia', Icons.filter_vintage, () => _controller.setFilter(2, 1.0)),
             _MenuItem('Invert', Icons.invert_colors, () => _controller.setFilter(3, 1.0)),
             _MenuItem('Brightness+', Icons.brightness_6, () => _controller.setFilter(4, 0.5)),
+            _MenuItem('Blur', Icons.blur_on, () => _controller.setFilter(5, 1.0)),
+            _MenuItem('Edge Detect', Icons.visibility, () => _controller.setFilter(6, 1.0)),
+            _MenuItem('Color Grade', Icons.color_lens, () => _controller.setFilter(7, 1.0)),
+            _MenuItem('Pixelate', Icons.grid_on, () => _controller.setFilter(9, 1.0)),
+          ]),
+          _buildPopupMenu('View', [
+            _MenuItem(
+              widget.themeMode == ThemeMode.dark ? 'Switch to Light Theme' : 'Switch to Dark Theme',
+              widget.themeMode == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode,
+              () async {
+                final newMode = widget.themeMode == ThemeMode.dark
+                    ? ThemeMode.light
+                    : ThemeMode.dark;
+                await widget.onThemeModeChanged(newMode);
+              },
+            ),
           ]),
           _buildPopupMenu('Help', [
             _MenuItem('Keyboard Shortcuts', Icons.keyboard, () => _showShortcutsDialog(context)),
@@ -430,19 +496,21 @@ class _EditorViewState extends State<EditorView> {
             Text('About Ghita Edit', style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Version: ${AppTheme.appVersion}', style: const TextStyle(color: AppTheme.textMain)),
-            const SizedBox(height: 8),
-            const Text('Cross-platform multimedia editor with native C++ engine.', style: TextStyle(color: AppTheme.textMuted, fontSize: 12)),
-            const SizedBox(height: 8),
-            Text('Engine: ${_controller.engineVersion}', style: const TextStyle(color: AppTheme.accent, fontSize: 11)),
-            const SizedBox(height: 4),
-            Text('Clips: ${_controller.project.allClips.length} | Tracks: ${_controller.tracks.length}', style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
-          ],
-        ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Version: ${AppTheme.appVersion}', style: const TextStyle(color: AppTheme.textMain)),
+              const SizedBox(height: 8),
+              const Text('Cross-platform multimedia editor with native C++ engine.', style: TextStyle(color: AppTheme.textMuted, fontSize: 12)),
+              const SizedBox(height: 8),
+              Text('Engine: ${_controller.engineVersion}', style: const TextStyle(color: AppTheme.accent, fontSize: 11)),
+              const SizedBox(height: 4),
+              Text('Clips: ${_controller.project.allClips.length} | Tracks: ${_controller.tracks.length}', style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+              const SizedBox(height: 8),
+              Text('v0.5.5: Trim handles, snap-to-grid, multi-select, per-clip inspector, export presets, playback speed, light theme, text overlay, audio mixer, drag-drop media bin', style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+            ],
+          ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
         ],

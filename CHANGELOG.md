@@ -1,5 +1,33 @@
 # Ghita Edit — Changelog
 
+## v0.5.5 (2026-07-30) — Editor Experience Update
+- 🎬 **Phase 1: Timeline UX Overhaul**
+  - **Trim Handles** — Resize clips from either edge with visual drag handles; undoable via TrimClipCommand
+  - **Snap-to-Grid** — Real snap engine with Off / 0.5s / 1s toggle; snaps to grid lines, clip edges, and playhead
+  - **Multi-select Clips** — Ctrl+Click toggle, Shift+Click range select, long-press+drag marquee selection
+  - **Bulk Operations** — Delete all, apply filter to all selected clips
+  - **Track Visibility Toggle** — Eye icon in track header to show/hide tracks
+- 🎨 **Phase 2: Professional Inspector & Features**
+  - **Per-Clip Inspector** — Editable timecode fields, per-clip filter (not global), per-clip volume
+  - **Clip Properties Panel** — Speed (0.25x–4x) and Opacity (0–100%) sliders per clip
+  - **Keyframe Animation Panel** — Add/Remove keyframes, interpolation types (Linear/EaseIn/EaseOut/Hold)
+  - **Text Overlay Tool** — MediaBin Text tab with presets (Title, Subtitle, Lower Third, Watermark); adds text clips to overlay track
+  - **Audio Mixer Surface** — Per-clip volume control in inspector
+- 🚀 **Phase 3: Workflow Improvements**
+  - **Real Media Bin** — Shows actual imported clips with duration, type icon; syncs with project
+  - **Drag-Drop to Timeline** — Long-press drag from MediaBin to timeline track (DragTarget)
+  - **Export Presets** — 8 one-click presets: YouTube 1080p/4K, TikTok 9:16, Twitter 720p, Web VP9, Archive ProRes, Custom
+  - **Aspect Ratio Display** — Shows W:H ratio in export dialog
+  - **Playback Speed Control** — Speed dropdown in preview player (0.25x–4x)
+  - **Extended Filter Chips** — Dynamic filter list from engine, per-clip filter application
+- 💻 **Phase 4: C++ Engine & Quality of Life**
+  - **Playback Rate API** — `ghita_engine_set_playback_rate` C API, `m_playbackRate` atomic field
+  - **Text Overlay Renderer** — Basic text rasterizer stub in C++ engine
+  - **Keyframe Interpolation** — `KeyframeInterpolation` enum (Linear, EaseIn, EaseOut, Hold) + C API
+  - **Light Theme** — Full light theme palette with helper color functions
+  - **Version Bump** — Centralized version updated to v0.5.5 across all 10+ files
+- ✅ **Clip Model Extensions** — Added `speed` and `opacity` fields with JSON serialization
+
 ## v0.4.5+5 (2026-07-30) — FFmpeg Integration & Export, UI Overhaul, Cross-Platform
 - 🎬 **Phase 0: Version bump** — Centralized version updated to v0.4.5+5 across all 10 files
 - 🚀 **Phase 1: Real FFmpeg Integration** — Replaced synthetic decoder with actual FFmpeg decoding pipeline (`avformat`, `avcodec`, `swscale`, `swresample`)

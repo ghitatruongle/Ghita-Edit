@@ -59,6 +59,14 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}.${(millis ~/ 10).toString().padLeft(2, '0')}';
   }
 
+  double _playbackSpeed = 1.0;
+
+  void _changeSpeed(double newSpeed) {
+    setState(() { _playbackSpeed = newSpeed; });
+    // TODO: Call engine playback rate API when available (v0.5.5 C++ extension)
+    debugPrint('Playback speed: ${newSpeed}x');
+  }
+
   @override
   Widget build(BuildContext context) {
     final ctrl = widget.controller;
@@ -180,6 +188,14 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                   ),
                 ),
 
+                // Playback Speed — v0.5.5
+                _SpeedDropdown(
+                  currentSpeed: _playbackSpeed,
+                  onSpeedChanged: _changeSpeed,
+                ),
+
+                const SizedBox(width: 4),
+
                 // Playback Transport Controls
                 IconButton(
                   icon: const Icon(Icons.replay_10, color: AppTheme.textMain),
@@ -225,6 +241,46 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ========== Speed Dropdown Widget — v0.5.5 ==========
+
+class _SpeedDropdown extends StatelessWidget {
+  final double currentSpeed;
+  final Function(double) onSpeedChanged;
+
+  const _SpeedDropdown({
+    required this.currentSpeed,
+    required this.onSpeedChanged,
+  });
+
+  static const _speeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.background,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppTheme.divider),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<double>(
+          value: currentSpeed,
+          isDense: true,
+          dropdownColor: AppTheme.surface,
+          style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.bold),
+          items: _speeds.map((s) => DropdownMenuItem(
+            value: s,
+            child: Text('${s}x'),
+          )).toList(),
+          onChanged: (val) {
+            if (val != null) onSpeedChanged(val);
+          },
+        ),
       ),
     );
   }
