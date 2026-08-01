@@ -6,16 +6,40 @@ import '../theme/app_theme.dart';
 
 // ============================================================
 // UndoHistoryPanel — v0.7.0 Visual Undo/Redo Timeline
+// v0.7.8: Stateful — listens to the controller so the list, "steps" counter
+// and CURRENT badge actually update when undo/redo happens inside the panel.
 // ============================================================
 
-class UndoHistoryPanel extends StatelessWidget {
+class UndoHistoryPanel extends StatefulWidget {
   final EditorController controller;
   final VoidCallback onClose;
 
   const UndoHistoryPanel({super.key, required this.controller, required this.onClose});
 
   @override
+  State<UndoHistoryPanel> createState() => _UndoHistoryPanelState();
+}
+
+class _UndoHistoryPanelState extends State<UndoHistoryPanel> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onControllerChanged);
+  }
+
+  void _onControllerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
     final history = controller.commandHistory;
     final undoStack = history.undoStack;
     final redoStack = history.redoStack;
@@ -44,7 +68,7 @@ class UndoHistoryPanel extends StatelessWidget {
                 Text('${undoStack.length} steps', style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
                 IconButton(
                   icon: const Icon(Icons.close_rounded, size: 18, color: AppTheme.textMuted),
-                  onPressed: onClose,
+                  onPressed: widget.onClose,
                   style: IconButton.styleFrom(padding: const EdgeInsets.all(4)),
                 ),
               ],
@@ -98,8 +122,11 @@ class UndoHistoryPanel extends StatelessWidget {
                       isLast: index == redoStack.length - 1,
                       isUndo: false,
                       onTap: () {
-                        // Redo to this point
-                        for (int i = 0; i <= index; i++) {
+                        // v0.7.8: Redo pops from the TOP of the stack, so
+                        // "redo to item i" needs (length - i) redos. The old
+                        // code ran index+1 redos — tapping the FIRST item
+                        // actually redid the LAST one.
+                        while (controller.commandHistory.redoStack.length > index) {
                           controller.redo();
                         }
                         controller.notifyListeners();

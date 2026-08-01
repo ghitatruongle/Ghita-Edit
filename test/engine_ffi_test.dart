@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghita_edit/src/controllers/editor_controller.dart';
 import 'package:ghita_edit/src/controllers/command_history.dart';
+import 'package:ghita_edit/src/core/version.dart';
 import 'package:ghita_edit/src/models/clip.dart';
 import 'package:ghita_edit/src/models/track.dart';
 import 'package:ghita_edit/src/models/project.dart';
@@ -291,7 +292,8 @@ void main() {
       controller.importMedia('test.mp4');
       final json = controller.project.toJsonString();
       expect(json.contains('test.mp4'), isTrue);
-      expect(json.contains('0.5.5'), isTrue);
+      // Version comes from the centralized version constants, not hardcoded
+      expect(json.contains(flutterVersion), isTrue);
     });
 
     test('project deserializes from JSON', () {
@@ -681,6 +683,90 @@ void main() {
       controller.setTrackVolume(trackId, 0.5);
       expect(controller.project.tracks[0].volume, equals(0.5));
       controller.dispose();
+    });
+  });
+
+  // ========== v0.7.8: Clip property commands (undoable) ==========
+
+  group('clip property commands (v0.7.8)', () {
+    late EditorController controller;
+    late String clipId;
+
+    setUp(() {
+      controller = EditorController();
+      controller.importMedia('video.mp4');
+      clipId = controller.project.allClips.first.id;
+    });
+    tearDown(() => controller.dispose());
+
+    test('setClipSpeed changes clip and is undoable', () {
+      controller.setClipSpeed(clipId, 2.0);
+      expect(controller.project.allClips.first.speed, equals(2.0));
+      controller.undo();
+      expect(controller.project.allClips.first.speed, equals(1.0));
+      controller.redo();
+      expect(controller.project.allClips.first.speed, equals(2.0));
+    });
+
+    test('setClipOpacity clamps to [0,1]', () {
+      controller.setClipOpacity(clipId, 5.0);
+      expect(controller.project.allClips.first.opacity, equals(1.0));
+      controller.setClipOpacity(clipId, -3.0);
+      expect(controller.project.allClips.first.opacity, equals(0.0));
+    });
+
+    test('slider drag coalesces into one undo entry', () {
+      controller.setClipSpeed(clipId, 1.1);
+      controller.setClipSpeed(clipId, 1.3);
+      controller.setClipSpeed(clipId, 1.6);
+      controller.setClipSpeed(clipId, 2.0);
+      // Four ticks of one drag → exactly one undo entry
+      expect(controller.canUndo, isTrue);
+      controller.undo();
+      // Undo restores the pre-gesture value (1.0), not an intermediate one
+      expect(controller.project.allClips.first.speed, equals(1.0));
+      expect(controller.project.allClips.first.opacity, equals(1.0));
+      controller.redo();
+      expect(controller.project.allClips.first.speed, equals(2.0));
+    });
+
+    test('different properties do not coalesce', () {
+      controller.setClipSpeed(clipId, 2.0);
+      controller.setClipOpacity(clipId, 0.5);
+      controller.undo(); // undo opacity only
+      expect(controller.project.allClips.first.opacity, equals(1.0));
+      expect(controller.project.allClips.first.speed, equals(2.0));
+      controller.undo(); // undo speed
+      expect(controller.project.allClips.first.speed, equals(1.0));
+    });
+
+    test('different clips do not coalesce', () {
+      controller.importMedia('second.mp4');
+      final secondId = controller.project.allClips.last.id;
+      controller.setClipSpeed(clipId, 2.0);
+      controller.setClipSpeed(secondId, 2.5);
+      controller.undo();
+      expect(controller.project.allClips.last.speed, equals(1.0));
+      expect(controller.project.allClips.first.speed, equals(2.0));
+      controller.undo();
+      expect(controller.project.allClips.first.speed, equals(1.0));
+    });
+
+    test('interleaved actions break coalescing chain', () {
+      controller.setClipSpeed(clipId, 2.0);
+      controller.setClipOpacity(clipId, 0.5); // different property breaks chain
+      controller.setClipSpeed(clipId, 3.0);   // does NOT coalesce with first
+      controller.undo();
+      expect(controller.project.allClips.first.speed, equals(2.0));
+    });
+
+    test('transition persists on model and round-trips JSON', () {
+      controller.setClipTransition(clipId, 3, 500); // Slide
+      expect(controller.project.allClips.first.transitionType, equals(3));
+      final json = controller.project.toJsonString();
+      expect(json.contains('transitionType'), isTrue);
+      final loaded = Project.fromJsonString(json);
+      expect(loaded.allClips.first.transitionType, equals(3));
     });
   });
 }

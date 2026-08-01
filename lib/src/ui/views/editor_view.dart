@@ -70,20 +70,25 @@ class _EditorViewState extends State<EditorView> {
   }
 
   // v0.7.0: Session Recovery — check for autosave on startup
+  // v0.7.8: Uses a cancellable Timer so dispose() never leaves a pending timer
+  Timer? _sessionRecoveryTimer;
+
   Future<void> _checkSessionRecovery() async {
     // Delay slightly to let engine initialize
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (!mounted) return;
+    _sessionRecoveryTimer?.cancel();
+    _sessionRecoveryTimer = Timer(const Duration(milliseconds: 500), () async {
+      if (!mounted) return;
 
-    try {
-      final dir = await _getSupportDir();
-      final latestAutoSave = await _controller.projectService.getLatestAutoSave(dir);
-      if (latestAutoSave != null && mounted) {
-        _showRecoveryDialog(latestAutoSave);
+      try {
+        final dir = await _getSupportDir();
+        final latestAutoSave = await _controller.projectService.getLatestAutoSave(dir);
+        if (latestAutoSave != null && mounted) {
+          _showRecoveryDialog(latestAutoSave);
+        }
+      } catch (e) {
+        debugPrint('Session recovery check failed: $e');
       }
-    } catch (e) {
-      debugPrint('Session recovery check failed: $e');
-    }
+    });
   }
 
   Future<String> _getSupportDir() async {
@@ -143,6 +148,7 @@ class _EditorViewState extends State<EditorView> {
 
   @override
   void dispose() {
+    _sessionRecoveryTimer?.cancel();
     _focusNode.dispose();
     _toastOverlay?.remove();
     _controller.dispose();
@@ -614,8 +620,11 @@ class _EditorViewState extends State<EditorView> {
               _moreToolTile(Icons.redo_rounded, 'Redo', 'Ctrl+Y', () { if (_controller.canRedo) { _controller.redo(); _showToast('Redone'); } Navigator.pop(context); }),
               _moreToolTile(Icons.save_rounded, 'Save Project', 'Ctrl+S', () { _saveProject(context); Navigator.pop(context); }),
               _moreToolTile(Icons.add_circle_outline_rounded, 'New Track', '', () { _addTrack('Video Track', 'video'); Navigator.pop(context); }),
-              _moreToolTile(Icons.history_rounded, 'Undo History', '', () { _showUndoHistoryPanel(context); Navigator.pop(context); }),
-              _moreToolTile(Icons.dashboard_rounded, 'Templates', '', () { _showTemplatesDialog(context); Navigator.pop(context); }),
+              // v0.7.8: pop the More Tools dialog FIRST, then push the new
+              // one — the old order pushed then popped, instantly closing the
+              // freshly opened dialog and leaving More Tools open.
+              _moreToolTile(Icons.history_rounded, 'Undo History', '', () { Navigator.pop(context); _showUndoHistoryPanel(context); }),
+              _moreToolTile(Icons.dashboard_rounded, 'Templates', '', () { Navigator.pop(context); _showTemplatesDialog(context); }),
             ],
           ),
         ),
@@ -1197,15 +1206,13 @@ class _ToastOverlayState extends State<_ToastOverlay> {
     Future.microtask(() {
       if (mounted) setState(() => _opacity = 1);
     });
-    // Auto-dismiss after the widget's duration
+    // Auto-dismiss after the widget's duration — fade out only. The overlay
+    // entry itself is removed by _showNextToast; v0.7.8 removed the
+    // Navigator.maybePop() here, which used to close whatever dialog was on
+    // top (Export, Shortcuts, ...) when the toast expired.
     Future.delayed(widget.duration, () {
       if (mounted) {
         setState(() => _opacity = 0);
-        Future.delayed(AppTheme.durationFast, () {
-          if (mounted) {
-            Navigator.of(context).maybePop();
-          }
-        });
       }
     });
   }

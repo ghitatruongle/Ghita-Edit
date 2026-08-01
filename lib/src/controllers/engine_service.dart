@@ -9,7 +9,10 @@ import 'package:flutter/foundation.dart';
 /// Manages the raw C++ engine lifecycle and native memory.
 /// This class owns the FFI boundary — the controller should never call
 /// native bindings directly for engine operations.
-class EngineService {
+// v0.7.8: ChangeNotifier — the preview tick notifies listeners so the UI
+// (playhead, timecode, frame) actually moves during playback. Previously
+// nothing observed the engine and the preview stayed frozen while playing.
+class EngineService extends ChangeNotifier {
   final GhitaNativeBindings? _bindings;
   Pointer<GhitaEngineContext>? _ctx;
 
@@ -222,12 +225,10 @@ class EngineService {
       _renderTimer!.cancel();
       _renderTimer = null;
     }
-    // Ensure frame pointers are freed to prevent memory leaks
-    if (_framePointer != null) {
-      calloc.free(_framePointer!);
-      _framePointer = null;
-    }
-    _frameBytes = null;
+    // v0.7.8: Do NOT free _framePointer here — it is allocated once by
+    // initialize() and owned until dispose(). Freeing it on every stop meant
+    // the preview tick loop died permanently (first tick saw a null pointer
+    // and cancelled itself). dispose() below still frees it.
   }
 
   void play() {
@@ -291,16 +292,33 @@ class EngineService {
     _durationMs = bindings.getDurationMs(_ctx!);
     _positionMs = 0;
 
+    // v0.7.8: Invalidate the waveform cache when the media changes.
+    _waveformCache = null;
+
     // v0.4.5: Fetch media info after loading
     fetchMediaInfo();
   }
+
+  // v0.7.8: Waveform cache — the timeline calls getAudioWaveform during
+  // build(); with per-tick UI rebuilds during playback this used to hit FFI
+  // every frame. Invalidate on loadMedia instead.
+  Float32List? _waveformCache;
 
   /// Retrieve audio waveform samples from the native engine (v0.3.0).
   Float32List getAudioWaveform(int count, {int? downsamplingFactor}) {
     _checkDisposed();
     final bindings = _bindings;
     if (!isReady || bindings == null || count <= 0) return Float32List(0);
-    
+
+    // v0.7.8: Serve from cache when nothing changed since the last fetch.
+    final cache = _waveformCache;
+    if (cache != null && cache.length == count) {
+      return Float32List.fromList(cache);
+    }
+    if (cache != null && downsamplingFactor == null) {
+      _waveformCache = null;
+    }
+
     // v0.5.8: Apply downsampling for lower resolution at small zoom levels
     final effectiveCount = downsamplingFactor != null 
         ? (count / downsamplingFactor).round()
@@ -310,10 +328,14 @@ class EngineService {
     try {
       final ok = bindings.getAudioWaveform(_ctx!, ptr, effectiveCount);
       if (ok) {
-        final result = Float32List.fromList(ptr.asTypedList(effectiveCount));
+        var result = Float32List.fromList(ptr.asTypedList(effectiveCount));
         // If downsampling was requested, upsample by interpolating
         if (downsamplingFactor != null && effectiveCount < count) {
-          return _upsampleWaveform(result, count);
+          result = _upsampleWaveform(result, count);
+        }
+        // v0.7.8: Cache only the plain 200-sample request (timeline default).
+        if (downsamplingFactor == null) {
+          _waveformCache = result;
         }
         return result;
       }
@@ -455,6 +477,7 @@ class EngineService {
   }
 
   // v0.7.0: Color correction
+  // v0.7.8: Symbol may be absent from the DLL (defensive FFI) — no-op then.
   void applyColorCorrection(int clipId, {
     double exposure = 0.0,
     double contrast = 1.0,
@@ -467,8 +490,9 @@ class EngineService {
   }) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null) return;
-    bindings.applyColorCorrection(
+    final fn = bindings?.applyColorCorrection;
+    if (!isReady || fn == null) return;
+    fn(
       _ctx!, clipId,
       exposure, contrast, highlights, shadows,
       temperature, tint, vibrance, saturation,
@@ -479,24 +503,27 @@ class EngineService {
   bool setKeyframeBezier(int clipId, int keyframeIndex, double cp1x, double cp1y, double cp2x, double cp2y) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null) return false;
-    return bindings.setKeyframeBezier(_ctx!, clipId, keyframeIndex, cp1x, cp1y, cp2x, cp2y) == 0;
+    final fn = bindings?.setKeyframeBezier;
+    if (!isReady || fn == null) return false;
+    return fn(_ctx!, clipId, keyframeIndex, cp1x, cp1y, cp2x, cp2y) == 0;
   }
 
   // v0.7.0: PIP rendering
   bool renderPip(int overlayClipId, double x, double y, double width, double height, double rotation) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null) return false;
-    return bindings.renderPip(_ctx!, overlayClipId, x, y, width, height, rotation);
+    final fn = bindings?.renderPip;
+    if (!isReady || fn == null) return false;
+    return fn(_ctx!, overlayClipId, x, y, width, height, rotation);
   }
 
   // v0.7.0: Thumbnail extraction
   Uint8List? getThumbnail(int clipId, int timeMs, int width, int height) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null) return null;
-    final ptr = bindings.getThumbnail(_ctx!, clipId, timeMs, width, height);
+    final fn = bindings?.getThumbnail;
+    if (!isReady || fn == null) return null;
+    final ptr = fn(_ctx!, clipId, timeMs, width, height);
     if (ptr == nullptr) return null;
     // Copy data and return (caller must not free)
     final size = width * height * 4;
@@ -508,18 +535,20 @@ class EngineService {
   void setFilterPreset(int clipId, int filterType, double intensity) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null) return;
-    bindings.setFilterPreset(_ctx!, clipId, filterType, intensity);
+    final fn = bindings?.setFilterPreset;
+    if (!isReady || fn == null) return;
+    fn(_ctx!, clipId, filterType, intensity);
   }
 
   // v0.7.0: Audio waveform peaks for timeline
   Float32List getAudioWaveformPeaks(int count) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null || count <= 0) return Float32List(0);
+    final fn = bindings?.getAudioWaveformPeaks;
+    if (!isReady || fn == null || count <= 0) return Float32List(0);
     final ptr = calloc<Float>(count);
     try {
-      final ok = bindings.getAudioWaveformPeaks(_ctx!, ptr, count);
+      final ok = fn(_ctx!, ptr, count);
       if (ok) {
         return Float32List.fromList(ptr.asTypedList(count));
       }
@@ -539,9 +568,11 @@ class EngineService {
       _positionMs = bindings.getPositionMs(_ctx!);
       _durationMs = bindings.getDurationMs(_ctx!);
 
-      // Create cache key based on position and rendering parameters
+      // v0.7.8: Cache key includes render-affecting state — a frame rendered
+      // with one filter/volume must not be reused after the filter changes.
       // ignore: unnecessary_brace_in_string_interps
-      final cacheKey = '${_positionMs}_${renderWidth}x$renderHeight';
+      final cacheKey = '${_positionMs}_${renderWidth}x${renderHeight}_f$_activeFilterType'
+          '_i${_filterIntensity.toStringAsFixed(3)}_v${_volume.toStringAsFixed(3)}';
       
       // Try to get frame from cache first
       final cachedFrame = getCachedFrame(cacheKey);
@@ -560,9 +591,13 @@ class EngineService {
       if (success) {
         final nativeList = _framePointer!.asTypedList(renderWidth * renderHeight * 4);
         _frameBytes!.setAll(0, nativeList);
-        // Cache the rendered frame for future use
-        cacheFrame(cacheKey, _frameBytes!);
+        // v0.7.8: Cache a COPY — storing the shared mutable buffer meant every
+        // cache entry aliased the same bytes (later frames overwrote earlier
+        // ones and scrubbing back showed the wrong frame).
+        cacheFrame(cacheKey, Uint8List.fromList(_frameBytes!));
       }
+      // v0.7.8: Push state (position/duration/frame) to the UI every tick.
+      notifyListeners();
       return success;
     } catch (e, st) {
       debugPrint('[EngineService] _tickFrame failed: $e\n$st');
@@ -581,6 +616,7 @@ class EngineService {
     });
   }
 
+  @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
@@ -604,5 +640,6 @@ class EngineService {
     _ctx = null;
     engineVersion = '';
     _nativeLibraryLoaded = false;
+    super.dispose();
   }
 }

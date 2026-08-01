@@ -8,7 +8,7 @@ struct GhitaEngineContext {
 };
 
 // Static string is safe to return because it lives for the process lifetime
-static const char VERSION_STRING[] = "Ghita Core Engine v0.5.5 (C++/Flutter)";
+static const char VERSION_STRING[] = "Ghita Core Engine v0.7.8 (C++/Flutter)";
 
 // Thread-local buffer for JSON return values (FFI-safe)
 static thread_local std::string t_jsonBuffer;
@@ -241,7 +241,9 @@ GHITA_API bool ghita_engine_render_text_overlay(GhitaEngineContext* ctx, uint8_t
     const int boxW = std::min(width, std::max(40, textLen * font_size / 2));
     const int boxH = std::min(height, font_size * 2);
     const int boxX = 20;
-    const int boxY = height - boxH - 20;
+    // v0.7.8: Guard against underflow — a large font_size made boxY negative
+    // and the loops wrote before the buffer (index < 0).
+    const int boxY = std::max(0, height - boxH - 20);
 
     for (int y = boxY; y < boxY + boxH && y < height; ++y) {
         for (int x = boxX; x < boxX + boxW && x < width; ++x) {

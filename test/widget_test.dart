@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ghita_edit/src/core/version.dart';
 import 'package:ghita_edit/src/ui/theme/app_theme.dart';
 import 'package:ghita_edit/src/ui/views/editor_view.dart';
 
@@ -15,7 +16,8 @@ void main() {
 
       final titleMedium = theme.textTheme.titleMedium!;
       expect(titleMedium.color, equals(AppTheme.textMain));
-      expect(titleMedium.fontSize, equals(16));
+      // v0.7.8 design system: titleMedium is 14 (was 16 pre-v0.7.0)
+      expect(titleMedium.fontSize, equals(14));
 
       final bodySmall = theme.textTheme.bodySmall!;
       expect(bodySmall.color, equals(AppTheme.textMuted));
@@ -25,9 +27,9 @@ void main() {
       expect(labelSmall.fontSize, equals(10));
     });
 
-    test('appVersion string matches v0.5.5 convention', () {
+    test('appVersion string matches centralized version constants', () {
       expect(AppTheme.appVersion, startsWith('v'));
-      expect(AppTheme.appVersion, contains('0.5.5'));
+      expect(AppTheme.appVersion, contains(flutterVersion));
     });
   });
 
@@ -50,7 +52,19 @@ void main() {
       // The loading shell should show while engine initializes
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      // v0.7.8: When a native ghita_engine.dll is discoverable in the test
+      // environment the engine can come up almost immediately — accept either
+      // the loading shell or the full editor layout. The stability contract
+      // is: no exceptions at any point.
+      final loading = find.byType(CircularProgressIndicator).evaluate().isNotEmpty;
+      final editorReady = find.text('Export Media Project').evaluate().isNotEmpty ||
+          find.text('Timeline').evaluate().isNotEmpty;
+      expect(loading || editorReady, isTrue,
+          reason: 'expected loading shell or full editor layout');
+      expect(tester.takeException(), isNull);
+
+      // Let the session-recovery timer (500ms) fire so no timer is left pending
+      await tester.pump(const Duration(milliseconds: 600));
       expect(tester.takeException(), isNull);
     });
 

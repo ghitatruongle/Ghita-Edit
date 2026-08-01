@@ -151,6 +151,22 @@ class AppTheme {
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: background,
+      // Card color — explicit so theme.cardColor matches AppTheme.card
+      // (lightTheme already sets cardColor; v0.7.8 fix for dark parity)
+      cardColor: card,
+      // AppBar style (v0.7.8: explicit design token, matches panel surface)
+      appBarTheme: AppBarTheme(
+        backgroundColor: surface,
+        foregroundColor: textMain,
+        elevation: 0,
+        centerTitle: false,
+        titleTextStyle: const TextStyle(
+          color: textMain,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+        ),
+        iconTheme: const IconThemeData(color: textSecondary),
+      ),
       colorScheme: const ColorScheme.dark(
         primary: primary,
         primaryContainer: primaryDark,

@@ -1,5 +1,52 @@
 # Ghita Edit — Changelog
 
+## v0.7.8 (2026-08-01) — Stability & Feature Completeness
+- ✅ **Khắc phục toàn bộ test fail** — test suite 79/79 xanh, `flutter analyze` 0 issues
+- 🐛 **Fix bug detect media type** — import `.mp3`/`.png` giờ tạo đúng clip audio/image; trước đây mọi file đều thành video (extension so sánh thiếu dấu chấm)
+- 📤 **Export báo lỗi trung thực** — không còn báo "Export completed!" khi pipeline fail giữa chừng
+- 🖥 **Demo Mode không treo** — preview hiển thị thông báo rõ ràng thay vì spinner "Rendering..." vô hạn
+- 💾 **Autosave chạy mọi chế độ** — kể cả khi native engine không khả dụng
+- ↩️ **Undo/Redo cho Speed/Opacity/Volume/Filter/Transition** — thao tác inspector đều undo được
+- 🎛 **Inspector đúng ngữ nghĩa** — slider Exposure/Brightness ánh xạ đúng; Transition dropdown phản ánh state clip
+- 🧹 **Dọn UI giả** — tile filter 11-20 chết, Audio FX presets, keyframe dots, filter chips được sửa/ẩn trung thực
+- 🔢 **Đồng bộ version** — native engine + CMake + C API + self-test đồng bộ v0.7.8; CI `check-version-consistency` xanh
+- 📚 **CHANGELOG hoàn chỉnh** — bổ sung entry v0.5.8, v0.7.0 còn thiếu
+
+### 🔧 Deep Review & Debug (2026-08-01) — 30+ bug đã sửa
+- **CRITICAL — FFI bindings v0.7.0 trỏ symbol không tồn tại** → native engine KHÔNG BAO GIỜ load được (app luôn chạy Demo Mode âm thầm dù có DLL). Đã chuyển sang lookup phòng thủ: engine thật giờ chạy, tính năng thiếu tự tắt
+- **CRITICAL — Preview tick chết vĩnh viễn** — `stopPreview()` free `_framePointer` ngay sau khi cấp phát
+- **CRITICAL — Heap overflow C++** — `swr_convert` ghi vượt buffer khi lấy audio waveform
+- **CRITICAL — C++ crash khi path export không ghi được** — `avio_open` fail bị bỏ qua → null deref
+- **HIGH — Autosave "cướp" đường dẫn save** — Ctrl+S sau 60s ghi vào file autosave (nguy cơ mất dữ liệu)
+- **HIGH — Split tại biên clip + Undo nhân đôi clip** (id trùng phá vỡ selection/delete)
+- **HIGH — Selection "thối"** — id clip đã xóa/split vẫn nằm trong selection
+- **HIGH — Paste vào giữa clip tạo overlap + Undo lệch state**
+- **HIGH — Trim kéo trái hiển thị sai** (end tính sau khi mutate start); thiếu `onDragCancel` làm kẹt drag vĩnh viễn
+- **HIGH — Playback UI đông cứng** — tick loop không notify; playhead/timecode/frame đứng yên khi play
+- **HIGH — Frame cache sai** — cache giữ tham chiếu buffer mutable (scrub hiện frame cũ) + không invalidate khi đổi filter
+- **HIGH — Leak FFmpeg context** khi load media lần 2; data race export thread (`m_loadedFilePath`, `m_activeFilterType`); double-join `cancelExport`
+- **MEDIUM** — clip ID trùng trong cùng 1ms (đã fix bằng monotonic counter + 7 test mới), trim `sourceInMs` âm, transition không clamp, crash khi project thiếu track mặc định, toast `maybePop` đóng nhầm dialog, marquee vẽ lệch, FPS '24 FPS' export 60fps, GIF resolution sai, export dialog đóng giữa chừng làm mồ côi export, undo panel redo sai thứ tự + không rebuild, coalescing gộp 2 gesture riêng, Space toggle play khi đang gõ text, shortcut Ctrl+A/X quảng cáo nhưng không hoạt động, ghi file không atomic, `sourceOutMs` sai khi load file cũ, RenderFlex overflow inspector
+- **🔧 CMake FFmpeg detection** — `VCPKG_ROOT` env trỏ path sai (`C:\dev\vcpkg`) từng âm thầm tắt FFmpeg dù có vcpkg hợp lệ tại `C:/vcpkg`; giờ xác minh header thật trước khi dùng path → **release build dùng FFmpeg thật** (avcodec-62/avformat-62/avutil-60/swscale-9/swresample-6, đóng gói kèm 5 DLL)
+
+## v0.7.0 (2026-07-31) — CapCut-level UI/UX & Features
+- 🎨 **CapCut-style Design System** — palette gradient tím-xanh mới, bo góc 12-16px, shadow system, typography mới
+- 🎛 **Bottom Toolbar** — thanh công cụ dưới cùng với Trim, Split, Speed, Filter, Text, Music, Sticker, More
+- ✨ **Smooth Animations** — page transitions fade+slide, clip hover glow, dialog slide-up, toast slide-in
+- 🎬 **Preview Player Overhaul** — mini-controls overlay, playback speed dropdown, frame info
+- 📝 **Text Overlay nâng cấp** — thêm 5 preset text mới, stroke/background options
+- 🧩 **Sticker Support** — thêm clip sticker từ Media Bin
+- 🎛 **Inspector nâng cấp** — color correction, keyframe bezier curves, per-clip properties
+- 📂 **Session Recovery** — phục hồi project từ autosave khi crash
+- 🎞 **Timeline UX** — ripple edit, clip grouping visuals, waveform peaks
+- ⚡ **Engine mở rộng** — color correction, keyframe bezier, PIP render, thumbnail extraction, filter presets (FFI mới)
+
+## v0.5.8 (2026-07-31) — Stability & Polish Release
+- 🔧 **Frame caching** — cache frame khi scrubbing, cải thiện hiệu năng preview
+- 📊 **Waveform downsampling** — giảm CPU khi zoom-out
+- 📤 **Export state tracking** — theo dõi trạng thái export chính xác hơn
+- 🛡 **Export lifecycle tests** — stress tests cho export pipeline
+- 🔧 **Engine & FFI hardening** — xử lý lỗi FFI an toàn hơn
+
 ## v0.5.5 (2026-07-30) — Editor Experience Update
 - 🎬 **Phase 1: Timeline UX Overhaul**
   - **Trim Handles** — Resize clips from either edge with visual drag handles; undoable via TrimClipCommand

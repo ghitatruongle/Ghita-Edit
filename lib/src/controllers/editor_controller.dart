@@ -76,6 +76,13 @@ class EditorController extends ChangeNotifier {
       : _engine = engine ?? EngineService() {
     project = Project(name: 'Untitled Project');
     commandHistory.addListener(_onCommandHistoryChanged);
+    // v0.7.8: Forward engine tick notifications so the UI (playhead,
+    // timecode, frame preview) actually moves during playback.
+    _engine.addListener(_onEngineTick);
+  }
+
+  void _onEngineTick() {
+    if (!_disposed) notifyListeners();
   }
 
   /// Initialize the native engine asynchronously.
@@ -88,6 +95,9 @@ class EditorController extends ChangeNotifier {
       // Check if engine is actually ready or if we're in demo mode
       if (!_engine.isNativeLibraryLoaded || !isEngineReady) {
         _statusMessage = 'Native engine unavailable (Demo Mode - limited features)';
+        // v0.7.8: Autosave must run in every mode — losing a project in
+        // Demo Mode is just as bad as with the engine present
+        _startAutoSave();
         notifyListeners();
         return;
       }
@@ -178,17 +188,31 @@ class EditorController extends ChangeNotifier {
   }
 
   // v0.4.5: Set clip transition via native engine
+  // v0.7.8: Persists on the Dart clip model through an undoable command
+  // (inspector dropdown reflects state, Ctrl+Z reverts, JSON round-trips).
   void setClipTransition(String clipId, int transitionType, int durationMs) {
     if (_disposed) return;
+    // v0.7.8: Clamp — engine transition enum is 0..8, duration must be > 0.
+    final safeType = transitionType.clamp(0, 8);
+    final safeDuration = durationMs < 1 ? 500 : durationMs;
+    commandHistory.execute(
+      ChangeClipTransitionCommand(
+        clipId: clipId,
+        newType: safeType,
+        newDurationMs: safeDuration,
+      ),
+      project,
+    );
     if (_engine.isReady && _engine.bindings != null) {
       final nativeId = _getOrCreateNativeClipId(clipId);
       _engine.bindings!.setClipTransition(
         _engine.ctx,
         nativeId,
-        transitionType,
-        durationMs,
+        safeType,
+        safeDuration,
       );
     }
+    notifyListeners();
   }
 
   // ========== CLIP & TIMELINE OPERATIONS ==========
@@ -199,27 +223,30 @@ class EditorController extends ChangeNotifier {
 
     // Use path package for proper cross-platform path handling with Unicode support
     final fileName = basename(path);
-    final fileExtension = extension(fileName).toLowerCase();
+    // extension() returns '.mp3' (with leading dot) — strip it before matching
+    final fileExtension = extension(fileName).toLowerCase().replaceFirst('.', '');
 
     // Determine clip type from fileExtension
     ClipType clipType;
-    String targetTrackId;
+    String? targetTrackId;
     if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(fileExtension)) {
       clipType = ClipType.video;
-      targetTrackId = 'track_video_1';
     } else if (['mp3', 'wav', 'flac', 'aac', 'ogg'].contains(fileExtension)) {
       clipType = ClipType.audio;
-      targetTrackId = 'track_audio_1';
     } else if (['png', 'jpg', 'jpeg', 'gif', 'bmp'].contains(fileExtension)) {
       clipType = ClipType.image;
-      targetTrackId = 'track_overlay_1';
     } else {
       clipType = ClipType.video;
-      targetTrackId = 'track_video_1';
+    }
+    targetTrackId = trackIdForClipType(clipType);
+    if (targetTrackId == null) {
+      _statusMessage = 'No track available for this media type';
+      notifyListeners();
+      return;
     }
 
     final clip = Clip(
-      id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
+      id: Clip.nextId(),
       sourceFilePath: path,
       displayName: fileName,
       timelineStartMs: 0,
@@ -259,12 +286,23 @@ class EditorController extends ChangeNotifier {
     for (final track in project.tracks) {
       final clip = track.clipAtPosition(_positionMs);
       if (clip != null) {
+        // v0.7.8: Splitting exactly at a clip boundary is a no-op — do not
+        // push a command for it: undoing such a command re-added the original
+        // clip and produced a duplicate on the track.
+        if (_positionMs <= clip.timelineStartMs || _positionMs >= clip.timelineEndMs) {
+          _statusMessage = 'No clip at playhead to split';
+          notifyListeners();
+          return;
+        }
         final cmd = SplitClipCommand(
           trackId: track.id,
           clipId: clip.id,
           positionMs: _positionMs,
         );
         commandHistory.execute(cmd, project);
+        // v0.7.8: The original clip id disappears after split — drop it from
+        // the selection so highlight/count stay consistent with reality.
+        project.pruneSelection();
         _statusMessage = 'Split clip at ${(_positionMs / 1000).toStringAsFixed(1)}s';
         notifyListeners();
         return;
@@ -292,6 +330,9 @@ class EditorController extends ChangeNotifier {
         final cmd = DeleteClipCommand(trackId: track.id, clip: sel);
         commandHistory.execute(cmd, project);
       }
+      // v0.7.8: Drop selection ids of deleted clips (stale selection caused
+      // "N selected" with nothing selectable and phantom highlights).
+      project.pruneSelection();
       _statusMessage = 'Deleted ${selectedClips.length} clips';
       notifyListeners();
       return;
@@ -310,6 +351,7 @@ class EditorController extends ChangeNotifier {
 
     final cmd = DeleteClipCommand(trackId: track.id, clip: sel);
     commandHistory.execute(cmd, project);
+    project.pruneSelection();
     _statusMessage = 'Deleted: ${sel.displayName}';
     notifyListeners();
   }
@@ -318,7 +360,7 @@ class EditorController extends ChangeNotifier {
   void addNewTrack(String name, TrackType type) {
     if (_disposed) return;
     final newTrack = Track(
-      id: 'track_${type.name}_${DateTime.now().millisecondsSinceEpoch}',
+      id: Track.nextId(),
       name: name,
       type: type,
     );
@@ -360,6 +402,58 @@ class EditorController extends ChangeNotifier {
     if (clip.id.isEmpty) return;
     final cmd = TrimClipCommand(trackId: track.id, clipId: clipId, trimStart: false, newBoundaryMs: newEndMs);
     commandHistory.execute(cmd, project);
+    notifyListeners();
+  }
+
+  // v0.7.8: Per-clip scalar properties with undo/redo support (one undo entry
+  // per drag gesture thanks to command coalescing keyed by _propertyGesture).
+  int _propertyGestureCounter = 0;
+
+  /// Call on slider drag start — a fresh gesture id breaks the coalescing
+  /// chain, so two separate drags produce two undo entries.
+  void beginPropertyGesture() {
+    _propertyGestureCounter++;
+  }
+
+  void setClipSpeed(String clipId, double speed) {
+    if (_disposed) return;
+    commandHistory.execute(
+      ChangeClipPropertyCommand(
+        clipId: clipId,
+        property: 'speed',
+        newValue: speed.clamp(0.25, 4.0),
+        gestureId: _propertyGestureCounter,
+      ),
+      project,
+    );
+    notifyListeners();
+  }
+
+  void setClipOpacity(String clipId, double opacity) {
+    if (_disposed) return;
+    commandHistory.execute(
+      ChangeClipPropertyCommand(
+        clipId: clipId,
+        property: 'opacity',
+        newValue: opacity.clamp(0.0, 1.0),
+        gestureId: _propertyGestureCounter,
+      ),
+      project,
+    );
+    notifyListeners();
+  }
+
+  void setClipVolume(String clipId, double volume) {
+    if (_disposed) return;
+    commandHistory.execute(
+      ChangeClipPropertyCommand(
+        clipId: clipId,
+        property: 'volume',
+        newValue: volume.clamp(0.0, 2.0),
+        gestureId: _propertyGestureCounter,
+      ),
+      project,
+    );
     notifyListeners();
   }
 
@@ -448,7 +542,7 @@ class EditorController extends ChangeNotifier {
   void copySelectedClip() {
     final sel = project.selectedClip;
     if (sel != null) {
-      _clipboardClip = sel.copyWith(id: 'clip_${DateTime.now().millisecondsSinceEpoch}');
+      _clipboardClip = sel.copyWith(id: Clip.nextId());
       _statusMessage = 'Copied: ${sel.displayName}';
       notifyListeners();
     }
@@ -457,14 +551,29 @@ class EditorController extends ChangeNotifier {
   /// Paste clip from clipboard at playhead.
   void pasteClip() {
     if (_clipboardClip == null) return;
+    final trackId = trackIdForClipType(_clipboardClip!.type);
+    if (trackId == null) return;
     final clip = _clipboardClip!.copyWith(
-      id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
+      id: Clip.nextId(),
       timelineStartMs: _positionMs,
     );
-    final trackId = _trackIdForClipType(clip.type);
     final cmd = AddClipCommand(trackId: trackId, clip: clip, positionMs: _positionMs);
     commandHistory.execute(cmd, project);
     _statusMessage = 'Pasted: ${clip.displayName}';
+    notifyListeners();
+  }
+
+  // v0.7.8: Per-clip filter with undo/redo (ChangeFilterCommand).
+  void setClipFilter(String clipId, int filterType, double intensity) {
+    if (_disposed) return;
+    commandHistory.execute(
+      ChangeFilterCommand(
+        clipId: clipId,
+        newFilterType: filterType.clamp(0, 10),
+        newIntensity: intensity.clamp(0.0, 1.0),
+      ),
+      project,
+    );
     notifyListeners();
   }
 
@@ -498,7 +607,14 @@ class EditorController extends ChangeNotifier {
     _volume = 1.0;
     _activeFilterType = 0;
     _filterIntensity = 1.0;
-    if (_engine.isReady) _engine.pause();
+    if (_engine.isReady) {
+      _engine.pause();
+      _engine.seek(0);
+    }
+    // v0.7.8: Reset the Dart↔native clip id map — stale ids would alias
+    // clips of the new project (and the map grew unbounded across projects).
+    _nativeClipIdMap.clear();
+    _nextNativeClipId = 1;
     _statusMessage = 'New project created';
     notifyListeners();
   }
@@ -534,6 +650,13 @@ class EditorController extends ChangeNotifier {
       _volume = 1.0;
       _activeFilterType = 0;
       _filterIntensity = 1.0;
+      if (_engine.isReady) {
+        _engine.pause();
+        _engine.seek(0);
+      }
+      // v0.7.8: Reset native clip id mapping for the new project.
+      _nativeClipIdMap.clear();
+      _nextNativeClipId = 1;
       _statusMessage = 'Loaded: ${project.name}';
       notifyListeners();
       return true;
@@ -547,6 +670,12 @@ class EditorController extends ChangeNotifier {
   bool handleKeyEvent(KeyEvent event) {
     if (_disposed) return false;
     if (event is! KeyDownEvent) return false;
+
+    // v0.7.8: Never hijack keys while the user is typing in a text field —
+    // space/backspace/arrows would otherwise control playback and seeking
+    // instead of editing the field.
+    final focusedWidget = FocusManager.instance.primaryFocus?.context?.widget;
+    if (focusedWidget is EditableText) return false;
 
     final key = event.logicalKey;
     final ctrl = HardwareKeyboard.instance.isControlPressed;
@@ -576,6 +705,21 @@ class EditorController extends ChangeNotifier {
     // Ctrl+C = Copy
     if (ctrl && key == LogicalKeyboardKey.keyC) {
       copySelectedClip();
+      return true;
+    }
+
+    // Ctrl+X = Cut (copy + delete) — v0.7.8: advertised in the shortcuts
+    // dialog but never handled.
+    if (ctrl && key == LogicalKeyboardKey.keyX) {
+      copySelectedClip();
+      deleteSelectedClip();
+      return true;
+    }
+
+    // Ctrl+A = Select all clips — v0.7.8: advertised but never handled.
+    if (ctrl && key == LogicalKeyboardKey.keyA) {
+      project.selectAll();
+      notifyListeners();
       return true;
     }
 
@@ -648,23 +792,27 @@ class EditorController extends ChangeNotifier {
 
   // ========== PRIVATE HELPERS ==========
 
-  int _getNextAvailablePosition(String trackId) {
-    final track = project.tracks.firstWhere((t) => t.id == trackId);
-    return track.durationMs;
+  /// v0.7.8: Resolve the track for a clip type, falling back to the first
+  /// available track. Never throws — a project loaded from disk may not have
+  /// the default track ids (previously firstWhere threw StateError → crash).
+  String? trackIdForClipType(ClipType type) {
+    final preferred = switch (type) {
+      ClipType.video => 'track_video_1',
+      ClipType.audio => 'track_audio_1',
+      ClipType.image ||
+      ClipType.text ||
+      ClipType.overlay ||
+      ClipType.sticker => 'track_overlay_1',
+    };
+    if (project.tracks.any((t) => t.id == preferred)) return preferred;
+    if (project.tracks.isNotEmpty) return project.tracks.first.id;
+    return null;
   }
 
-  String _trackIdForClipType(ClipType type) {
-    switch (type) {
-      case ClipType.video:
-        return 'track_video_1';
-      case ClipType.audio:
-        return 'track_audio_1';
-      case ClipType.image:
-      case ClipType.text:
-      case ClipType.overlay:
-      case ClipType.sticker:
-        return 'track_overlay_1';
-    }
+  int _getNextAvailablePosition(String trackId) {
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return 0;
+    return track.durationMs;
   }
 
   void _onCommandHistoryChanged() {
@@ -703,6 +851,7 @@ class EditorController extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _autoSaveTimer?.cancel();
+    _engine.removeListener(_onEngineTick);
     commandHistory.removeListener(_onCommandHistoryChanged);
     commandHistory.dispose();
     super.dispose();

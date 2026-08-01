@@ -12,6 +12,20 @@ class ProjectService {
 
   /// Save project to a specific file path.
   Future<bool> saveProject(Project project, String filePath) async {
+    final ok = await _writeFile(project, filePath);
+    if (ok) {
+      project.filePath = filePath;
+      _lastSavePath = filePath;
+      debugPrint('[ProjectService] Saved project to: $filePath');
+    }
+    return ok;
+  }
+
+  /// v0.7.8: Low-level atomic write — no path bookkeeping, so autosave can
+  /// never repoint project.filePath/_lastSavePath at an autosave file.
+  /// Writes to a temp file first and renames, so a crash mid-write cannot
+  /// corrupt the project file.
+  Future<bool> _writeFile(Project project, String filePath) async {
     try {
       final file = File(filePath);
       final dir = file.parent;
@@ -19,17 +33,16 @@ class ProjectService {
         await dir.create(recursive: true);
       }
 
-      project.filePath = filePath;
-      project.markModified();
-
       final jsonStr = project.toJsonString();
-      await file.writeAsString(jsonStr, flush: true);
-
-      _lastSavePath = filePath;
-      debugPrint('[ProjectService] Saved project to: $filePath');
+      final tmpFile = File('$filePath.tmp');
+      await tmpFile.writeAsString(jsonStr, flush: true);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      await tmpFile.rename(filePath);
       return true;
     } catch (e) {
-      debugPrint('[ProjectService] Save failed: $e');
+      debugPrint('[ProjectService] Write failed: $e');
       return false;
     }
   }
@@ -77,7 +90,12 @@ class ProjectService {
       // Keep only the last 5 autosaves
       await _cleanOldAutoSaves(dir);
 
-      return saveProject(project, filePath);
+      // v0.7.8: Write through _writeFile, NOT saveProject — saveProject would
+      // repoint project.filePath/_lastSavePath at this autosave, making the
+      // next Ctrl+S overwrite an autosave instead of the user's project.
+      final ok = await _writeFile(project, filePath);
+      debugPrint('[ProjectService] Auto-saved to: $filePath');
+      return ok;
     } catch (e) {
       debugPrint('[ProjectService] Auto-save failed: $e');
       return false;

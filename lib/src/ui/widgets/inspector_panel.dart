@@ -459,6 +459,22 @@ class InspectorPanel extends StatelessWidget {
   // ============================================================
 
   Widget _buildColorCorrectionCard(Clip clip, EditorController controller) {
+    // v0.7.8: These sliders drive the real per-clip color-correction fields
+    // (model-backed + JSON-persisted). Previously "Exposure" overwrote the
+    // filter intensity and "Brightness" actually changed playback speed.
+    void setColor({
+      double? exposure,
+      double? contrast,
+      double? saturation,
+      double? temperature,
+    }) {
+      if (exposure != null) clip.colorExposure = exposure;
+      if (contrast != null) clip.colorContrast = contrast;
+      if (saturation != null) clip.colorSaturation = saturation;
+      if (temperature != null) clip.colorTemperature = temperature;
+      controller.notifyListeners();
+    }
+
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -477,15 +493,10 @@ class InspectorPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          _colorSlider('Exposure', clip.filterIntensity, -1.0, 1.0, AppTheme.textSecondary, (val) {
-            // Will be mapped to filter intensity offset in future
-            clip.filterIntensity = val.clamp(0.0, 1.0);
-            controller.notifyListeners();
-          }),
-          _colorSlider('Brightness', clip.speed, 0.25, 4.0, AppTheme.accent, (val) {
-            clip.speed = val;
-            controller.notifyListeners();
-          }),
+          _colorSlider('Exposure', clip.colorExposure, -1.0, 1.0, AppTheme.textSecondary, (val) => setColor(exposure: val)),
+          _colorSlider('Contrast', clip.colorContrast, -1.0, 1.0, AppTheme.accent, (val) => setColor(contrast: val)),
+          _colorSlider('Saturation', clip.colorSaturation, -1.0, 1.0, AppTheme.success, (val) => setColor(saturation: val)),
+          _colorSlider('Temperature', clip.colorTemperature, -1.0, 1.0, AppTheme.accentWarm, (val) => setColor(temperature: val)),
         ],
       ),
     );
@@ -655,28 +666,25 @@ class InspectorPanel extends StatelessWidget {
           ),
           const SizedBox(height: 10),
 
-          // Speed
+          // Speed (v0.7.8: undoable via ChangeClipPropertyCommand)
           _sliderRow('Speed', '${clip.speed.toStringAsFixed(2)}x', clip.speed, 0.25, 4.0, AppTheme.accent, (val) {
-            // TODO: ChangeClipSpeedCommand
-            clip.speed = val;
-            controller.notifyListeners();
-          }),
-          // Opacity
+            controller.setClipSpeed(clip.id, val);
+          }, onChangedStart: (_) => controller.beginPropertyGesture()),
+          // Opacity (v0.7.8: undoable)
           _sliderRow('Opacity', '${(clip.opacity * 100).toInt()}%', clip.opacity, 0.0, 1.0, AppTheme.primaryLight, (val) {
-            clip.opacity = val;
-            controller.notifyListeners();
-          }),
-          // Volume
+            controller.setClipOpacity(clip.id, val);
+          }, onChangedStart: (_) => controller.beginPropertyGesture()),
+          // Volume (v0.7.8: undoable)
           _sliderRow('Volume', '${(clip.volume * 100).toInt()}%', clip.volume, 0.0, 2.0, AppTheme.clipAudio, (val) {
-            clip.volume = val;
-            controller.notifyListeners();
-          }),
+            controller.setClipVolume(clip.id, val);
+          }, onChangedStart: (_) => controller.beginPropertyGesture()),
         ],
       ),
     );
   }
 
-  Widget _sliderRow(String label, String value, double val, double min, double max, Color color, ValueChanged<double> onChanged) {
+  Widget _sliderRow(String label, String value, double val, double min, double max, Color color, ValueChanged<double> onChanged,
+      {ValueChanged<double>? onChangedStart}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
@@ -689,6 +697,7 @@ class InspectorPanel extends StatelessWidget {
               max: max,
               activeColor: color,
               label: value,
+              onChangeStart: onChangedStart,
               onChanged: onChanged,
             ),
           ),
@@ -760,9 +769,8 @@ class InspectorPanel extends StatelessWidget {
               IconButton(
                 icon: const Icon(Icons.refresh_rounded, size: 16, color: AppTheme.textMuted),
                 onPressed: () {
-                  clip.filterType = 0;
-                  clip.filterIntensity = 1.0;
-                  controller.notifyListeners();
+                  // v0.7.8: Undoable reset
+                  controller.setClipFilter(clip.id, 0, 1.0);
                 },
               ),
             ],
@@ -774,10 +782,8 @@ class InspectorPanel extends StatelessWidget {
             min: 0.0,
             max: 1.0,
             activeColor: AppTheme.primaryLight,
-            onChanged: (val) {
-              clip.filterIntensity = val;
-              controller.notifyListeners();
-            },
+            // v0.7.8: Undoable via ChangeFilterCommand
+            onChanged: (val) => controller.setClipFilter(clip.id, clip.filterType, val),
           ),
           Wrap(
             spacing: 4,
@@ -787,8 +793,8 @@ class InspectorPanel extends StatelessWidget {
                     final id = f['id'] as int? ?? 0;
                     final name = f['name'] as String? ?? 'Unknown';
                     return _filterChip(name, id, clip.filterType == id, () {
-                      clip.filterType = id;
-                    controller.notifyListeners();
+                      // v0.7.8: Undoable per-clip filter selection
+                      controller.setClipFilter(clip.id, id, clip.filterIntensity);
                     });
                   }).toList()
                 : _defaultFilterChips(clip),
@@ -882,7 +888,8 @@ class InspectorPanel extends StatelessWidget {
           const SizedBox(height: 8),
           DropdownButtonHideUnderline(
             child: DropdownButton<String>(
-              value: 'None',
+              // v0.7.8: Reflect the clip's actual transition instead of 'None'
+              value: transitions[clip.transitionType.clamp(0, transitions.length - 1)],
               isExpanded: true,
               dropdownColor: AppTheme.surface,
               style: const TextStyle(color: AppTheme.textMain, fontSize: 12),
@@ -943,10 +950,10 @@ class InspectorPanel extends StatelessWidget {
               min: 0.0,
               max: 2.0,
               activeColor: AppTheme.primaryLight,
-              onChanged: (val) {
-                controller.selectedClip!.volume = val;
-                controller.notifyListeners();
-              },
+              // v0.7.8: Route through the undoable setClipVolume like the
+              // Transform card (was a direct mutation without undo).
+              onChangeStart: (_) => controller.beginPropertyGesture(),
+              onChanged: (val) => controller.setClipVolume(controller.selectedClip!.id, val),
             ),
           ],
         ],
@@ -974,7 +981,14 @@ class InspectorPanel extends StatelessWidget {
             children: [
               Icon(hasFFmpeg ? Icons.memory_rounded : Icons.developer_mode_rounded, color: hasFFmpeg ? AppTheme.success : AppTheme.textMuted, size: 14),
               const SizedBox(width: 6),
-              Text(hasFFmpeg ? 'FFmpeg Accelerated' : 'Demo Mode (Synthetic)', style: TextStyle(color: hasFFmpeg ? AppTheme.success : AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.w600)),
+              // v0.7.8: Clamp long status text in narrow panels
+              Flexible(
+                child: Text(
+                  hasFFmpeg ? 'FFmpeg Accelerated' : 'Demo Mode (Synthetic)',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: hasFFmpeg ? AppTheme.success : AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.w600),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 2),
@@ -1014,20 +1028,23 @@ class InspectorPanel extends StatelessWidget {
   }
 
   List<Widget> _defaultFilterChips(Clip? clip) {
-    final activeType = clip?.filterType ?? 0;
-    return [
-      _filterChip('None', 0, activeType == 0, () {}),
-      _filterChip('Gray', 1, activeType == 1, () {}),
-      _filterChip('Sepia', 2, activeType == 2, () {}),
-      _filterChip('Invert', 3, activeType == 3, () {}),
-      _filterChip('Bright', 4, activeType == 4, () {}),
-      _filterChip('Blur', 5, activeType == 5, () {}),
-      _filterChip('Edge', 6, activeType == 6, () {}),
-      _filterChip('Grade', 7, activeType == 7, () {}),
-      _filterChip('Adjust', 8, activeType == 8, () {}),
-      _filterChip('Pixel', 9, activeType == 9, () {}),
-      _filterChip('Mosaic', 10, activeType == 10, () {}),
-    ];
+    // v0.7.8: Chips are functional — per-clip chips update the clip model,
+    // global chips go through controller.setFilter (previously dead onTap).
+    const names = {
+      0: 'None', 1: 'Gray', 2: 'Sepia', 3: 'Invert', 4: 'Bright',
+      5: 'Blur', 6: 'Edge', 7: 'Grade', 8: 'Adjust', 9: 'Pixel', 10: 'Mosaic',
+    };
+    final activeType = clip?.filterType ?? controller.activeFilterType;
+    return names.entries.map((e) {
+      return _filterChip(e.value, e.key, activeType == e.key, () {
+        if (clip != null) {
+          clip.filterType = e.key;
+          controller.notifyListeners();
+        } else {
+          controller.setFilter(e.key, 1.0);
+        }
+      });
+    }).toList();
   }
 
   // ============================================================
@@ -1041,7 +1058,15 @@ class InspectorPanel extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
-          Text(value, style: TextStyle(color: valueColor ?? AppTheme.textMain, fontSize: 10, fontFamily: 'monospace')),
+          // v0.7.8: Long values (group ids, paths) used to overflow the row
+          // in narrow panels — clamp with ellipsis instead.
+          Flexible(
+            child: Text(
+              value,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: valueColor ?? AppTheme.textMain, fontSize: 10, fontFamily: 'monospace'),
+            ),
+          ),
         ],
       ),
     );
@@ -1067,6 +1092,7 @@ class InspectorPanel extends StatelessWidget {
 
   String _getFilterName(int type) {
     switch (type) {
+      case 0: return 'Original (Pass-through)';
       case 1: return 'Grayscale';
       case 2: return 'Sepia';
       case 3: return 'Invert';
@@ -1077,7 +1103,9 @@ class InspectorPanel extends StatelessWidget {
       case 8: return 'Adjust (BCSH)';
       case 9: return 'Pixelate';
       case 10: return 'Mosaic';
-      default: return 'Original (Pass-through)';
+      // v0.7.8: Unsupported ids (e.g. from old projects) show honestly
+      // instead of being mislabeled as "Original".
+      default: return 'Filter #$type (unsupported)';
     }
   }
 

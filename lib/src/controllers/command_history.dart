@@ -6,6 +6,17 @@ import '../models/project.dart';
 /// Abstract command for undo/redo operations.
 abstract class EditCommand {
   String get description;
+
+  /// v0.7.8: When non-null, a new command with the same key replaces the
+  /// previous one in the undo stack instead of pushing (one undo entry per
+  /// gesture — used by slider drags).
+  String? get coalesceKey => null;
+
+  /// v0.7.8: Called when this command replaces an earlier one with the same
+  /// [coalesceKey] — copy the earlier command's captured undo state so undo
+  /// restores the value from before the gesture started.
+  void inheritUndoState(EditCommand old) {}
+
   void execute(Project project);
   void undo(Project project);
 }
@@ -15,6 +26,10 @@ class AddClipCommand extends EditCommand {
   final String trackId;
   final Clip clip;
   final int positionMs;
+  // v0.7.8: Original positions of clips shifted away by overlap resolution —
+  // undo restores them (previously they stayed shifted forever, desyncing
+  // the undo stack from the real timeline state).
+  final Map<String, int> _shiftedOrigins = {};
 
   AddClipCommand({required this.trackId, required this.clip, required this.positionMs});
 
@@ -24,13 +39,29 @@ class AddClipCommand extends EditCommand {
   @override
   void execute(Project project) {
     final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
-    track?.addClipAt(clip, positionMs);
+    if (track == null) return;
+    for (final existing in track.clips) {
+      if (existing.id != clip.id &&
+          existing.timelineStartMs < clip.timelineEndMs &&
+          existing.timelineEndMs > clip.timelineStartMs) {
+        _shiftedOrigins[existing.id] = existing.timelineStartMs;
+      }
+    }
+    track.addClipAt(clip, positionMs);
   }
 
   @override
   void undo(Project project) {
     final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
-    track?.removeClip(clip.id);
+    if (track == null) return;
+    track.removeClip(clip.id);
+    for (final entry in _shiftedOrigins.entries) {
+      final shifted = track.clips.where((c) => c.id == entry.key).firstOrNull;
+      if (shifted != null) {
+        shifted.timelineStartMs = entry.value;
+      }
+    }
+    track.clips.sort((a, b) => a.timelineStartMs.compareTo(b.timelineStartMs));
   }
 }
 
@@ -65,6 +96,9 @@ class SplitClipCommand extends EditCommand {
   final String clipId;
   final int positionMs;
   late Clip _originalClip;
+  // v0.7.8: Set only when the split actually happened — guards against
+  // undoing a no-op split (which used to duplicate the clip on the track).
+  bool _didSplit = false;
 
   SplitClipCommand({required this.trackId, required this.clipId, required this.positionMs});
 
@@ -78,11 +112,12 @@ class SplitClipCommand extends EditCommand {
     final clip = track.clips.where((c) => c.id == clipId).firstOrNull;
     if (clip == null) return;
     _originalClip = clip.copyWith();
-    track.splitClipAt(positionMs);
+    _didSplit = track.splitClipAt(positionMs);
   }
 
   @override
   void undo(Project project) {
+    if (!_didSplit) return;
     final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
     if (track == null) return;
     // Remove the split parts and restore original
@@ -206,6 +241,124 @@ class TrimClipCommand extends EditCommand {
   }
 }
 
+/// Command: Change a scalar clip property (speed/opacity/volume) with undo.
+/// v0.7.8: Inspector sliders go through this instead of mutating clips directly.
+class ChangeClipPropertyCommand extends EditCommand {
+  final String clipId;
+  final String property; // 'speed' | 'opacity' | 'volume'
+  final double newValue;
+  // v0.7.8: Distinguishes separate drag gestures — without it, two consecutive
+  // slider drags merged into one undo entry (undo jumped back past both).
+  final int? gestureId;
+  late double _oldValue;
+
+  ChangeClipPropertyCommand({
+    required this.clipId,
+    required this.property,
+    required this.newValue,
+    this.gestureId,
+  });
+
+  /// One undo entry per drag gesture (slider drags fire many onChange ticks).
+  @override
+  String? get coalesceKey => 'clip-property:$clipId:$property:$gestureId';
+
+  @override
+  String get description => 'Change clip $property to $newValue';
+
+  @override
+  void inheritUndoState(EditCommand old) {
+    if (old is ChangeClipPropertyCommand) {
+      _oldValue = old._oldValue;
+    }
+  }
+
+  double _read(Clip clip) {
+    switch (property) {
+      case 'speed':
+        return clip.speed;
+      case 'opacity':
+        return clip.opacity;
+      case 'volume':
+        return clip.volume;
+      default:
+        throw ArgumentError('Unknown clip property: $property');
+    }
+  }
+
+  void _write(Clip clip, double value) {
+    switch (property) {
+      case 'speed':
+        clip.speed = value;
+        break;
+      case 'opacity':
+        clip.opacity = value;
+        break;
+      case 'volume':
+        clip.volume = value;
+        break;
+      default:
+        throw ArgumentError('Unknown clip property: $property');
+    }
+  }
+
+  @override
+  void execute(Project project) {
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    _oldValue = _read(clip);
+    _write(clip, newValue);
+  }
+
+  @override
+  void undo(Project project) {
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    _write(clip, _oldValue);
+  }
+}
+
+/// Command: Change a clip's transition (type + duration) with undo.
+/// v0.7.8: Inspector transition dropdown now goes through this — previously
+/// the change was applied outside the command history (not undoable).
+class ChangeClipTransitionCommand extends EditCommand {
+  final String clipId;
+  final int newType;
+  final int newDurationMs;
+  late int _oldType;
+  late int _oldDurationMs;
+  bool _applied = false;
+
+  ChangeClipTransitionCommand({
+    required this.clipId,
+    required this.newType,
+    required this.newDurationMs,
+  });
+
+  @override
+  String get description => 'Set transition to type $newType';
+
+  @override
+  void execute(Project project) {
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    _oldType = clip.transitionType;
+    _oldDurationMs = clip.transitionDurationMs;
+    clip.transitionType = newType;
+    clip.transitionDurationMs = newDurationMs;
+    _applied = true;
+  }
+
+  @override
+  void undo(Project project) {
+    if (!_applied) return;
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    clip.transitionType = _oldType;
+    clip.transitionDurationMs = _oldDurationMs;
+  }
+}
+
 /// Command: Add a track dynamically (v0.3.5).
 class AddTrackCommand extends EditCommand {
   final Track track;
@@ -276,7 +429,18 @@ class CommandHistory extends ChangeNotifier {
   /// Execute a command and push it to the undo stack.
   void execute(EditCommand command, Project project) {
     command.execute(project);
-    _undoStack.add(command);
+
+    // v0.7.8: Coalesce consecutive commands with the same key (e.g. slider
+    // drags) so one gesture produces exactly one undo entry. The replacement
+    // inherits the original captured value, so undo restores pre-gesture state.
+    final last = _undoStack.isNotEmpty ? _undoStack.last : null;
+    final key = command.coalesceKey;
+    if (key != null && last != null && last.coalesceKey == key) {
+      command.inheritUndoState(last);
+      _undoStack[_undoStack.length - 1] = command;
+    } else {
+      _undoStack.add(command);
+    }
     _redoStack.clear(); // New action invalidates redo history
 
     if (_undoStack.length > maxHistory) {

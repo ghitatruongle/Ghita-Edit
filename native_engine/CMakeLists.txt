@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(ghita_engine VERSION 0.5.5 LANGUAGES CXX C)
+project(ghita_engine VERSION 0.7.8 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,9 +27,12 @@ set(FFMPEG_LIBS)
 set(FFMPEG_INCLUDE_DIRS)
 
 # Check vcpkg environment variable for MSVC builds
-if(DEFINED ENV{VCPKG_ROOT})
+# v0.7.8: Verify the path actually contains FFmpeg before using it — a stale
+# VCPKG_ROOT env var (e.g. C:\dev\vcpkg) used to silently disable FFmpeg even
+# though a valid installation existed at C:/vcpkg.
+if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/installed/x64-windows/include/libavcodec/avcodec.h")
     set(VCPKG_ROOT "$ENV{VCPKG_ROOT}")
-elseif(EXISTS "C:/vcpkg")
+elseif(EXISTS "C:/vcpkg/installed/x64-windows/include/libavcodec/avcodec.h")
     set(VCPKG_ROOT "C:/vcpkg")
 endif()
 

@@ -1,8 +1,8 @@
-; Ghita Edit v0.5.8 — Windows Installer Script (Inno Setup 6)
+; Ghita Edit v0.7.8 — Windows Installer Script (Inno Setup 6)
 ; Creates: Desktop shortcut + Start Menu shortcut + Uninstaller
 
 #define MyAppName "Ghita Edit"
-#define MyAppVersion "0.5.8"
+#define MyAppVersion "0.7.8"
 #define MyAppPublisher "Ghita"
 #define MyAppExeName "ghita_edit.exe"
 

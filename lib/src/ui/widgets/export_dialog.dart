@@ -163,7 +163,16 @@ class _ExportDialogState extends State<ExportDialog> {
     switch (_selectedRes) {
       case '720p (HD)': return 1280;
       case '4K (Ultra HD)': return 3840;
-      default: return 1920;
+      case '1080p (Full HD)': return 1920;
+      default:
+        // v0.7.8: GIF sizes like '240p'/'480p' fell through to 1920×1080 —
+        // parse the numeric height and derive a 16:9 width.
+        final match = RegExp(r'^(\d+)').firstMatch(_selectedRes);
+        if (match != null) {
+          final h = int.parse(match.group(1)!);
+          if (h > 0) return (h * 16 / 9).round();
+        }
+        return 1920;
     }
   }
 
@@ -175,7 +184,15 @@ class _ExportDialogState extends State<ExportDialog> {
     switch (_selectedRes) {
       case '720p (HD)': return 720;
       case '4K (Ultra HD)': return 2160;
-      default: return 1080;
+      case '1080p (Full HD)': return 1080;
+      default:
+        // v0.7.8: parse GIF sizes ('240p' → 240, etc.)
+        final match = RegExp(r'^(\d+)').firstMatch(_selectedRes);
+        if (match != null) {
+          final h = int.parse(match.group(1)!);
+          if (h > 0) return h;
+        }
+        return 1080;
     }
   }
 
@@ -184,7 +201,14 @@ class _ExportDialogState extends State<ExportDialog> {
       final preset = _getPreset(_selectedPreset!);
       if (preset != null) return preset.fps;
     }
-    return _selectedFps.startsWith('30') ? 30 : 60;
+    // v0.7.8: Parse the actual number — '24 FPS'/'10 FPS'/'15 FPS' used to
+    // all export at 60 fps.
+    final match = RegExp(r'^(\d+)').firstMatch(_selectedFps);
+    if (match != null) {
+      final fps = int.tryParse(match.group(1)!);
+      if (fps != null && fps > 0) return fps;
+    }
+    return 60;
   }
 
   String get _formatExtension {
@@ -369,15 +393,23 @@ class _ExportDialogState extends State<ExportDialog> {
 
       if (!isExporting || _exportProgress >= 1.0) {
         timer.cancel();
+        // v0.7.8: C++ sets progress=1.0 ONLY on success and stores the file
+        // size before finishing — so a sub-1.0 progress or empty output means
+        // the pipeline failed silently (bad path, missing codec, avio error).
+        final success = _exportProgress >= 1.0 && _exportFileSizeBytes > 0;
         setState(() {
           _isExporting = false;
-          _exportProgress = 1.0;
+          if (success) _exportProgress = 1.0;
         });
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Export completed! Saved to: $outputPath'),
-            backgroundColor: Colors.green,
+            content: Text(
+              success
+                  ? 'Export completed! Saved to: $outputPath'
+                  : 'Export failed — check output path and codec support.',
+            ),
+            backgroundColor: success ? Colors.green : Colors.redAccent,
             duration: const Duration(seconds: 3),
           ),
         );
@@ -409,7 +441,18 @@ class _ExportDialogState extends State<ExportDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    // v0.7.8: While exporting, block dismissal (barrier click / Esc / back) —
+    // the native export thread used to keep running orphaned, with no UI left
+    // to cancel or report completion. Dismissal now cancels the export first.
+    // (PopScope intercepts barrier taps too, so no barrierDismissible needed.)
+    return PopScope(
+      canPop: !_isExporting,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _isExporting) {
+          _cancelExport();
+        }
+      },
+      child: AlertDialog(
       backgroundColor: AppTheme.card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: Row(
@@ -451,6 +494,7 @@ class _ExportDialogState extends State<ExportDialog> {
                 onPressed: _startExport,
               ),
             ],
+      ),
     );
   }
 

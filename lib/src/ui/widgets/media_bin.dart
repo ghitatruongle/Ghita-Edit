@@ -248,11 +248,8 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
           })),
           const SizedBox(height: 10),
         ],
-        const Text('Audio FX Presets', style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.3)),
-        const SizedBox(height: 4),
-        _presetTile('Cinematic Bass Drop', 'Audio FX', Icons.multitrack_audio_rounded, () {}),
-        _presetTile('Pop Background Beat', 'Music', Icons.music_note_rounded, () {}),
-        _presetTile('Vlog Acoustic Guitar', 'Music', Icons.audiotrack_rounded, () {}),
+        // v0.7.8: Removed the dead "Audio FX Presets" tiles — they had no
+        // backing feature and did nothing when tapped.
       ],
     );
   }
@@ -286,7 +283,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
   void _addStickerClip(String emoji, String label) {
     final ctrl = widget.controller;
     final clip = Clip(
-      id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
+      id: Clip.nextId(),
       sourceFilePath: '',
       displayName: label,
       timelineStartMs: ctrl.positionMs,
@@ -296,8 +293,13 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       textFontSize: 64.0,
       stickerScale: 1.0,
     );
+    // v0.7.8: Resolve the overlay track via the controller (falls back to the
+    // first track) — hardcoding 'track_overlay_1' silently no-op'd the add
+    // when a loaded project lacks that track.
+    final trackId = ctrl.trackIdForClipType(ClipType.sticker);
+    if (trackId == null) return;
     final cmd = AddClipCommand(
-      trackId: 'track_overlay_1',
+      trackId: trackId,
       clip: clip,
       positionMs: ctrl.positionMs,
     );
@@ -336,29 +338,39 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
   }
 
   List<Widget> _defaultFilterTiles() {
+    // v0.7.8: Tiles 0-10 are engine-supported and wired to setFilter;
+    // tiles 11-20 are NOT supported by the engine — they are shown as
+    // disabled "coming soon" instead of silently doing nothing on tap.
+    final supported = <int, String>{
+      0: 'Original (No Filter)',
+      1: 'Grayscale',
+      2: 'Sepia Tone',
+      3: 'Negative / Invert',
+      4: 'Brightness Boost',
+      5: 'Gaussian Blur',
+      6: 'Edge Detect (Sobel)',
+      7: 'Color Grading',
+      8: 'BCSH Adjust',
+      9: 'Pixelate',
+      10: 'Mosaic',
+    };
+    final comingSoon = <int, String>{
+      11: 'VHS Effect',
+      12: 'Glitch',
+      13: 'Chromatic Aberration',
+      14: 'Vignette',
+      15: 'Film Grain',
+      16: 'Light Leak',
+      17: 'Sharpen',
+      18: 'Posterize',
+      19: 'Duotone',
+      20: 'Background Blur',
+    };
+    final ctrl = widget.controller;
     return [
-      _filterTileStatic('Original (No Filter)', 0),
-      _filterTileStatic('Grayscale', 1),
-      _filterTileStatic('Sepia Tone', 2),
-      _filterTileStatic('Negative / Invert', 3),
-      _filterTileStatic('Brightness Boost', 4),
-      _filterTileStatic('Gaussian Blur', 5),
-      _filterTileStatic('Edge Detect (Sobel)', 6),
-      _filterTileStatic('Color Grading', 7),
-      _filterTileStatic('BCSH Adjust', 8),
-      _filterTileStatic('Pixelate', 9),
-      _filterTileStatic('Mosaic', 10),
-      // v0.7.0: New filters placeholder
-      _filterTileStatic('VHS Effect', 11),
-      _filterTileStatic('Glitch', 12),
-      _filterTileStatic('Chromatic Aberration', 13),
-      _filterTileStatic('Vignette', 14),
-      _filterTileStatic('Film Grain', 15),
-      _filterTileStatic('Light Leak', 16),
-      _filterTileStatic('Sharpen', 17),
-      _filterTileStatic('Posterize', 18),
-      _filterTileStatic('Duotone', 19),
-      _filterTileStatic('Background Blur', 20),
+      ...supported.entries.map((e) =>
+          _buildFilterTile(e.value, e.key, ctrl.activeFilterType == e.key, ctrl)),
+      ...comingSoon.entries.map((e) => _filterTileStatic(e.value, e.key, supported: false)),
     ];
   }
 
@@ -397,7 +409,7 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
   void _addTextClipWithPreset(String presetName, _TextPreset preset) {
     final ctrl = widget.controller;
     final clip = Clip(
-      id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
+      id: Clip.nextId(),
       sourceFilePath: '',
       displayName: presetName,
       timelineStartMs: ctrl.positionMs,
@@ -417,8 +429,11 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       textAlignment: preset.alignment,
       textGradient: preset.gradient,
     );
+    // v0.7.8: Same track resolution as stickers (see _addStickerClip).
+    final trackId = ctrl.trackIdForClipType(ClipType.text);
+    if (trackId == null) return;
     final cmd = AddClipCommand(
-      trackId: 'track_overlay_1',
+      trackId: trackId,
       clip: clip,
       positionMs: ctrl.positionMs,
     );
@@ -469,7 +484,9 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
     );
   }
 
-  Widget _filterTileStatic(String name, int type) {
+  // v0.7.8: supported=false renders a disabled "coming soon" tile instead of
+  // a dead tap target.
+  Widget _filterTileStatic(String name, int type, {bool supported = true}) {
     return Card(
       color: AppTheme.card,
       margin: const EdgeInsets.only(bottom: 6),
@@ -477,8 +494,13 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       child: ListTile(
         leading: Icon(Icons.color_lens_rounded, color: AppTheme.textMuted, size: 16),
         title: Text(name, style: const TextStyle(color: AppTheme.textMain, fontSize: 11)),
-        trailing: const Icon(Icons.play_arrow_rounded, color: AppTheme.textMuted, size: 16),
-        onTap: () {},
+        subtitle: supported
+            ? null
+            : const Text('Coming soon', style: TextStyle(color: AppTheme.warning, fontSize: 9)),
+        trailing: supported
+            ? const Icon(Icons.play_arrow_rounded, color: AppTheme.textMuted, size: 16)
+            : const Icon(Icons.lock_rounded, color: AppTheme.textMuted, size: 14),
+        onTap: supported ? () => widget.controller.setFilter(type, 1.0) : null,
       ),
     );
   }

@@ -197,101 +197,6 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                                             ),
                                           ),
                                         ),
-
-                                      // v0.7.0: Floating playback badge
-                                      Positioned(
-                                        top: 16,
-                                        right: 16,
-                                        child: AnimatedOpacity(
-                                          opacity: _showMiniControls ? 1.0 : 0.0,
-                                          duration: AppTheme.durationFast,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                            decoration: BoxDecoration(
-                                              color: Colors.black.withValues(alpha: 0.7),
-                                              borderRadius: BorderRadius.circular(20),
-                                              border: Border.all(color: AppTheme.divider),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Container(
-                                                  width: 8,
-                                                  height: 8,
-                                                  decoration: BoxDecoration(
-                                                    shape: BoxShape.circle,
-                                                    color: ctrl.isPlaying ? AppTheme.success : AppTheme.warning,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 6),
-                                                Text(
-                                                  ctrl.isPlaying ? 'PLAYING' : 'PAUSED',
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 9,
-                                                    fontWeight: FontWeight.w700,
-                                                    letterSpacing: 0.8,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-
-                                      // v0.7.0: Mini controls overlay (when mouse inactive)
-                                      if (_showMiniControls)
-                                        Positioned(
-                                          bottom: 0,
-                                          left: 0,
-                                          right: 0,
-                                          child: AnimatedContainer(
-                                            duration: AppTheme.durationNormal,
-                                            curve: AppTheme.curveStandard,
-                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                            decoration: BoxDecoration(
-                                              gradient: LinearGradient(
-                                                begin: Alignment.bottomCenter,
-                                                end: Alignment.topCenter,
-                                                colors: [
-                                                  Colors.black.withValues(alpha: 0.6),
-                                                  Colors.transparent,
-                                                ],
-                                              ),
-                                            ),
-                                            child: Row(
-                                              children: [
-                                                IconButton(
-                                                  icon: Icon(
-                                                    ctrl.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                                                    color: Colors.white,
-                                                    size: 24,
-                                                  ),
-                                                  onPressed: () {
-                                                    ctrl.togglePlayPause();
-                                                    _resetMiniControlsTimer();
-                                                  },
-                                                ),
-                                                Expanded(
-                                                  child: Slider(
-                                                    value: ctrl.positionMs.clamp(0, ctrl.durationMs).toDouble(),
-                                                    min: 0,
-                                                    max: max(ctrl.durationMs.toDouble(), 1),
-                                                    activeColor: AppTheme.accent,
-                                                    onChanged: (val) {
-                                                      ctrl.seek(val.toInt());
-                                                      _resetMiniControlsTimer();
-                                                    },
-                                                  ),
-                                                ),
-                                                IconButton(
-                                                  icon: const Icon(Icons.volume_up_rounded, color: Colors.white, size: 18),
-                                                  onPressed: _resetMiniControlsTimer,
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
                                     ],
                                   ),
                                 )
@@ -308,12 +213,33 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                                       child: Icon(Icons.movie_edit, color: Colors.white, size: 24),
                                     ),
                                     const SizedBox(height: 16),
-                                    const CircularProgressIndicator(color: AppTheme.accent, strokeWidth: 2),
-                                    const SizedBox(height: 16),
-                                    const Text(
-                                      'Rendering C++ Native Canvas...',
-                                      style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
-                                    ),
+                                    // v0.7.8: Spinner only while the engine is actually
+                                    // rendering; in Demo Mode (no native engine) show an
+                                    // honest message instead of spinning forever.
+                                    if (ctrl.isEngineReady) ...[
+                                      const CircularProgressIndicator(color: AppTheme.accent, strokeWidth: 2),
+                                      const SizedBox(height: 16),
+                                      const Text(
+                                        'Rendering C++ Native Canvas...',
+                                        style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+                                      ),
+                                    ] else ...[
+                                      const Icon(Icons.info_outline_rounded, color: AppTheme.warning, size: 28),
+                                      const SizedBox(height: 8),
+                                      const Text(
+                                        'Demo Mode — native engine not available',
+                                        style: TextStyle(
+                                          color: AppTheme.textMuted,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      const Text(
+                                        'Video preview & export need the native engine.',
+                                        style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                                      ),
+                                    ],
                                   ],
                                 ),
                             ),

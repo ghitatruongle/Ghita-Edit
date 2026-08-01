@@ -354,6 +354,10 @@ MediaInfo RealFFmpegMediaDecoder::getMediaInfo() const {
 #ifdef GHITA_HAS_FFMPEG
 
 bool RealFFmpegMediaDecoder::initFFmpegContexts() {
+    // v0.7.8: Release any previous contexts first — reloading a second file
+    // used to leak the whole FFmpeg context chain of the first one.
+    destroyFFmpegContexts();
+
     // Open file
     m_formatCtx = nullptr;
     if (avformat_open_input(&m_formatCtx, m_filePath.c_str(), nullptr, nullptr) != 0) {
@@ -591,11 +595,16 @@ bool RealFFmpegMediaDecoder::decodeAudioSamples(float* outSamples, int sampleCou
                     // Convert to float if needed via swr_convert
                     if (m_audioCodecCtx->sample_fmt != AV_SAMPLE_FMT_FLT && m_swrCtx) {
                         uint8_t* convOut[1] = {reinterpret_cast<uint8_t*>(convBuffer.data())};
-                        int outFrames = swr_convert(m_swrCtx, convOut, frames,
+                        // v0.7.8: out_count must never exceed the conversion
+                        // buffer — nb_samples can be up to 8192 while the
+                        // buffer is sized to sampleCount (e.g. 200). Previously
+                        // this overflowed the heap buffer (heap corruption).
+                        int requested = std::min(frames, sampleCount);
+                        int outFrames = swr_convert(m_swrCtx, convOut, requested,
                                                     const_cast<const uint8_t**>(m_frame->data), frames);
                         if (outFrames > 0) {
                             floatData = reinterpret_cast<float*>(convOut[0]);
-                            frames = outFrames;
+                            frames = std::min(outFrames, requested);
                         }
                     }
 
@@ -662,8 +671,12 @@ GhitaEngine::GhitaEngine() {
 
 GhitaEngine::~GhitaEngine() {
     cancelExport();
-    if (m_exportThread.joinable()) {
-        m_exportThread.join();
+    {
+        // v0.7.8: Same join guard as cancelExport (see above)
+        std::lock_guard<std::mutex> joinLock(m_exportJoinMutex);
+        if (m_exportThread.joinable()) {
+            m_exportThread.join();
+        }
     }
     std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     m_isPlaying.store(false);
@@ -1035,6 +1048,13 @@ bool GhitaEngine::startExportEx(const std::string& outputPath, int width, int he
         m_exportThread.join();
     }
 
+    // v0.7.8: Snapshot the media path under the engine lock — the export
+    // thread reads it without locking (previously a data race with loadMedia).
+    m_exportMediaPath = m_loadedFilePath;
+
+    // v0.7.8: Reset the error flag BEFORE publishing isExporting — otherwise
+    // a poller could observe a stale failure from a previous export.
+    m_exportError.store(false);
     m_exportOutputPath = outputPath;
     m_isExporting.store(true);
     m_cancelExportFlag.store(false);
@@ -1058,16 +1078,20 @@ void GhitaEngine::runExportLoop(std::string outputPath, int width, int height, i
 
 void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height, int fps,
                                    std::string codec, int64_t bitrate, bool includeAudio) {
+    m_exportError.store(false);
     const int totalFrames = static_cast<int>((m_durationMs.load() / 1000.0f) * fps);
     if (totalFrames <= 0) {
         m_isExporting.store(false);
-        m_exportProgress.store(1.0f);
+        m_exportError.store(true);
         return;
     }
 
     std::vector<uint8_t> frameBuffer(static_cast<size_t>(width * height * 4));
     RealFFmpegMediaDecoder decoder;
-    decoder.open(m_loadedFilePath.empty() ? "synthetic" : m_loadedFilePath);
+    decoder.open(m_exportMediaPath.empty() ? "synthetic" : m_exportMediaPath);
+
+    // v0.7.8: Only a fully written output counts as success
+    bool writeCompleted = false;
 
 #ifdef GHITA_HAS_FFMPEG
     // FFmpeg encoding pipeline
@@ -1113,8 +1137,12 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
 
                         // Open output file
                         if (!(fmtCtx->oformat->flags & AVFMT_NOFILE)) {
+                            // v0.7.8: Bail out cleanly when the output path is
+                            // unwritable — previously the failure was ignored
+                            // and avformat_write_header crashed on a null pb.
                             if (avio_open(&fmtCtx->pb, outputPath.c_str(), AVIO_FLAG_WRITE) < 0) {
-                                // Handle avio_open failure
+                                m_exportError.store(true);
+                                goto export_cleanup;
                             }
                         }
 
@@ -1179,6 +1207,7 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
 
                             // Write trailer
                             av_write_trailer(fmtCtx);
+                            writeCompleted = true;
 
                             // Get file size
                             if (fmtCtx->pb) {
@@ -1191,6 +1220,8 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
         }
     }
 
+    // v0.7.8: avio_open failure jumps here (skips encode, still cleans up)
+export_cleanup:
     // Cleanup (safe even if pointers are null)
     if (swsCtx) sws_freeContext(swsCtx);
     av_packet_free(&encPkt);
@@ -1224,10 +1255,15 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
         float progress = static_cast<float>(frame + 1) / static_cast<float>(totalFrames);
         m_exportProgress.store(progress);
     }
+    if (outFile) writeCompleted = true;
 #endif
 
+    if (!writeCompleted && !m_cancelExportFlag.load()) {
+        m_exportError.store(true);
+    }
+
     m_isExporting.store(false);
-    if (!m_cancelExportFlag.load()) {
+    if (!m_cancelExportFlag.load() && !m_exportError.load()) {
         m_exportProgress.store(1.0f);
     }
 }
@@ -1243,6 +1279,9 @@ bool GhitaEngine::isExporting() const {
 void GhitaEngine::cancelExport() {
     if (m_isExporting.load()) {
         m_cancelExportFlag.store(true);
+        // v0.7.8: Serialize joins — destructor and cancelExport can run from
+        // different threads; a second join() on the same std::thread throws.
+        std::lock_guard<std::mutex> joinLock(m_exportJoinMutex);
         if (m_exportThread.joinable() && std::this_thread::get_id() != m_exportThread.get_id()) {
             m_exportThread.join();
         }

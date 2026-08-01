@@ -80,7 +80,25 @@ class Project {
   }
 
   /// Number of currently selected clips.
-  int get selectedClipCount => _selectedClipIds.length;
+  // v0.7.8: Count only LIVE selections — stale ids of deleted/split clips no
+  // longer inflate the count (previously: count>0 with nothing selectable).
+  int get selectedClipCount => selectedClips.length;
+
+  /// v0.7.8: Drop ids of clips that no longer exist (deleted or split), and
+  /// resync the per-clip isSelected flags.
+  void pruneSelection() {
+    final existing = <String>{};
+    for (final track in tracks) {
+      for (final clip in track.clips) {
+        existing.add(clip.id);
+      }
+    }
+    final before = _selectedClipIds.length;
+    _selectedClipIds.removeWhere((id) => !existing.contains(id));
+    if (_selectedClipIds.length != before) {
+      _syncClipSelectionFlags();
+    }
+  }
 
   /// Deselect all clips.
   void deselectAll() {

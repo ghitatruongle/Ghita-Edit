@@ -113,7 +113,8 @@ class _TimelinePanelState extends State<TimelinePanel> {
 
   // v0.7.0: Group clips (for visual grouping)
   // ignore: unused_field
-  final Map<String, String> _clipGroupMap = {}; // clipId -> groupId
+  // v0.7.8: Removed unused _clipGroupMap (clipId -> groupId) — no backing
+  // group logic existed, the field was never read.
 
   // v0.7.0: Trim drag state — stores original bounds for single undo entry
   final Map<String, _TrimOrigin> _trimOrigins = {};
@@ -357,9 +358,13 @@ class _TimelinePanelState extends State<TimelinePanel> {
     final width = (_marqueeEnd!.dx - _marqueeStart!.dx).abs();
     final height = (_marqueeEnd!.dy - _marqueeStart!.dy).abs();
 
+    // v0.7.8: Coordinates already originate INSIDE the content stack (the
+    // marquee GestureDetector sits below the header/ruler) — the previous
+    // _headerWidth/_rulerHeight offsets drew the rectangle ~120px right and
+    // ~28px down from the actual selection area.
     return Positioned(
-      left: left + _headerWidth,
-      top: top + _rulerHeight,
+      left: left,
+      top: top,
       width: width,
       height: height,
       child: Container(
@@ -625,7 +630,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
         final clipData = item['clip'] as models.Clip?;
         if (clipData == null) return;
         final newClip = models.Clip(
-          id: 'clip_${DateTime.now().millisecondsSinceEpoch}',
+          id: models.Clip.nextId(),
           sourceFilePath: clipData.sourceFilePath,
           displayName: clipData.displayName,
           timelineStartMs: track.durationMs,
@@ -739,9 +744,13 @@ class _TimelinePanelState extends State<TimelinePanel> {
                   final snapped = _snapEngine.snap(newStart, pxPerSec) ?? newStart;
                   final snapped2 = _snapEngine.snapToClipEdges(snapped, pxPerSec, ctrl.tracks, track.id, clip.id) ?? snapped;
                   if (snapped2 != clip.timelineStartMs) {
-                    // Direct mutation during drag — single undo entry on drag end
+                    // v0.7.8: Capture the end BEFORE mutating the start —
+                    // timelineEndMs is derived from timelineStartMs, so the
+                    // old code computed durationMs from the NEW start and the
+                    // clip visually stretched instead of trimming.
+                    final endMs = clip.timelineEndMs;
                     clip.timelineStartMs = snapped2;
-                    clip.durationMs = clip.timelineEndMs - snapped2;
+                    clip.durationMs = endMs - snapped2;
                     _tempClipPositions[clip.id] = snapped2;
                     ctrl.notifyListeners();
                   }
@@ -763,6 +772,19 @@ class _TimelinePanelState extends State<TimelinePanel> {
                   }
                   _trimmingClipId = null;
                   _trimmingStart = false;
+                },
+                onDragCancel: () {
+                  // v0.7.8: Restore the clip when the gesture is cancelled —
+                  // the in-drag mutation must not stick without an undo entry.
+                  final origin = _trimOrigins.remove(clip.id);
+                  if (origin != null) {
+                    clip.timelineStartMs = origin.originalStartMs;
+                    clip.durationMs = origin.originalDurationMs;
+                  }
+                  _tempClipPositions.remove(clip.id);
+                  _trimmingClipId = null;
+                  _trimmingStart = false;
+                  ctrl.notifyListeners();
                 },
               ),
             ),
@@ -814,6 +836,19 @@ class _TimelinePanelState extends State<TimelinePanel> {
                   }
                   _trimmingClipId = null;
                   _trimmingStart = false;
+                },
+                onDragCancel: () {
+                  // v0.7.8: Restore the clip when the gesture is cancelled —
+                  // the in-drag mutation must not stick without an undo entry.
+                  final origin = _trimOrigins.remove(clip.id);
+                  if (origin != null) {
+                    clip.timelineStartMs = origin.originalStartMs;
+                    clip.durationMs = origin.originalDurationMs;
+                  }
+                  _tempClipPositions.remove(clip.id);
+                  _trimmingClipId = null;
+                  _trimmingStart = false;
+                  ctrl.notifyListeners();
                 },
               ),
             ),
@@ -914,6 +949,14 @@ class _TimelinePanelState extends State<TimelinePanel> {
                   setState(() {});
                 }
               },
+              // v0.7.8: A cancelled drag used to leave _draggingClipId set
+              // forever — every later body-drag and timeline scrub was blocked.
+              onHorizontalDragCancel: () {
+                _tempClipPositions.clear();
+                _draggingClipId = null;
+                _dragStartMs = null;
+                setState(() {});
+              },
               child: Container(
                 decoration: BoxDecoration(
                   color: clip.isSelected ? clipColor.withValues(alpha: 0.85) : clipColor.withValues(alpha: 0.65),
@@ -956,15 +999,6 @@ class _TimelinePanelState extends State<TimelinePanel> {
                           ),
                       ],
                     ),
-
-                    // v0.7.0: Keyframe dots on clip
-                    if (clip.isSelected || isMultiSelected)
-                      Positioned(
-                        bottom: 2,
-                        left: 8,
-                        right: 8,
-                        child: _buildKeyframeDots(clip, pxPerSec),
-                      ),
                   ],
                 ),
               ),
@@ -972,30 +1006,6 @@ class _TimelinePanelState extends State<TimelinePanel> {
           ),
         ],
       ),
-    );
-  }
-
-  // ============================================================
-  // Keyframe Dots (v0.7.0 visual indicator)
-  // ============================================================
-
-  Widget _buildKeyframeDots(models.Clip clip, double pxPerSec) {
-    // Placeholder: show indicator that keyframes exist for this clip
-    // In full implementation, keyframe data would come from engine/model
-    return Row(
-      children: [
-        Container(
-          width: 5,
-          height: 5,
-          decoration: const BoxDecoration(
-            color: AppTheme.warning,
-            shape: BoxShape.circle,
-            boxShadow: [BoxShadow(color: AppTheme.warning, blurRadius: 3, spreadRadius: -1)],
-          ),
-        ),
-        const SizedBox(width: 3),
-        Text('KF', style: TextStyle(color: AppTheme.warning, fontSize: 7, fontWeight: FontWeight.w700)),
-      ],
     );
   }
 
@@ -1078,8 +1088,14 @@ class _TrimHandle extends StatelessWidget {
   final Function(DragStartDetails) onDragStart;
   final Function(DragUpdateDetails) onDragUpdate;
   final Function(DragEndDetails) onDragEnd;
+  final Function()? onDragCancel;
 
-  const _TrimHandle({required this.onDragStart, required this.onDragUpdate, required this.onDragEnd});
+  const _TrimHandle({
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+    this.onDragCancel,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1089,6 +1105,10 @@ class _TrimHandle extends StatelessWidget {
         onHorizontalDragStart: onDragStart,
         onHorizontalDragUpdate: onDragUpdate,
         onHorizontalDragEnd: onDragEnd,
+        // v0.7.8: Without this, a cancelled gesture (mouse left the window /
+        // gesture arena lost) left _trimmingClipId set forever, blocking all
+        // subsequent drags and scrubbing.
+        onHorizontalDragCancel: onDragCancel,
         child: Container(
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.15),

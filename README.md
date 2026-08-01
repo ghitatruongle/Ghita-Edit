@@ -1,4 +1,4 @@
-# Ghita Edit — v0.5.5+0
+# Ghita Edit — v0.7.8+0
 
 A cross-platform multimedia editor suite built with **Flutter** and a native **C++20 rendering engine** connected via Dart FFI.
 
@@ -143,7 +143,7 @@ flutter test                    # Dart unit tests
 ## Versioning
 
 Version is centralized in `lib/src/core/version.dart` and auto-verified by CI.
-Current: **v0.5.5+0** (build 0)
+Current: **v0.7.8+0** (build 0)
 
 ## License
 

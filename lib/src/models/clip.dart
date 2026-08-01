@@ -74,6 +74,11 @@ class Clip {
   String? groupId;
   bool isLocked;
 
+  /// v0.7.8: Transition applied to this clip (0 = none; engine enum order:
+  /// None, FadeIn, FadeOut, Crossfade, Slide, Wipe, Zoom, Dissolve, Radial).
+  int transitionType;
+  int transitionDurationMs;
+
   // v0.7.0: Color getter/setter helpers (convert from int ARGB)
   Color get textColor => Color(textColorValue);
   set textColor(Color c) => textColorValue = c.toARGB32();
@@ -125,6 +130,8 @@ class Clip {
     this.stickerRotation = 0.0,
     this.groupId,
     this.isLocked = false,
+    this.transitionType = 0,
+    this.transitionDurationMs = 500,
   })  : sourceOutMs = sourceOutMs ?? durationMs,
         textBold = textBold ?? false,
         textItalic = textItalic ?? false,
@@ -132,6 +139,14 @@ class Clip {
 
   /// Timeline end position in milliseconds.
   int get timelineEndMs => timelineStartMs + durationMs;
+
+  // v0.7.8: Monotonic counter — timestamp-only IDs collided when multiple
+  // clips were created within the same millisecond, breaking selection,
+  // undo and delete targeting (they all match clips by id).
+  static int _idCounter = 0;
+
+  static String nextId() =>
+      'clip_${DateTime.now().millisecondsSinceEpoch}_${_idCounter++}';
 
   /// Create a copy of this clip with optional overrides.
   Clip copyWith({
@@ -176,6 +191,9 @@ class Clip {
     double? colorTint,
     double? colorVibrance,
     double? colorSaturation,
+    // v0.7.8: transition
+    int? transitionType,
+    int? transitionDurationMs,
   }) {
     return Clip(
       id: id ?? this.id,
@@ -218,6 +236,8 @@ class Clip {
       colorTint: colorTint ?? this.colorTint,
       colorVibrance: colorVibrance ?? this.colorVibrance,
       colorSaturation: colorSaturation ?? this.colorSaturation,
+      transitionType: transitionType ?? this.transitionType,
+      transitionDurationMs: transitionDurationMs ?? this.transitionDurationMs,
     );
   }
 
@@ -289,6 +309,9 @@ class Clip {
         'colorTint': colorTint,
         'colorVibrance': colorVibrance,
         'colorSaturation': colorSaturation,
+        // v0.7.8: transition
+        'transitionType': transitionType,
+        'transitionDurationMs': transitionDurationMs,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -298,7 +321,10 @@ class Clip {
         timelineStartMs: json['timelineStartMs'] as int,
         durationMs: json['durationMs'] as int,
         sourceInMs: json['sourceInMs'] as int? ?? 0,
-        sourceOutMs: json['sourceOutMs'] as int?,
+        // v0.7.8: Legacy files without sourceOutMs defaulted to durationMs,
+        // ignoring a trimmed in-point — use sourceInMs + durationMs instead.
+        sourceOutMs: json['sourceOutMs'] as int? ??
+            ((json['sourceInMs'] as int? ?? 0) + (json['durationMs'] as int)),
         trackIndex: json['trackIndex'] as int? ?? 0,
         filterType: json['filterType'] as int? ?? 0,
         filterIntensity: (json['filterIntensity'] as num?)?.toDouble() ?? 1.0,
@@ -332,6 +358,9 @@ class Clip {
         colorTint: (json['colorTint'] as num?)?.toDouble() ?? 0.0,
         colorVibrance: (json['colorVibrance'] as num?)?.toDouble() ?? 0.0,
         colorSaturation: (json['colorSaturation'] as num?)?.toDouble() ?? 0.0,
+        // v0.7.8: transition
+        transitionType: json['transitionType'] as int? ?? 0,
+        transitionDurationMs: json['transitionDurationMs'] as int? ?? 500,
       );
 
   @override

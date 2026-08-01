@@ -2,6 +2,13 @@ import 'clip.dart';
 
 /// Represents a track on the timeline (video, audio, overlay, etc.)
 class Track {
+  // v0.7.8: Monotonic counter — timestamp-only track IDs can collide when
+  // multiple tracks are added within the same millisecond.
+  static int _idCounter = 0;
+
+  static String nextId() =>
+      'track_${DateTime.now().millisecondsSinceEpoch}_${_idCounter++}';
+
   final String id;
   String name;
   TrackType type;
@@ -94,9 +101,15 @@ class Track {
     final delta = newStartMs - clip.timelineStartMs;
     if (delta >= clip.durationMs) return; // Can't trim past end
 
-    clip.timelineStartMs = newStartMs;
-    clip.sourceInMs += delta;
-    clip.durationMs -= delta;
+    // v0.7.8: Clamp the delta — never trim before the source media start
+    // (negative sourceInMs corrupts decoding) and never before timeline 0.
+    final minDelta = clip.sourceInMs < 0 ? 0 : -clip.sourceInMs;
+    final timelineMin = clip.timelineStartMs < 0 ? 0 : -clip.timelineStartMs;
+    final effectiveDelta = delta.clamp(minDelta > timelineMin ? minDelta : timelineMin, clip.durationMs - 1);
+
+    clip.timelineStartMs += effectiveDelta;
+    clip.sourceInMs += effectiveDelta;
+    clip.durationMs -= effectiveDelta;
   }
 
   /// Trim clip end (adjust out-point).
@@ -115,8 +128,13 @@ class Track {
 
   void _resolveOverlaps(Clip newClip) {
     for (final existing in clips) {
-      if (existing.timelineStartMs >= newClip.timelineStartMs &&
-          existing.timelineStartMs < newClip.timelineEndMs) {
+      // v0.7.8: Shift ANY clip whose span overlaps the new clip — including
+      // one that starts before the insertion point but extends into it.
+      // Previously only clips starting inside the span were moved, leaving
+      // real overlaps (stacked rendering, wrong clipAtPosition results).
+      final overlaps = existing.timelineStartMs < newClip.timelineEndMs &&
+          existing.timelineEndMs > newClip.timelineStartMs;
+      if (overlaps) {
         // Shift this clip to after the new clip
         existing.timelineStartMs = newClip.timelineEndMs;
       }

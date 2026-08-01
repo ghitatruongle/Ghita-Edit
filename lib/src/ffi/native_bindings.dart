@@ -1,6 +1,7 @@
 import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 // Opaque struct pointer
 base class GhitaEngineContext extends Opaque {}
@@ -293,12 +294,15 @@ class GhitaNativeBindings {
   late DartGhitaEngineRenderTextOverlay renderTextOverlay;
 
   // v0.7.0 New bindings
-  late DartGhitaEngineApplyColorCorrection applyColorCorrection;
-  late DartGhitaEngineSetKeyframeBezier setKeyframeBezier;
-  late DartGhitaEngineRenderPip renderPip;
-  late DartGhitaEngineGetThumbnail getThumbnail;
-  late DartGhitaEngineSetFilterPreset setFilterPreset;
-  late DartGhitaEngineGetAudioWaveformPeaks getAudioWaveformPeaks;
+  // v0.7.8: Nullable — these symbols were never implemented in the C++ engine.
+  // Previously a hard lookup here threw inside _bindFunctions, which silently
+  // disabled the ENTIRE native engine (permanent Demo Mode despite the DLL).
+  DartGhitaEngineApplyColorCorrection? applyColorCorrection;
+  DartGhitaEngineSetKeyframeBezier? setKeyframeBezier;
+  DartGhitaEngineRenderPip? renderPip;
+  DartGhitaEngineGetThumbnail? getThumbnail;
+  DartGhitaEngineSetFilterPreset? setFilterPreset;
+  DartGhitaEngineGetAudioWaveformPeaks? getAudioWaveformPeaks;
 
   GhitaNativeBindings._internal() {
     _loadLibrary();
@@ -441,11 +445,25 @@ class GhitaNativeBindings {
     renderTextOverlay = _lib.lookupFunction<CGhitaEngineRenderTextOverlay, DartGhitaEngineRenderTextOverlay>('ghita_engine_render_text_overlay');
 
     // v0.7.0 New bindings
-    applyColorCorrection = _lib.lookupFunction<CGhitaEngineApplyColorCorrection, DartGhitaEngineApplyColorCorrection>('ghita_engine_apply_color_correction');
-    setKeyframeBezier = _lib.lookupFunction<CGhitaEngineSetKeyframeBezier, DartGhitaEngineSetKeyframeBezier>('ghita_engine_set_keyframe_bezier');
-    renderPip = _lib.lookupFunction<CGhitaEngineRenderPip, DartGhitaEngineRenderPip>('ghita_engine_render_pip');
-    getThumbnail = _lib.lookupFunction<CGhitaEngineGetThumbnail, DartGhitaEngineGetThumbnail>('ghita_engine_get_thumbnail');
-    setFilterPreset = _lib.lookupFunction<CGhitaEngineSetFilterPreset, DartGhitaEngineSetFilterPreset>('ghita_engine_set_filter_preset');
-    getAudioWaveformPeaks = _lib.lookupFunction<CGhitaEngineGetAudioWaveformPeaks, DartGhitaEngineGetAudioWaveformPeaks>('ghita_engine_get_audio_waveform_peaks');
+    // v0.7.8: Defensive lookups — a missing symbol no longer kills the whole
+    // engine; the feature just reports unavailable (see _tryLookup).
+    applyColorCorrection = _tryLookup('ghita_engine_apply_color_correction', () => _lib.lookupFunction<CGhitaEngineApplyColorCorrection, DartGhitaEngineApplyColorCorrection>('ghita_engine_apply_color_correction'));
+    setKeyframeBezier = _tryLookup('ghita_engine_set_keyframe_bezier', () => _lib.lookupFunction<CGhitaEngineSetKeyframeBezier, DartGhitaEngineSetKeyframeBezier>('ghita_engine_set_keyframe_bezier'));
+    renderPip = _tryLookup('ghita_engine_render_pip', () => _lib.lookupFunction<CGhitaEngineRenderPip, DartGhitaEngineRenderPip>('ghita_engine_render_pip'));
+    getThumbnail = _tryLookup('ghita_engine_get_thumbnail', () => _lib.lookupFunction<CGhitaEngineGetThumbnail, DartGhitaEngineGetThumbnail>('ghita_engine_get_thumbnail'));
+    setFilterPreset = _tryLookup('ghita_engine_set_filter_preset', () => _lib.lookupFunction<CGhitaEngineSetFilterPreset, DartGhitaEngineSetFilterPreset>('ghita_engine_set_filter_preset'));
+    getAudioWaveformPeaks = _tryLookup('ghita_engine_get_audio_waveform_peaks', () => _lib.lookupFunction<CGhitaEngineGetAudioWaveformPeaks, DartGhitaEngineGetAudioWaveformPeaks>('ghita_engine_get_audio_waveform_peaks'));
+  }
+
+  /// v0.7.8: Resolve a symbol defensively — returns null instead of throwing
+  /// when the DLL doesn't export it. Without this, one stale binding silently
+  /// disabled the entire native engine (Demo Mode even with DLL present).
+  T? _tryLookup<T extends Function>(String symbol, T Function() doLookup) {
+    try {
+      return doLookup();
+    } on ArgumentError {
+      debugPrint('FFI: missing symbol in engine DLL: $symbol (feature disabled)');
+      return null;
+    }
   }
 }

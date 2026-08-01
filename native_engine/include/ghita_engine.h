@@ -403,7 +403,9 @@ private:
     // v0.5.5: Playback rate
     std::atomic<float> m_playbackRate{1.0f};
 
-    int m_activeFilterType{0};
+    // v0.7.8: Filter type is read by the export thread without the engine
+    // lock — was a plain int (torn-read data race).
+    std::atomic<int> m_activeFilterType{0};
     std::atomic<float> m_filterIntensity{1.0f};
 
     std::chrono::high_resolution_clock::time_point m_lastTickTime;
@@ -419,9 +421,17 @@ private:
     // Export state & async worker
     std::atomic<bool> m_isExporting{false};
     std::atomic<bool> m_cancelExportFlag{false};
+    // v0.7.8: Set when the export pipeline fails mid-way so callers
+    // can distinguish a real success (progress 1.0) from a silent failure
+    std::atomic<bool> m_exportError{false};
     std::atomic<float> m_exportProgress{0.0f};
     std::atomic<int64_t> m_exportFileSize{0};
     std::string m_exportOutputPath;
+    // v0.7.8: Snapshot of the media path taken under the engine lock before
+    // the export thread starts (avoids racing loadMedia on m_loadedFilePath).
+    std::string m_exportMediaPath;
+    // v0.7.8: Serializes join() calls between cancelExport and ~GhitaEngine.
+    std::mutex m_exportJoinMutex;
     std::thread m_exportThread;
 
     void updateClock();
