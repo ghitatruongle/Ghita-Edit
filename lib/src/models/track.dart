@@ -110,6 +110,9 @@ class Track {
     clip.timelineStartMs += effectiveDelta;
     clip.sourceInMs += effectiveDelta;
     clip.durationMs -= effectiveDelta;
+    // v0.8.0: Keep the out-point consistent with the new duration — a stale
+    // sourceOutMs leaked into JSON round-trips and split bookkeeping.
+    clip.sourceOutMs = clip.sourceInMs + clip.durationMs;
   }
 
   /// Trim clip end (adjust out-point).

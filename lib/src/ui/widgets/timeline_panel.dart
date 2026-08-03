@@ -629,18 +629,13 @@ class _TimelinePanelState extends State<TimelinePanel> {
         final item = details.data;
         final clipData = item['clip'] as models.Clip?;
         if (clipData == null) return;
-        final newClip = models.Clip(
+        // v0.7.9: Deep-review — the hand-rolled Clip(...) constructor silently
+        // dropped color-correction/text/sticker/transition properties when
+        // dragging a media-bin item onto a track. copyWith keeps everything.
+        final newClip = clipData.copyWith(
           id: models.Clip.nextId(),
-          sourceFilePath: clipData.sourceFilePath,
-          displayName: clipData.displayName,
           timelineStartMs: track.durationMs,
-          durationMs: clipData.durationMs,
-          sourceInMs: clipData.sourceInMs,
-          sourceOutMs: clipData.sourceOutMs,
           trackIndex: track.trackTypeIndex,
-          type: clipData.type,
-          speed: clipData.speed,
-          opacity: clipData.opacity,
         );
         final cmd = AddClipCommand(trackId: track.id, clip: newClip, positionMs: track.durationMs);
         ctrl.commandHistory.execute(cmd, ctrl.project);
@@ -681,7 +676,14 @@ class _TimelinePanelState extends State<TimelinePanel> {
   // ============================================================
 
   Widget _buildAudioWaveform(Track track, EditorController ctrl, double pxPerSec) {
-    final waveform = ctrl.engineService.getAudioWaveform(200);
+    // v0.7.9: Zoom-out renders fewer samples (downsampled by the engine);
+    // the engine caches per sample-count, so zooming/scrubbing no longer
+    // refetches the full waveform on every rebuild.
+    final downsamplingFactor = pxPerSec < 20
+        ? 4
+        : (pxPerSec < 40 ? 2 : null);
+    final waveform = ctrl.engineService
+        .getAudioWaveform(200, downsamplingFactor: downsamplingFactor);
     if (waveform.isEmpty) return const SizedBox.shrink();
 
     return Positioned.fill(

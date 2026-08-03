@@ -2,9 +2,9 @@
 // All version references in the codebase should use these constants.
 
 const kAppName = 'Ghita Edit';
-const kMajorVersion = 0;
-const kMinorVersion = 7;
-const kPatchVersion = 8;
+const kMajorVersion = 1;
+const kMinorVersion = 0;
+const kPatchVersion = 0;
 const kBuildNumber = 0;
 
 /// Flutter/Dart app version string (e.g., '0.7.8+0')

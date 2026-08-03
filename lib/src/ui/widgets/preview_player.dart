@@ -411,9 +411,11 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                     SizedBox(
                       width: 80,
                       child: Slider(
-                        value: ctrl.volume,
+                        // v0.8.0: The controller allows 0-2 (boost); the slider
+                        // used to cap at 1.0, making the 1-2 range unreachable.
+                        value: ctrl.volume.clamp(0.0, 2.0),
                         min: 0.0,
-                        max: 1.0,
+                        max: 2.0,
                         activeColor: AppTheme.accent,
                         onChanged: ctrl.setVolume,
                       ),

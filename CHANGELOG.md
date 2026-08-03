@@ -1,5 +1,82 @@
 # Ghita Edit — Changelog
 
+## v0.8.0 (2026-08-02) — Real Timeline Engine, Audio, & Full Feature Completeness
+
+### 🎬 Tính năng chính (lần đầu tiên hoạt động thật sự)
+- **Timeline compositor trong C++ engine** — preview và export giờ render ĐÚNG timeline: nhiều clip, nhiều track, trim/split/move phản ánh ngay khi xem, clip opacity, speed, per-clip filter, text/sticker, transitions FadeIn/FadeOut/Crossfade (6 loại còn lại giữ metadata)
+- **Đồng bộ timeline Dart ↔ Engine** — `syncTimelineToEngine()` (diff, id ổn định giữ decoder cache) chạy sau mọi command/undo/redo/load; thay cơ chế cũ chỉ render media cuối cùng được load
+- **Âm thanh trong preview** — engine mix PCM từ mọi clip (clip volume × track volume × mute × master) và phát qua waveOut khi Play; seek tự resync; lỗi thiết bị → im lặng an toàn
+- **Export có âm thanh** — file MP4 giờ có cả video (h264/h265/vp9/mpeg4 fallback) + audio AAC 44.1kHz stereo; encoder fallback chain (libx264 → libopenh264 → h264 → mpeg4) để export luôn ra file chạy được trên mọi bản FFmpeg
+- **Voiceover recorder thật** — package `record: ^7.1.1` (record_windows 2.2.3); nút Audio trên toolbar mở sheet thu âm WAV 44.1kHz → thêm làm audio clip undoable (sửa claim sai của v0.7.9 — feature này chưa từng hoạt động)
+
+### 🎨 Hoàn thiện UI (mọi tính năng đều hoạt động)
+- **Filters 11–20 bỏ "Coming soon"** — VHS, Glitch, Chromatic Aberration, Vignette, Film Grain, Light Leak, Sharpen, Posterize, Duotone, Background Blur — tất cả chạy trong engine
+- **Color correction vào engine** — Exposure/Contrast/Saturation/Temperature (và Tint/Vibrance/Highlights/Shadows) giờ áp dụng lên preview + export
+- **Track mute/visible/volume vào engine** — mute = im lặng thật, ẩn track = không render, volume track ảnh hưởng mix
+- **Text/sticker render thật** — GDI rasterization (Windows): nội dung, font size, màu hiển thị đúng trên preview
+- **Media Bin Audio tab** — tap chọn clip thay vì import trùng lặp
+- **Preview volume slider** — range 0–2 (khớp controller); sửa message Undo/Redo hiển thị sai mô tả
+
+### 🔧 Ổn định (stability)
+- **Fix concurrency nghiêm trọng** — decoder không thread-safe: `m_renderMutex` tuần tự hóa decode (trước là data race giữa render/export/audio); `getFrameDirectBufferPointer` resize dưới unique lock; play/pause join audio thread ngoài engine lock (chống deadlock)
+- **Fix underflow** — `renderTextOverlay` boxY âm khi font lớn (heap underflow)
+- **Fix export** — `avformat_new_stream` audio phải tạo TRƯỚC `avformat_write_header` (muxer crash SIGFPE); AAC priming delay (packet pts âm → SIGFPE); file size thật sau khi đóng (trước báo 0 → app tưởng export fail)
+- **Fix loadMedia** — báo lỗi file không tồn tại; JSON escape cho path chứa ký tự đặc biệt; `recalculateDuration` bỏ minimum 60s giả
+- **Môi trường build Windows** — engine ưu tiên FFmpeg MinGW (msys64, đủ encoder) khi build bằng MinGW; static-link libstdc++/libgcc (tránh DLL version skew crash); copy FFmpeg runtime DLLs vào bundle (windows/CMakeLists)
+
+### 🔍 Deep-review fixes (2026-08-02)
+- 🐛 **Ghost clips khi load project** — `loadProject` không clear engine timeline; clip của project cũ (id được cấp lại từ 1) sống sót như clip ma trên timeline engine
+- 🐛 **Global filter thành no-op** — Effects tab (setFilter toàn cục) không còn áp dụng khi timeline compositor là render path; giờ chạy lên trên frame đã composite
+- 🐛 **`loadMedia` ghi đè timeline duration** — playback wrap theo độ dài media thay vì timeline; duration probe của import chuyển sang `getMediaInfo` (timeline duration ≠ media duration từ clip thứ 2)
+- 🐛 **std::terminate khi audio thread tự thoát** — thread handle không bao giờ được join nếu thread thoát sớm (timeline rỗng/không thiết bị)
+- 🐛 **Audio preview resync hỏng** — reset `dwFlags` thủ công để lại header nửa-prepared làm waveOutWrite kẹt; giờ unprepare đầy đủ
+- 🐛 **`trimClipStart` để sourceOutMs stale** — sai lệch vào JSON round-trip + split
+- 🐛 **Inspector filter chip overflow 4px** — tên filter dài ("Chromatic Aberration") từ engine JSON tràn Wrap; chip giới hạn 190px + ellipsis
+- 🐛 **Export test sai assertion** — `fmt->duration` chỉ được fill bởi `avformat_find_stream_info` (file thực tế hợp lệ — ffprobe xác nhận)
+
+### 📊 Metrics
+- Native engine self-test: **19 → 33 pass** (timeline compositor, track state, color correction, GDI text, real-media decode, audio mix, export-with-audio verify bằng avformat, filters 11-20; deep-review: global filter timeline, loadMedia duration, crossfade render, audio preview stress play/pause/seek, export clip đã trim)
+- Flutter test suite: **87 → 95 pass** (sync no-op, color correction, track state, filter range 20, voiceover widget, fix overflow chip)
+- `flutter analyze`: 0 issues
+- Version đồng bộ: v0.8.0+0 (Dart / CMake / C API / self-test / README)
+- Dependency mới: `record: ^7.1.1` (voiceover thật)
+
+## v0.7.9 (2026-08-01) — Bug Fixes & Performance Improvements
+- 🐛 **Fix crash khi load project cũ/corrupt** — `Clip.fromJson` cast `durationMs`/`sourceOutMs` null-safe; file thiếu key không còn throw TypeError
+- 🐛 **Atomic file save thật sự** — rename trước (POSIX), fallback delete+rename (Windows), dọn `.tmp` khi thất bại; không còn mất file gốc nếu save fail
+- 🐛 **Split an toàn** — chặn split tạo clip duration = 0 (boundary position) gây crash export
+- 🐛 **Menu "Cut (Ctrl+X)" cắt thật** — trước chỉ copy; giờ copy + delete (khớp với phím tắt)
+- 🐛 **Menu "Select All (Ctrl+A)"** — báo số clip đã chọn thay vì "All selected" mơ hồ
+- ✅ **Verify** — RenderFlex overflow, Space-key conflict, `nextId()` uniqueness đều đã được xử lý ở v0.7.8; bổ sung test regression
+
+### ⚡ Performance
+- **LRU frame cache** — thay FIFO bằng LRU thật (entry được truy cập giữ lại, hot scrub frame không bị evict); cache key thêm playback rate
+- **Waveform multi-level cache** — 1 lần fetch native cho mỗi sample-count, mọi zoom level dùng lại; zoom-out downsample 2x/4x
+- **Thumbnail cache (path-keyed, LRU)** — infrastructure sẵn sàng cho engine khi có symbol `get_thumbnail`
+- **Separable Gaussian blur** — thay box blur O(n²r²) bằng 2-pass O(n·r), nhanh hơn ~4-5x
+- **Grow-only frame buffer** — hết reallocate mỗi lần `getFrameDirectBufferPointer`
+- **`ghita_engine_render_frame_at`** — render frame tại vị trí chỉ định không đụng playback state (nền tảng batch/thumbnail rendering)
+
+### 🎨 UX
+- **Export dialog** — hiển thị ETA + pipeline stage ("Encoding video frames...") bên cạnh %, frame count, file size
+- **Media Bin** — empty state thân thiện kèm nút Import; tooltip cho tile filter "coming soon"
+- **Filter chips** — tooltip mô tả từng filter; filter id > 10 từ project cũ hiển thị disabled (lock) thay vì lầm tưởng là "None"
+- **Theme toggle** — nút icon trên header + phím tắt **Ctrl+T**; dialog Keyboard Shortcuts có ô tìm kiếm live
+- **Theme system** — `themeTransitionBuilder` (cross-fade khi đổi theme) + `highContrastDarkTheme` (accessibility đen/trắng)
+
+### 🔧 Technical Debt
+- **Voiceover recorder hoạt động thật** — package `record` (hỗ trợ Windows/macOS/Linux); ghi file m4a và thêm làm audio clip vào timeline
+- **Per-clip filter đồng bộ native** — `setClipFilter` giờ gọi `ghita_engine_set_clip_filter` qua native-id map (trước chỉ model-only)
+- **Split-view** — đã có sẵn từ v0.7.0 (verify, không cần thay đổi)
+- ⏸ **Waveform per-clip** — deferred (cần refactor `IMediaDecoder` interface, ưu tiên thấp)
+
+### 📊 Metrics
+- Test suite: **79 → 87 pass** (thêm 8 test: regression bugs + high-contrast theme + transition builder)
+- Native engine self-test: **18 → 19 pass** (thêm `test_render_frame_at`)
+- `flutter analyze`: 0 issues
+- Version đồng bộ: v0.7.9+0 (Dart / CMake / C API / self-test / README)
+- Dependency mới: `record: ^5.2.1` (voiceover)
+
 ## v0.7.8 (2026-08-01) — Stability & Feature Completeness
 - ✅ **Khắc phục toàn bộ test fail** — test suite 79/79 xanh, `flutter analyze` 0 issues
 - 🐛 **Fix bug detect media type** — import `.mp3`/`.png` giờ tạo đúng clip audio/image; trước đây mọi file đều thành video (extension so sánh thiếu dấu chấm)

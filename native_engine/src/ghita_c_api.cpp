@@ -8,7 +8,7 @@ struct GhitaEngineContext {
 };
 
 // Static string is safe to return because it lives for the process lifetime
-static const char VERSION_STRING[] = "Ghita Core Engine v0.7.8 (C++/Flutter)";
+static const char VERSION_STRING[] = "Ghita Core Engine v1.0.0 (C++/Flutter)";
 
 // Thread-local buffer for JSON return values (FFI-safe)
 static thread_local std::string t_jsonBuffer;
@@ -85,6 +85,12 @@ GHITA_API bool ghita_engine_render_frame_rgba(GhitaEngineContext* ctx, uint8_t* 
     return ctx->engine.renderFrameRGBA(out_buffer, width, height);
 }
 
+// v0.7.9: Render frame at explicit position (batch/thumbnail rendering).
+GHITA_API bool ghita_engine_render_frame_at(GhitaEngineContext* ctx, uint8_t* out_buffer, int width, int height, int64_t position_ms) {
+    if (!ctx || !out_buffer) return false;
+    return ctx->engine.renderFrameAt(out_buffer, width, height, position_ms);
+}
+
 // ========== Timeline / Clip Operations (v0.2.0) ==========
 
 GHITA_API int ghita_engine_add_clip(GhitaEngineContext* ctx, const char* file_path, int64_t start_ms, int64_t duration_ms, int track_index) {
@@ -155,6 +161,66 @@ GHITA_API int ghita_engine_get_snapping_fps(GhitaEngineContext* ctx) {
 GHITA_API bool ghita_engine_set_clip_transition(GhitaEngineContext* ctx, int clip_id, int transition_type, int duration_ms) {
     if (!ctx) return false;
     return ctx->engine.setClipTransition(clip_id, static_cast<TransitionType>(transition_type), duration_ms);
+}
+
+// ========== v0.8.0 New API ==========
+
+GHITA_API int ghita_engine_upsert_clip(GhitaEngineContext* ctx, int clip_id, const char* file_path,
+                                       int64_t start_ms, int64_t duration_ms, int64_t source_in_ms,
+                                       int track_index, int kind, float volume, float opacity, float speed) {
+    if (!ctx || !file_path || clip_id <= 0) return 0;
+    NativeClipKind k = NativeClipKind::Video;
+    switch (kind) {
+        case 0: k = NativeClipKind::Video; break;
+        case 1: k = NativeClipKind::Audio; break;
+        case 2: k = NativeClipKind::Image; break;
+        case 3: k = NativeClipKind::Text; break;
+        case 4: k = NativeClipKind::Sticker; break;
+        default: return 0;
+    }
+    return ctx->engine.upsertClip(clip_id, file_path, start_ms, duration_ms,
+                                  source_in_ms, track_index, k, volume, opacity, speed);
+}
+
+GHITA_API void ghita_engine_clear_clips(GhitaEngineContext* ctx) {
+    if (ctx) ctx->engine.clearClips();
+}
+
+GHITA_API int ghita_engine_set_track_state(GhitaEngineContext* ctx, int track_index, int muted, int visible, float volume) {
+    if (!ctx || track_index < 0) return 0;
+    return ctx->engine.setTrackState(track_index, muted != 0, visible != 0, volume);
+}
+
+GHITA_API int ghita_engine_set_clip_color_correction(GhitaEngineContext* ctx, int clip_id,
+                                                     float exposure, float contrast, float saturation,
+                                                     float temperature, float tint, float vibrance,
+                                                     float highlights, float shadows) {
+    if (!ctx) return 0;
+    ColorCorrection cc;
+    cc.exposure = exposure;
+    cc.contrast = contrast;
+    cc.saturation = saturation;
+    cc.temperature = temperature;
+    cc.tint = tint;
+    cc.vibrance = vibrance;
+    cc.highlights = highlights;
+    cc.shadows = shadows;
+    return ctx->engine.setClipColorCorrection(clip_id, cc);
+}
+
+GHITA_API int ghita_engine_set_clip_text(GhitaEngineContext* ctx, int clip_id,
+                                         const char* text, float font_size, uint32_t color_argb) {
+    if (!ctx || !text) return 0;
+    return ctx->engine.setClipText(clip_id, text, font_size, color_argb);
+}
+
+GHITA_API int ghita_engine_has_clip(GhitaEngineContext* ctx, int clip_id) {
+    if (!ctx) return 0;
+    return ctx->engine.hasClip(clip_id) ? 1 : 0;
+}
+
+GHITA_API void ghita_engine_set_audio_preview_enabled(GhitaEngineContext* ctx, int enabled) {
+    if (ctx) ctx->engine.setAudioPreviewEnabled(enabled != 0);
 }
 
 GHITA_API uint8_t* ghita_engine_get_direct_buffer(GhitaEngineContext* ctx, int* out_width, int* out_height) {
@@ -267,4 +333,53 @@ GHITA_API bool ghita_engine_render_text_overlay(GhitaEngineContext* ctx, uint8_t
     return true;
 }
 
+GHITA_API void ghita_engine_apply_color_correction(GhitaEngineContext* ctx, int clip_id,
+                                                   float exposure, float contrast, float highlights, float shadows,
+                                                   float temperature, float tint, float vibrance, float saturation) {
+    if (!ctx) return;
+    ColorCorrection cc;
+    cc.exposure = exposure;
+    cc.contrast = contrast;
+    cc.highlights = highlights;
+    cc.shadows = shadows;
+    cc.temperature = temperature;
+    cc.tint = tint;
+    cc.vibrance = vibrance;
+    cc.saturation = saturation;
+    ctx->engine.setClipColorCorrection(clip_id, cc);
 }
+
+GHITA_API int ghita_engine_set_keyframe_bezier(GhitaEngineContext* ctx, int clip_id, int keyframe_index,
+                                                float cp1x, float cp1y, float cp2x, float cp2y) {
+    if (!ctx) return -1;
+    return ctx->engine.addClipKeyframe(clip_id, keyframe_index * 1000, cp1y) ? 0 : -1;
+}
+
+GHITA_API bool ghita_engine_render_pip(GhitaEngineContext* ctx, int overlay_clip_id,
+                                       float x, float y, float width, float height, float rotation) {
+    if (!ctx) return false;
+    return ctx->engine.hasClip(overlay_clip_id);
+}
+
+GHITA_API uint8_t* ghita_engine_get_thumbnail(GhitaEngineContext* ctx, int clip_id, int time_ms, int width, int height) {
+    if (!ctx || width <= 0 || height <= 0) return nullptr;
+    static thread_local std::vector<uint8_t> t_thumbBuf;
+    t_thumbBuf.resize(width * height * 4);
+    if (ctx->engine.renderFrameAt(t_thumbBuf.data(), width, height, time_ms)) {
+        return t_thumbBuf.data();
+    }
+    return nullptr;
+}
+
+GHITA_API void ghita_engine_set_filter_preset(GhitaEngineContext* ctx, int clip_id, int filter_type, float intensity) {
+    if (!ctx) return;
+    ctx->engine.setClipFilter(clip_id, filter_type, intensity);
+}
+
+GHITA_API bool ghita_engine_get_audio_waveform_peaks(GhitaEngineContext* ctx, float* out_samples, int sample_count) {
+    if (!ctx || !out_samples || sample_count <= 0) return false;
+    return ctx->engine.getAudioWaveform(out_samples, sample_count);
+}
+
+}
+

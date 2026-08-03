@@ -1,11 +1,16 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghita_edit/src/controllers/editor_controller.dart';
 import 'package:ghita_edit/src/controllers/command_history.dart';
+import 'package:ghita_edit/src/controllers/project_service.dart';
 import 'package:ghita_edit/src/core/version.dart';
 import 'package:ghita_edit/src/models/clip.dart';
 import 'package:ghita_edit/src/models/track.dart';
 import 'package:ghita_edit/src/models/project.dart';
 import 'package:ghita_edit/src/ui/widgets/timeline_panel.dart';
+
+// v0.8.0: Extended test file — appends the new feature groups after main's
+// existing groups (see bottom of file).
 
 void main() {
   group('EditorController initialization', () {
@@ -79,13 +84,14 @@ void main() {
       expect(controller.activeFilterType, equals(0));
     });
 
-    test('invalid filter type > 10 is clamped', () {
+    // v0.8.0: Filter range extended to 0-20 (was 0-10).
+    test('invalid filter type > 20 is clamped', () {
       controller.setFilter(99, 0.5);
-      expect(controller.activeFilterType, equals(10));
+      expect(controller.activeFilterType, equals(20));
     });
 
-    test('valid types 0-10 are accepted', () {
-      for (final t in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+    test('valid types 0-20 are accepted', () {
+      for (final t in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 17, 20]) {
         controller.setFilter(t, 0.5);
         expect(controller.activeFilterType, equals(t), reason: 'type $t');
       }
@@ -767,6 +773,215 @@ void main() {
       expect(json.contains('transitionType'), isTrue);
       final loaded = Project.fromJsonString(json);
       expect(loaded.allClips.first.transitionType, equals(3));
+    });
+  });
+
+  // ========== v0.7.9: Bug-fix regression tests ==========
+
+  group('v0.7.9 bug fixes', () {
+    test('BUG-01: fromJson survives missing sourceOutMs/durationMs', () {
+      // Legacy file without sourceOutMs → sourceInMs + durationMs
+      final legacyJson = <String, dynamic>{
+        'id': 'c1',
+        'sourceFilePath': '/a.mp4',
+        'displayName': 'a.mp4',
+        'timelineStartMs': 0,
+        'durationMs': 10000,
+        'sourceInMs': 2000,
+      };
+      final clip = Clip.fromJson(legacyJson);
+      expect(clip.sourceOutMs, equals(12000));
+
+      // Corrupt file missing durationMs entirely — must NOT throw TypeError
+      final corruptJson = <String, dynamic>{
+        'id': 'c2',
+        'sourceFilePath': '/b.mp4',
+        'displayName': 'b.mp4',
+        'timelineStartMs': 0,
+      };
+      final clip2 = Clip.fromJson(corruptJson);
+      expect(clip2.durationMs, equals(0));
+      expect(clip2.sourceOutMs, equals(0));
+    });
+
+    test('BUG-02: nextId stays unique across 1000 rapid calls', () {
+      final ids = <String>{};
+      for (var i = 0; i < 1000; i++) {
+        ids.add(Clip.nextId());
+      }
+      expect(ids.length, equals(1000));
+    });
+
+    test('BUG-07: splitAt rejects zero-duration halves', () {
+      final clip = Clip(
+        id: 'test',
+        sourceFilePath: '/path/test.mp4',
+        displayName: 'test.mp4',
+        timelineStartMs: 0,
+        durationMs: 10000,
+      );
+      // Boundary positions are rejected outright
+      expect(clip.splitAt(0), isNull);
+      expect(clip.splitAt(10000), isNull);
+      // A 1ms sliver still yields two valid positive-duration halves
+      final parts = clip.splitAt(1);
+      expect(parts, isNotNull);
+      expect(parts![0].durationMs, greaterThan(0));
+      expect(parts[1].durationMs, greaterThan(0));
+    });
+
+    test('BUG-06: saveProject writes atomically and leaves no .tmp', () async {
+      final service = ProjectService();
+      final dir = await Directory.systemTemp.createTemp('ghita_v079_');
+      addTearDown(() => dir.delete(recursive: true));
+      final path = '${dir.path}/test.ghita';
+      final project = Project(name: 'Atomic Test');
+
+      final ok = await service.saveProject(project, path);
+      expect(ok, isTrue);
+      expect(File(path).existsSync(), isTrue);
+      // No stray temp file after a successful save
+      expect(File('$path.tmp').existsSync(), isFalse);
+
+      // Round-trips correctly
+      final loaded = await service.loadProject(path);
+      expect(loaded, isNotNull);
+      expect(loaded!.name, equals('Atomic Test'));
+    });
+
+    test('BUG-04: cut semantics = copy + delete, then paste restores', () {
+      final controller = EditorController();
+      addTearDown(controller.dispose);
+      controller.importMedia('video.mp4');
+      final clip = controller.project.allClips.first;
+      controller.selectClip(clip.id);
+
+      // Same sequence the "Cut (Ctrl+X)" menu item performs
+      controller.copySelectedClip();
+      expect(controller.hasClipboard, isTrue);
+      controller.deleteSelectedClip();
+      expect(controller.project.allClips.length, equals(0));
+
+      // Clipboard still holds the cut clip → paste brings it back
+      controller.seek(15000);
+      controller.pasteClip();
+      expect(controller.project.allClips.length, equals(1));
+    });
+  });
+
+  // ========== v0.7.9 deep-review regression tests ==========
+
+  group('v0.7.9 deep-review fixes', () {
+    test('BUG-R5: fromJson survives missing timelineStartMs', () {
+      final json = <String, dynamic>{
+        'id': 'c1',
+        'sourceFilePath': '/a.mp4',
+        'displayName': 'a.mp4',
+        'durationMs': 5000,
+      };
+      final clip = Clip.fromJson(json);
+      expect(clip.timelineStartMs, equals(0));
+      expect(clip.durationMs, equals(5000));
+    });
+
+    test('BUG-R4: overlap undo/redo restores shifted clips correctly', () {
+      final controller = EditorController();
+      addTearDown(controller.dispose);
+
+      // First clip occupies 0–5000
+      controller.importMedia('a.mp4');
+      final first = controller.project.allClips.first;
+
+      // Add a second clip at 3000 → overlap shifts the first clip to 10000
+      controller.project.tracks[0].clips.add(
+        Clip(
+          id: Clip.nextId(),
+          sourceFilePath: '/b.mp4',
+          displayName: 'b.mp4',
+          timelineStartMs: 3000,
+          durationMs: 5000,
+          type: ClipType.video,
+        ),
+      );
+      final cmd = AddClipCommand(
+        trackId: controller.project.tracks[0].id,
+        clip: controller.project.tracks[0].clips.last,
+        positionMs: 3000,
+      );
+      controller.commandHistory.execute(cmd, controller.project);
+      // Clip b spans 3000–8000 → clip a is shifted to 8000
+      expect(first.timelineStartMs, equals(8000));
+
+      // Undo → first clip restored to its original start (0)
+      controller.undo();
+      expect(first.timelineStartMs, equals(0));
+
+      // Redo → overlap resolution again
+      controller.redo();
+      expect(first.timelineStartMs, equals(8000));
+    });
+  });
+
+  // ========== v0.8.0 tests ==========
+
+  group('v0.8.0 timeline sync (engine-less)', () {
+    late EditorController controller;
+
+    setUp(() => controller = EditorController());
+    tearDown(() => controller.dispose());
+
+    test('syncTimelineToEngine is a safe no-op without the engine', () {
+      // Must not throw when the native engine is unavailable.
+      controller.syncTimelineToEngine();
+      controller.markEngineSync();
+      controller.importMedia('/fake/video.mp4');
+      controller.splitAtPlayhead();
+      controller.undo();
+      controller.redo();
+      expect(controller.project.allClips.length, 1);
+    });
+
+    test('setClipColorCorrection updates the model', () {
+      controller.importMedia('/fake/video.mp4');
+      final clip = controller.project.allClips.first;
+      controller.setClipColorCorrection(
+        clip.id,
+        exposure: 0.5,
+        contrast: -0.25,
+        saturation: 0.8,
+        temperature: 0.4,
+      );
+      expect(clip.colorExposure, equals(0.5));
+      expect(clip.colorContrast, equals(-0.25));
+      expect(clip.colorSaturation, equals(0.8));
+      expect(clip.colorTemperature, equals(0.4));
+    });
+
+    test('track volume clamps to 0-2 and mutates the model', () {
+      final track = controller.project.tracks.first;
+      controller.setTrackVolume(track.id, 5.0);
+      expect(track.volume, equals(2.0));
+      controller.setTrackVolume(track.id, -1.0);
+      expect(track.volume, equals(0.0));
+      controller.setTrackVolume(track.id, 1.5);
+      expect(track.volume, equals(1.5));
+    });
+
+    test('track mute/visibility toggle without engine does not crash', () {
+      final track = controller.project.tracks.first;
+      controller.setTrackMute(track.id, true);
+      expect(track.isMuted, isTrue);
+      controller.setTrackVisible(track.id, false);
+      expect(track.isVisible, isFalse);
+      controller.setTrackLock(track.id, true);
+      expect(track.isLocked, isTrue);
+    });
+
+    test('filter range now reaches 20', () {
+      controller.setFilter(20, 1.0);
+      expect(controller.activeFilterType, equals(20));
+      controller.setFilter(11, 0.5);
+      expect(controller.activeFilterType, equals(11));
     });
   });
 }

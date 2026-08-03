@@ -601,4 +601,71 @@ class AppTheme {
       child: Text(text, style: style),
     );
   }
+
+  // ============================================================
+  // v0.7.9: UX-05 — Theme helpers
+  // ============================================================
+
+  /// Cross-fades the whole app when the theme mode changes.
+  static Widget themeTransitionBuilder({
+    required Widget child,
+    required ThemeMode themeMode,
+    Duration duration = durationNormal,
+  }) {
+    return AnimatedSwitcher(
+      duration: duration,
+      switchInCurve: curveDecelerate,
+      switchOutCurve: curveAccelerate,
+      child: KeyedSubtree(
+        key: ValueKey<String>(themeMode.name),
+        child: child,
+      ),
+    );
+  }
+
+  /// High-contrast dark theme for accessibility (black/white, thicker
+  /// outlines) — swap in via ThemeMode or a settings toggle.
+  static ThemeData get highContrastDarkTheme {
+    return darkTheme.copyWith(
+      scaffoldBackgroundColor: const Color(0xFF000000),
+      cardColor: const Color(0xFF000000),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF000000),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      colorScheme: const ColorScheme.dark(
+        primary: Colors.white,
+        onPrimary: Colors.black,
+        secondary: Colors.white,
+        surface: Colors.black,
+        onSurface: Colors.white,
+        error: Colors.white,
+        onError: Colors.black,
+        outline: Colors.white,
+      ),
+      textTheme: darkTheme.textTheme.copyWith(
+        bodySmall: const TextStyle(color: Colors.white, fontSize: 11),
+        labelSmall: const TextStyle(color: Colors.white, fontSize: 10),
+      ),
+      dividerTheme: const DividerThemeData(
+        color: Colors.white,
+        thickness: 1,
+      ),
+      cardTheme: const CardThemeData(
+        elevation: 0,
+        color: Colors.black,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(radiusMd)),
+          side: BorderSide(color: Colors.white, width: 1.5),
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+        ),
+      ),
+    );
+  }
 }

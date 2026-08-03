@@ -58,6 +58,10 @@ typedef DartGhitaEngineApplyFilter = void Function(Pointer<GhitaEngineContext> c
 typedef CGhitaEngineRenderFrameRgba = Bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer, Int32 width, Int32 height);
 typedef DartGhitaEngineRenderFrameRgba = bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer, int width, int height);
 
+// v0.7.9: Render frame at an explicit position (batch/thumbnail foundation)
+typedef CGhitaEngineRenderFrameAt = Bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer, Int32 width, Int32 height, Int64 positionMs);
+typedef DartGhitaEngineRenderFrameAt = bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer, int width, int height, int positionMs);
+
 // Version
 typedef CGhitaEngineGetVersion = Pointer<Utf8> Function();
 typedef DartGhitaEngineGetVersion = Pointer<Utf8> Function();
@@ -223,6 +227,54 @@ typedef DartGhitaEngineGetAudioWaveformPeaks = bool Function(
   Pointer<GhitaEngineContext> ctx, Pointer<Float> outSamples, int sampleCount
 );
 
+// ========== v0.8.0 New API ==========
+
+// Full timeline sync — insert or update a clip.
+// kind: 0=video, 1=audio, 2=image, 3=text, 4=sticker
+typedef CGhitaEngineUpsertClip = Int32 Function(
+  Pointer<GhitaEngineContext> ctx,
+  Int32 clipId, Pointer<Utf8> filePath,
+  Int64 startMs, Int64 durationMs, Int64 sourceInMs,
+  Int32 trackIndex, Int32 kind, Float volume, Float opacity, Float speed
+);
+typedef DartGhitaEngineUpsertClip = int Function(
+  Pointer<GhitaEngineContext> ctx,
+  int clipId, Pointer<Utf8> filePath,
+  int startMs, int durationMs, int sourceInMs,
+  int trackIndex, int kind, double volume, double opacity, double speed
+);
+
+typedef CGhitaEngineClearClips = Void Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineClearClips = void Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineSetTrackState = Int32 Function(
+  Pointer<GhitaEngineContext> ctx, Int32 trackIndex, Int32 muted, Int32 visible, Float volume
+);
+typedef DartGhitaEngineSetTrackState = int Function(
+  Pointer<GhitaEngineContext> ctx, int trackIndex, int muted, int visible, double volume
+);
+
+typedef CGhitaEngineSetClipColorCorrection = Int32 Function(
+  Pointer<GhitaEngineContext> ctx, Int32 clipId,
+  Float exposure, Float contrast, Float saturation,
+  Float temperature, Float tint, Float vibrance, Float highlights, Float shadows
+);
+typedef DartGhitaEngineSetClipColorCorrection = int Function(
+  Pointer<GhitaEngineContext> ctx, int clipId,
+  double exposure, double contrast, double saturation,
+  double temperature, double tint, double vibrance, double highlights, double shadows
+);
+
+typedef CGhitaEngineSetClipText = Int32 Function(
+  Pointer<GhitaEngineContext> ctx, Int32 clipId, Pointer<Utf8> text, Float fontSize, Uint32 colorArgb
+);
+typedef DartGhitaEngineSetClipText = int Function(
+  Pointer<GhitaEngineContext> ctx, int clipId, Pointer<Utf8> text, double fontSize, int colorArgb
+);
+
+typedef CGhitaEngineHasClip = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId);
+typedef DartGhitaEngineHasClip = int Function(Pointer<GhitaEngineContext> ctx, int clipId);
+
 // ========== Bindings Class ==========
 
 class GhitaNativeBindings {
@@ -254,6 +306,8 @@ class GhitaNativeBindings {
 
   // Rendering
   late DartGhitaEngineRenderFrameRgba renderFrameRgba;
+  // v0.7.9: Nullable — present in the 0.7.9 DLL, absent in older DLLs.
+  DartGhitaEngineRenderFrameAt? renderFrameAt;
 
   // Version
   late DartGhitaEngineGetVersion getVersion;
@@ -303,6 +357,14 @@ class GhitaNativeBindings {
   DartGhitaEngineGetThumbnail? getThumbnail;
   DartGhitaEngineSetFilterPreset? setFilterPreset;
   DartGhitaEngineGetAudioWaveformPeaks? getAudioWaveformPeaks;
+
+  // v0.8.0 New bindings
+  late DartGhitaEngineUpsertClip upsertClip;
+  late DartGhitaEngineClearClips clearClips;
+  late DartGhitaEngineSetTrackState setTrackState;
+  late DartGhitaEngineSetClipColorCorrection setClipColorCorrection;
+  late DartGhitaEngineSetClipText setClipText;
+  late DartGhitaEngineHasClip hasClip;
 
   GhitaNativeBindings._internal() {
     _loadLibrary();
@@ -405,6 +467,7 @@ class GhitaNativeBindings {
 
     // Rendering
     renderFrameRgba = _lib.lookupFunction<CGhitaEngineRenderFrameRgba, DartGhitaEngineRenderFrameRgba>('ghita_engine_render_frame_rgba');
+    renderFrameAt = _tryLookup('ghita_engine_render_frame_at', () => _lib.lookupFunction<CGhitaEngineRenderFrameAt, DartGhitaEngineRenderFrameAt>('ghita_engine_render_frame_at'));
 
     // Version
     getVersion = _lib.lookupFunction<CGhitaEngineGetVersion, DartGhitaEngineGetVersion>('ghita_engine_get_version');
@@ -453,6 +516,14 @@ class GhitaNativeBindings {
     getThumbnail = _tryLookup('ghita_engine_get_thumbnail', () => _lib.lookupFunction<CGhitaEngineGetThumbnail, DartGhitaEngineGetThumbnail>('ghita_engine_get_thumbnail'));
     setFilterPreset = _tryLookup('ghita_engine_set_filter_preset', () => _lib.lookupFunction<CGhitaEngineSetFilterPreset, DartGhitaEngineSetFilterPreset>('ghita_engine_set_filter_preset'));
     getAudioWaveformPeaks = _tryLookup('ghita_engine_get_audio_waveform_peaks', () => _lib.lookupFunction<CGhitaEngineGetAudioWaveformPeaks, DartGhitaEngineGetAudioWaveformPeaks>('ghita_engine_get_audio_waveform_peaks'));
+
+    // v0.8.0 New bindings
+    upsertClip = _lib.lookupFunction<CGhitaEngineUpsertClip, DartGhitaEngineUpsertClip>('ghita_engine_upsert_clip');
+    clearClips = _lib.lookupFunction<CGhitaEngineClearClips, DartGhitaEngineClearClips>('ghita_engine_clear_clips');
+    setTrackState = _lib.lookupFunction<CGhitaEngineSetTrackState, DartGhitaEngineSetTrackState>('ghita_engine_set_track_state');
+    setClipColorCorrection = _lib.lookupFunction<CGhitaEngineSetClipColorCorrection, DartGhitaEngineSetClipColorCorrection>('ghita_engine_set_clip_color_correction');
+    setClipText = _lib.lookupFunction<CGhitaEngineSetClipText, DartGhitaEngineSetClipText>('ghita_engine_set_clip_text');
+    hasClip = _lib.lookupFunction<CGhitaEngineHasClip, DartGhitaEngineHasClip>('ghita_engine_has_clip');
   }
 
   /// v0.7.8: Resolve a symbol defensively — returns null instead of throwing

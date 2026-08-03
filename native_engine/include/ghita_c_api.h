@@ -66,6 +66,12 @@ GHITA_API void ghita_engine_apply_filter(GhitaEngineContext* ctx, int filter_typ
 /** @brief Renders an RGBA frame buffer for preview. */
 GHITA_API bool ghita_engine_render_frame_rgba(GhitaEngineContext* ctx, uint8_t* out_buffer, int width, int height);
 
+/**
+ * @brief v0.7.9: Renders the frame at an explicit position without mutating
+ * playback state — batch/thumbnail rendering from Dart.
+ */
+GHITA_API bool ghita_engine_render_frame_at(GhitaEngineContext* ctx, uint8_t* out_buffer, int width, int height, int64_t position_ms);
+
 /** @brief Adds a clip to the native timeline. */
 GHITA_API int ghita_engine_add_clip(GhitaEngineContext* ctx, const char* file_path, int64_t start_ms, int64_t duration_ms, int track_index);
 
@@ -154,6 +160,64 @@ GHITA_API int ghita_engine_get_clip_keyframe_interpolation(GhitaEngineContext* c
 /** @brief Renders a text overlay on the frame buffer (basic rasterizer stub). */
 GHITA_API bool ghita_engine_render_text_overlay(GhitaEngineContext* ctx, uint8_t* outBuffer, int width, int height,
                                                   const char* text, int fontSize, float r, float g, float b, float a);
+
+// ========== v0.8.0 New API ==========
+
+/**
+ * @brief Inserts or updates a timeline clip (full timeline sync).
+ * @param clip_id Native clip id assigned by the caller (must be > 0).
+ * @param kind 0=video, 1=audio, 2=image, 3=text, 4=sticker.
+ * @return 1 on success, 0 on invalid parameters.
+ */
+GHITA_API int ghita_engine_upsert_clip(GhitaEngineContext* ctx, int clip_id, const char* file_path,
+                                       int64_t start_ms, int64_t duration_ms, int64_t source_in_ms,
+                                       int track_index, int kind, float volume, float opacity, float speed);
+
+/** @brief Removes all clips and resets the timeline (new project/load). */
+GHITA_API void ghita_engine_clear_clips(GhitaEngineContext* ctx);
+
+/** @brief Sets mute/visible/volume for a track (muted/visible are 0/1). */
+GHITA_API int ghita_engine_set_track_state(GhitaEngineContext* ctx, int track_index, int muted, int visible, float volume);
+
+/** @brief Sets per-clip color correction (all values -1.0..1.0). */
+GHITA_API int ghita_engine_set_clip_color_correction(GhitaEngineContext* ctx, int clip_id,
+                                                     float exposure, float contrast, float saturation,
+                                                     float temperature, float tint, float vibrance,
+                                                     float highlights, float shadows);
+
+/** @brief Sets text/sticker payload for a clip (text rendered via GDI). */
+GHITA_API int ghita_engine_set_clip_text(GhitaEngineContext* ctx, int clip_id,
+                                         const char* text, float font_size, uint32_t color_argb);
+
+/** @brief Returns 1 if the clip exists in the native timeline. */
+GHITA_API int ghita_engine_has_clip(GhitaEngineContext* ctx, int clip_id);
+
+/** @brief Enables/disables audio preview during playback (1/0). */
+GHITA_API void ghita_engine_set_audio_preview_enabled(GhitaEngineContext* ctx, int enabled);
+
+// ========== v1.0.0 New & Extended API ==========
+
+/** @brief Applies global color correction parameters. */
+GHITA_API void ghita_engine_apply_color_correction(GhitaEngineContext* ctx, int clip_id,
+                                                   float exposure, float contrast, float highlights, float shadows,
+                                                   float temperature, float tint, float vibrance, float saturation);
+
+/** @brief Sets Bezier control points for a clip keyframe. */
+GHITA_API int ghita_engine_set_keyframe_bezier(GhitaEngineContext* ctx, int clip_id, int keyframe_index,
+                                                float cp1x, float cp1y, float cp2x, float cp2y);
+
+/** @brief Renders a picture-in-picture overlay clip. */
+GHITA_API bool ghita_engine_render_pip(GhitaEngineContext* ctx, int overlay_clip_id,
+                                       float x, float y, float width, float height, float rotation);
+
+/** @brief Generates and extracts a thumbnail frame buffer for a clip. */
+GHITA_API uint8_t* ghita_engine_get_thumbnail(GhitaEngineContext* ctx, int clip_id, int time_ms, int width, int height);
+
+/** @brief Configures filter preset and intensity for a clip. */
+GHITA_API void ghita_engine_set_filter_preset(GhitaEngineContext* ctx, int clip_id, int filter_type, float intensity);
+
+/** @brief Extracts audio waveform peak amplitudes. */
+GHITA_API bool ghita_engine_get_audio_waveform_peaks(GhitaEngineContext* ctx, float* out_samples, int sample_count);
 
 #ifdef __cplusplus
 }

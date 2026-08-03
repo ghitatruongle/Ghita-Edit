@@ -180,6 +180,7 @@ class InspectorPanel extends StatelessWidget {
               onChanged: (val) {
                 clip.textContent = val;
                 controller.notifyListeners();
+                controller.markEngineSync();
               },
             ),
             const SizedBox(height: 10),
@@ -225,6 +226,7 @@ class InspectorPanel extends StatelessWidget {
                         onChanged: (val) {
                           clip.textFontSize = val;
                     controller.notifyListeners();
+                    controller.markEngineSync();
                         },
                       ),
                     ],
@@ -281,7 +283,7 @@ class InspectorPanel extends StatelessWidget {
                                         AppTheme.primaryLight, AppTheme.accent, AppTheme.clipVideo, AppTheme.clipAudio,
                                         AppTheme.clipImage, AppTheme.clipText, AppTheme.clipOverlay, AppTheme.success,
                                       ],
-                                      onColorTap: (c) { clip.textColor = c; controller.notifyListeners(); Navigator.pop(ctx); },
+                                      onColorTap: (c) { clip.textColor = c; controller.notifyListeners(); controller.markEngineSync(); Navigator.pop(ctx); },
                                     ),
                                   ],
                                 ),
@@ -462,17 +464,20 @@ class InspectorPanel extends StatelessWidget {
     // v0.7.8: These sliders drive the real per-clip color-correction fields
     // (model-backed + JSON-persisted). Previously "Exposure" overwrote the
     // filter intensity and "Brightness" actually changed playback speed.
+    // v0.8.0: Mirrored to the native engine so preview/export show the grade.
     void setColor({
       double? exposure,
       double? contrast,
       double? saturation,
       double? temperature,
     }) {
-      if (exposure != null) clip.colorExposure = exposure;
-      if (contrast != null) clip.colorContrast = contrast;
-      if (saturation != null) clip.colorSaturation = saturation;
-      if (temperature != null) clip.colorTemperature = temperature;
-      controller.notifyListeners();
+      controller.setClipColorCorrection(
+        clip.id,
+        exposure: exposure,
+        contrast: contrast,
+        saturation: saturation,
+        temperature: temperature,
+      );
     }
 
     return Container(
@@ -1005,22 +1010,50 @@ class InspectorPanel extends StatelessWidget {
   // Filter Chip Widget
   // ============================================================
 
-  Widget _filterChip(String label, int type, bool isActive, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: isActive ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.surfaceVariant,
-          borderRadius: BorderRadius.circular(AppTheme.radiusFull),
-          border: Border.all(color: isActive ? AppTheme.primaryLight : AppTheme.divider, width: isActive ? 1.2 : 0.5),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isActive ? AppTheme.primaryLight : AppTheme.textMuted,
-            fontSize: 10,
-            fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+  // v0.7.9: UX-03 — chips carry a tooltip describing the effect, and an
+  // optional disabled state (opacity + lock) for unsupported filter ids.
+  Widget _filterChip(String label, int type, bool isActive, VoidCallback onTap,
+      {String tooltip = '', bool isSupported = true}) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: isSupported ? onTap : null,
+        child: Opacity(
+          opacity: isSupported ? 1.0 : 0.45,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: isActive ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.surfaceVariant,
+              borderRadius: BorderRadius.circular(AppTheme.radiusFull),
+              border: Border.all(color: isActive ? AppTheme.primaryLight : AppTheme.divider, width: isActive ? 1.2 : 0.5),
+            ),
+            // v0.8.0: Cap the chip width + ellipsis — the engine-driven chip
+            // list uses full filter names ("Chromatic Aberration") that
+            // overflowed the 201px Wrap lane by a few pixels.
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 190),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: isActive ? AppTheme.primaryLight : AppTheme.textMuted,
+                        fontSize: 10,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  if (!isSupported) ...[
+                    const SizedBox(width: 4),
+                    const Icon(Icons.lock_rounded, size: 10, color: AppTheme.textMuted),
+                  ],
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -1030,21 +1063,57 @@ class InspectorPanel extends StatelessWidget {
   List<Widget> _defaultFilterChips(Clip? clip) {
     // v0.7.8: Chips are functional — per-clip chips update the clip model,
     // global chips go through controller.setFilter (previously dead onTap).
+    // v0.7.9: Each chip now carries a descriptive tooltip (UX-03).
     const names = {
       0: 'None', 1: 'Gray', 2: 'Sepia', 3: 'Invert', 4: 'Bright',
       5: 'Blur', 6: 'Edge', 7: 'Grade', 8: 'Adjust', 9: 'Pixel', 10: 'Mosaic',
     };
+    const descriptions = {
+      0: 'No filter applied',
+      1: 'Black & white conversion',
+      2: 'Warm brown sepia tone',
+      3: 'Invert all colors',
+      4: 'Brightness boost',
+      5: 'Gaussian blur',
+      6: 'Sobel edge detection',
+      7: '3×3 color grading matrix',
+      8: 'Brightness / contrast / saturation / hue',
+      9: 'Pixelate effect',
+      10: 'Mosaic effect',
+    };
     final activeType = clip?.filterType ?? controller.activeFilterType;
-    return names.entries.map((e) {
-      return _filterChip(e.value, e.key, activeType == e.key, () {
-        if (clip != null) {
-          clip.filterType = e.key;
-          controller.notifyListeners();
-        } else {
-          controller.setFilter(e.key, 1.0);
-        }
-      });
-    }).toList();
+
+    final chips = <Widget>[];
+    names.forEach((id, label) {
+      chips.add(_filterChip(
+        label,
+        id,
+        activeType == id,
+        () {
+          if (clip != null) {
+            clip.filterType = id;
+            controller.notifyListeners();
+          } else {
+            controller.setFilter(id, 1.0);
+          }
+        },
+        tooltip: descriptions[id] ?? '',
+      ));
+    });
+
+    // v0.8.0: Filters 0-20 are all engine-supported; only truly unknown ids
+    // (corrupt/old projects) get a disabled chip.
+    if (activeType > 20) {
+      chips.add(_filterChip(
+        'Filter #$activeType',
+        activeType,
+        true,
+        () {},
+        tooltip: 'Unsupported filter id from an older project',
+        isSupported: false,
+      ));
+    }
+    return chips;
   }
 
   // ============================================================

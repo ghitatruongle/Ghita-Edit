@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(ghita_engine VERSION 0.7.8 LANGUAGES CXX C)
+project(ghita_engine VERSION 1.0.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,13 +26,30 @@ find_package(PkgConfig QUIET)
 set(FFMPEG_LIBS)
 set(FFMPEG_INCLUDE_DIRS)
 
+# v0.8.0: Prefer a MinGW-built FFmpeg when compiling with MinGW. MSVC-built
+# FFmpeg (vcpkg) frees memory through the MSVC CRT while MinGW code allocates
+# on its own CRT heap — mixing them corrupted the heap and crashed on real
+# media decode. MinGW FFmpeg from msys64 shares the CRT and works.
+if(MINGW AND EXISTS "C:/msys64/mingw64/include/libavcodec/avcodec.h")
+    set(MSYS64_FFMPEG "C:/msys64/mingw64")
+    message(STATUS "FFmpeg found via msys64 MinGW at ${MSYS64_FFMPEG}")
+    list(APPEND FFMPEG_INCLUDE_DIRS "${MSYS64_FFMPEG}/include")
+    list(APPEND FFMPEG_LIBS
+        "${MSYS64_FFMPEG}/lib/libavcodec.dll.a"
+        "${MSYS64_FFMPEG}/lib/libavformat.dll.a"
+        "${MSYS64_FFMPEG}/lib/libavutil.dll.a"
+        "${MSYS64_FFMPEG}/lib/libswscale.dll.a"
+        "${MSYS64_FFMPEG}/lib/libswresample.dll.a"
+    )
+endif()
+
 # Check vcpkg environment variable for MSVC builds
 # v0.7.8: Verify the path actually contains FFmpeg before using it — a stale
 # VCPKG_ROOT env var (e.g. C:\dev\vcpkg) used to silently disable FFmpeg even
 # though a valid installation existed at C:/vcpkg.
-if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/installed/x64-windows/include/libavcodec/avcodec.h")
+if(NOT FFMPEG_LIBS AND DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/installed/x64-windows/include/libavcodec/avcodec.h")
     set(VCPKG_ROOT "$ENV{VCPKG_ROOT}")
-elseif(EXISTS "C:/vcpkg/installed/x64-windows/include/libavcodec/avcodec.h")
+elseif(NOT FFMPEG_LIBS AND EXISTS "C:/vcpkg/installed/x64-windows/include/libavcodec/avcodec.h")
     set(VCPKG_ROOT "C:/vcpkg")
 endif()
 
@@ -119,6 +136,30 @@ add_library(ghita_engine SHARED
     ${ENGINE_HEADERS}
 )
 
+# v0.8.0: Copy the FFmpeg runtime DLLs next to the engine DLL so development
+# runs (flutter run -d windows) resolve them without relying on PATH.
+if(WIN32 AND DEFINED MSYS64_FFMPEG)
+    file(GLOB FFMPEG_RUNTIME_DLLS
+        "${MSYS64_FFMPEG}/bin/av*.dll"
+        "${MSYS64_FFMPEG}/bin/sw*.dll")
+    foreach(dll ${FFMPEG_RUNTIME_DLLS})
+        add_custom_command(TARGET ghita_engine POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:ghita_engine>"
+            COMMENT "Copying FFmpeg runtime DLL: ${dll}")
+    endforeach()
+    # Expose the runtime DLL directory for the Flutter Windows runner.
+    set(GHITA_FFMPEG_BIN_DIR "${MSYS64_FFMPEG}/bin" CACHE INTERNAL "FFmpeg runtime DLL directory")
+endif()
+
+# v0.8.0: Statically link the C++ runtime on MinGW. The engine DLL must not
+# depend on a versioned libstdc++-6.dll from a random PATH entry — a
+# mismatched one (e.g. msys2's vs CodeBlocks') corrupted the heap and crashed
+# on std::ifstream/std::string usage. Static linking makes the DLL
+# self-contained apart from the FFmpeg DLLs.
+if(MINGW)
+    target_link_options(ghita_engine PRIVATE -static-libstdc++ -static-libgcc)
+endif()
+
 target_include_directories(ghita_engine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
@@ -130,6 +171,11 @@ endif()
 
 if(FFMPEG_LIBS)
     target_link_libraries(ghita_engine PRIVATE ${FFMPEG_LIBS})
+endif()
+
+# v0.8.0: waveOut for audio preview (Windows multimedia API).
+if(WIN32)
+    target_link_libraries(ghita_engine PRIVATE winmm)
 endif()
 
 if(WIN32)
@@ -153,6 +199,11 @@ if(BUILD_TESTING)
   endif()
   if(FFMPEG_LIBS)
       target_link_libraries(ghita_engine_static PRIVATE ${FFMPEG_LIBS})
+  endif()
+  # v0.8.0: waveOut — the static lib must carry its own system libs so the
+  # test runner links (the shared target's winmm is PRIVATE and not visible).
+  if(WIN32)
+      target_link_libraries(ghita_engine_static PRIVATE winmm)
   endif()
 
   add_executable(native_engine_test test/native_engine_self_test.cpp)

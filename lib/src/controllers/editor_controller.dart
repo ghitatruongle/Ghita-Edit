@@ -11,6 +11,7 @@ import 'project_service.dart';
 import '../models/project.dart';
 import '../models/clip.dart';
 import '../models/track.dart';
+import '../models/studio_mode.dart';
 import '../core/version.dart';
 
 /// Orchestrates UI state, project model, undo/redo, and native engine.
@@ -23,6 +24,17 @@ class EditorController extends ChangeNotifier {
   bool _disposed = false;
   String _statusMessage = 'Initializing...';
   Timer? _autoSaveTimer;
+
+  // --- Triple-Studio Mode State ---
+  StudioMode _activeStudioMode = StudioMode.video;
+  StudioMode get activeStudioMode => _activeStudioMode;
+  set activeStudioMode(StudioMode mode) => setStudioMode(mode);
+
+  void setStudioMode(StudioMode mode) {
+    if (_activeStudioMode == mode) return;
+    _activeStudioMode = mode;
+    notifyListeners();
+  }
 
   // --- Project State ---
   late Project project;
@@ -169,7 +181,8 @@ class EditorController extends ChangeNotifier {
   void setFilter(int filterType, double intensity) {
     if (_disposed) return;
     // v0.4.5: Extended filter range 0-10 (was 0-4)
-    final safeType = filterType.clamp(0, 10);
+    // v0.8.0: Extended to 0-20 (VHS/Glitch/Vignette/Grain/...).
+    final safeType = filterType.clamp(0, 20);
     final safeIntensity = intensity.clamp(0.0, 1.0);
     _activeFilterType = safeType;
     _filterIntensity = safeIntensity;
@@ -180,12 +193,112 @@ class EditorController extends ChangeNotifier {
   }
 
   // v0.4.5: Maps Dart clip IDs (String) → native engine clip IDs (int)
+  // v0.8.0: Owned and maintained by syncTimelineToEngine — stable ids keep
+  // the engine's per-clip decoder cache alive across syncs.
   final Map<String, int> _nativeClipIdMap = {};
   int _nextNativeClipId = 1;
 
-  int _getOrCreateNativeClipId(String dartClipId) {
-    return _nativeClipIdMap.putIfAbsent(dartClipId, () => _nextNativeClipId++);
+  // v0.8.0: Deferred engine sync — commands fire it once per event-loop turn
+  // (a slider drag executing 60 commands/s results in one sync per frame).
+  bool _engineSyncDirty = false;
+
+  void _markEngineSync() {
+    if (_engineSyncDirty || _disposed) return;
+    _engineSyncDirty = true;
+    scheduleMicrotask(() {
+      _engineSyncDirty = false;
+      syncTimelineToEngine();
+    });
   }
+
+  /// v0.8.0: Public entry for UI code that mutates a clip directly (rich-text
+  /// editor, sticker props) — schedules an engine timeline sync so preview
+  /// reflects the change.
+  void markEngineSync() => _markEngineSync();
+
+  /// v0.8.0: Differential resync of the Dart timeline into the native engine.
+  /// Unchanged clips keep their native id (and thus their decoder cache);
+  /// changed clips are upserted in place; deleted clips are removed. This is
+  /// what makes preview render the ACTUAL timeline (trim/split/move/filter/
+  /// opacity/speed) instead of the last loaded media.
+  void syncTimelineToEngine() {
+    final engine = _engine;
+    if (!engine.isReady || engine.bindings == null) return;
+    try {
+      final wantedDartIds = <String>{};
+      var trackIndex = 0;
+      for (final track in project.tracks) {
+        engine.setTrackState(
+          trackIndex,
+          muted: track.isMuted,
+          visible: track.isVisible,
+          volume: track.volume,
+        );
+        for (final clip in track.clips) {
+          wantedDartIds.add(clip.id);
+          final nativeId =
+              _nativeClipIdMap.putIfAbsent(clip.id, () => _nextNativeClipId++);
+          final kind = switch (clip.type) {
+            ClipType.video => 0,
+            ClipType.audio => 1,
+            ClipType.image => 2,
+            ClipType.text => 3,
+            ClipType.sticker => 4,
+            // Overlay clips render as video (track index provides the layer).
+            ClipType.overlay => 0,
+          };
+          engine.upsertClip(
+            clipId: nativeId,
+            filePath: clip.sourceFilePath,
+            startMs: clip.timelineStartMs,
+            durationMs: clip.durationMs,
+            sourceInMs: clip.sourceInMs,
+            trackIndex: trackIndex,
+            kind: kind,
+            volume: clip.volume,
+            opacity: clip.opacity,
+            speed: clip.speed,
+          );
+          engine.setClipFilter(nativeId, clip.filterType, clip.filterIntensity);
+          engine.setClipTransition(
+              nativeId, clip.transitionType, clip.transitionDurationMs);
+          engine.setClipColorCorrection(
+            clipId: nativeId,
+            exposure: clip.colorExposure,
+            contrast: clip.colorContrast,
+            saturation: clip.colorSaturation,
+            temperature: clip.colorTemperature,
+            tint: clip.colorTint,
+            vibrance: clip.colorVibrance,
+            highlights: clip.colorHighlights,
+            shadows: clip.colorShadows,
+          );
+          if (clip.type == ClipType.text || clip.type == ClipType.sticker) {
+            engine.setClipText(
+              clipId: nativeId,
+              text: clip.textContent,
+              fontSize: clip.textFontSize,
+              colorArgb: clip.textColorValue,
+            );
+          }
+        }
+        trackIndex++;
+      }
+
+      // Remove engine clips whose Dart clip no longer exists (delete/undo).
+      for (final dartId in _nativeClipIdMap.keys.toList()) {
+        if (!wantedDartIds.contains(dartId)) {
+          final nativeId = _nativeClipIdMap.remove(dartId);
+          if (nativeId != null) engine.removeClip(nativeId);
+        }
+      }
+    } catch (e, st) {
+      debugPrint('[EditorController] syncTimelineToEngine failed: $e\n$st');
+    }
+  }
+
+  // v0.8.0: Legacy helper removed — the inline engine calls it performed are
+  // superseded by syncTimelineToEngine (single code path, no drift).
 
   // v0.4.5: Set clip transition via native engine
   // v0.7.8: Persists on the Dart clip model through an undoable command
@@ -203,81 +316,99 @@ class EditorController extends ChangeNotifier {
       ),
       project,
     );
-    if (_engine.isReady && _engine.bindings != null) {
-      final nativeId = _getOrCreateNativeClipId(clipId);
-      _engine.bindings!.setClipTransition(
-        _engine.ctx,
-        nativeId,
-        safeType,
-        safeDuration,
-      );
-    }
+    // v0.8.0: Engine mirroring happens in syncTimelineToEngine (via the
+    // command-history listener) — no separate inline call to avoid drift.
     notifyListeners();
   }
 
   // ========== CLIP & TIMELINE OPERATIONS ==========
 
-  /// Import a media file and add it as a clip to the video track.
-  void importMedia(String path) {
+  /// Import a media file asynchronously and add it as a clip to the matching track (non-blocking).
+  Future<void> importMedia(String path) async {
     if (_disposed || path.isEmpty) return;
 
-    // Use path package for proper cross-platform path handling with Unicode support
-    final fileName = basename(path);
-    // extension() returns '.mp3' (with leading dot) — strip it before matching
-    final fileExtension = extension(fileName).toLowerCase().replaceFirst('.', '');
-
-    // Determine clip type from fileExtension
-    ClipType clipType;
-    String? targetTrackId;
-    if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(fileExtension)) {
-      clipType = ClipType.video;
-    } else if (['mp3', 'wav', 'flac', 'aac', 'ogg'].contains(fileExtension)) {
-      clipType = ClipType.audio;
-    } else if (['png', 'jpg', 'jpeg', 'gif', 'bmp'].contains(fileExtension)) {
-      clipType = ClipType.image;
-    } else {
-      clipType = ClipType.video;
-    }
-    targetTrackId = trackIdForClipType(clipType);
-    if (targetTrackId == null) {
-      _statusMessage = 'No track available for this media type';
+    try {
+      _statusMessage = 'Loading media: ${basename(path)}...';
       notifyListeners();
-      return;
-    }
 
-    final clip = Clip(
-      id: Clip.nextId(),
-      sourceFilePath: path,
-      displayName: fileName,
-      timelineStartMs: 0,
-      durationMs: 10000, // Provisional; synced from engine below
-      type: clipType,
-    );
+      final fileName = basename(path);
+      final fileExtension = extension(fileName).toLowerCase().replaceFirst('.', '');
 
-    // Use command pattern for undo support
-    final cmd = AddClipCommand(
-      trackId: targetTrackId,
-      clip: clip,
-      positionMs: _getNextAvailablePosition(targetTrackId),
-    );
-    commandHistory.execute(cmd, project);
-
-    // Tell native engine and sync real media duration back to the clip
-    if (_engine.isReady) {
-      _engine.loadMedia(path);
-      final engineDuration = _engine.durationMs;
-      if (engineDuration > 0) {
-        clip.durationMs = engineDuration;
-        clip.sourceOutMs = clip.sourceInMs + engineDuration;
+      // Determine clip type from fileExtension
+      ClipType clipType;
+      if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(fileExtension)) {
+        clipType = ClipType.video;
+      } else if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'].contains(fileExtension)) {
+        clipType = ClipType.audio;
+      } else if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].contains(fileExtension)) {
+        clipType = ClipType.image;
+      } else {
+        clipType = ClipType.video;
       }
-    }
 
-    _statusMessage = 'Imported: $fileName';
-    notifyListeners();
+      final targetTrackId = trackIdForClipType(clipType);
+      if (targetTrackId == null) {
+        _statusMessage = 'No track available for media type: $fileExtension';
+        notifyListeners();
+        return;
+      }
+
+      final clip = Clip(
+        id: Clip.nextId(),
+        sourceFilePath: path,
+        displayName: fileName,
+        timelineStartMs: 0,
+        durationMs: 10000, // Provisional 10s default
+        type: clipType,
+      );
+
+      // Add clip to timeline command history
+      final cmd = AddClipCommand(
+        trackId: targetTrackId,
+        clip: clip,
+        positionMs: _getNextAvailablePosition(targetTrackId),
+      );
+      commandHistory.execute(cmd, project);
+      project.selectClip(clip.id);
+
+      // Asynchronously probe real media metadata via engine without blocking UI
+      if (_engine.isReady) {
+        await Future.microtask(() {
+          try {
+            _engine.loadMedia(path);
+            final mediaDur = _engine.mediaInfo['durationMs'];
+            if (mediaDur is int && mediaDur > 0) {
+              clip.durationMs = mediaDur;
+              clip.sourceOutMs = clip.sourceInMs + mediaDur;
+            }
+          } catch (e) {
+            // Engine load error handled gracefully in demo/mock fallback
+          }
+        });
+      }
+
+      _statusMessage = 'Imported: $fileName';
+    } catch (e) {
+      _statusMessage = 'Error importing media: $e';
+    } finally {
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  /// Specialized audio import for Audio DAW Studio.
+  Future<void> importAudioToDaw(String path) async {
+    await importMedia(path);
+    activeStudioMode = StudioMode.audioDaw;
+  }
+
+  /// Specialized photo layer import for Photo Editor Studio.
+  Future<void> importPhotoToStudio(String path) async {
+    await importMedia(path);
+    activeStudioMode = StudioMode.photo;
   }
 
   /// Legacy loadMedia compatibility.
-  void loadMedia(String path) => importMedia(path);
+  Future<void> loadMedia(String path) => importMedia(path);
 
   /// Split the clip at the current playhead position.
   void splitAtPlayhead() {
@@ -463,6 +594,8 @@ class EditorController extends ChangeNotifier {
     final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
     if (track.id.isEmpty) return;
     track.isMuted = muted;
+    // v0.8.0: Mirror to the native mixer (silences the track in preview/export).
+    _syncTrackStateToEngine(track);
     _statusMessage = muted ? 'Track muted' : 'Track unmuted';
     notifyListeners();
   }
@@ -473,6 +606,8 @@ class EditorController extends ChangeNotifier {
     final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
     if (track.id.isEmpty) return;
     track.isVisible = visible;
+    // v0.8.0: Mirror to the native renderer (hides the track in preview).
+    _syncTrackStateToEngine(track);
     notifyListeners();
   }
 
@@ -491,6 +626,51 @@ class EditorController extends ChangeNotifier {
     final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
     if (track.id.isEmpty) return;
     track.volume = volume.clamp(0.0, 2.0);
+    // v0.8.0: Mirror to the native mixer.
+    _syncTrackStateToEngine(track);
+    notifyListeners();
+  }
+
+  // v0.8.0: Push one track's mute/visible/volume to the native engine. The
+  // engine indexes tracks by their position in the project track list.
+  void _syncTrackStateToEngine(Track track) {
+    final engine = _engine;
+    if (!engine.isReady) return;
+    final idx = project.tracks.indexOf(track);
+    if (idx < 0) return;
+    engine.setTrackState(idx, muted: track.isMuted, visible: track.isVisible, volume: track.volume);
+  }
+
+  /// v0.8.0: Update per-clip color correction (model + native mirror).
+  /// All values are -1.0..1.0; the engine applies them after the filter.
+  void setClipColorCorrection(
+    String clipId, {
+    double? exposure,
+    double? contrast,
+    double? saturation,
+    double? temperature,
+    double? tint,
+    double? vibrance,
+    double? highlights,
+    double? shadows,
+  }) {
+    if (_disposed) return;
+    final track = project.trackForClip(clipId);
+    if (track == null) return;
+    final clip = track.clips.firstWhere(
+      (c) => c.id == clipId,
+      orElse: () => Clip(id: '', sourceFilePath: '', displayName: '', timelineStartMs: 0, durationMs: 0),
+    );
+    if (clip.id.isEmpty) return;
+    if (exposure != null) clip.colorExposure = exposure;
+    if (contrast != null) clip.colorContrast = contrast;
+    if (saturation != null) clip.colorSaturation = saturation;
+    if (temperature != null) clip.colorTemperature = temperature;
+    if (tint != null) clip.colorTint = tint;
+    if (vibrance != null) clip.colorVibrance = vibrance;
+    if (highlights != null) clip.colorHighlights = highlights;
+    if (shadows != null) clip.colorShadows = shadows;
+    _markEngineSync();
     notifyListeners();
   }
 
@@ -564,13 +744,17 @@ class EditorController extends ChangeNotifier {
   }
 
   // v0.7.8: Per-clip filter with undo/redo (ChangeFilterCommand).
+  // v0.8.0: Engine mirroring happens in syncTimelineToEngine (single path).
   void setClipFilter(String clipId, int filterType, double intensity) {
     if (_disposed) return;
+    // v0.8.0: Range extended to 0-20 (was 0-10).
+    final safeType = filterType.clamp(0, 20);
+    final safeIntensity = intensity.clamp(0.0, 1.0);
     commandHistory.execute(
       ChangeFilterCommand(
         clipId: clipId,
-        newFilterType: filterType.clamp(0, 10),
-        newIntensity: intensity.clamp(0.0, 1.0),
+        newFilterType: safeType,
+        newIntensity: safeIntensity,
       ),
       project,
     );
@@ -582,7 +766,7 @@ class EditorController extends ChangeNotifier {
   void undo() {
     if (_disposed) return;
     if (commandHistory.undo(project)) {
-      _statusMessage = 'Undo: ${commandHistory.lastRedoDescription ?? ""}';
+      _statusMessage = 'Undo: ${commandHistory.lastUndoDescription ?? ""}';
       notifyListeners();
     }
   }
@@ -590,7 +774,7 @@ class EditorController extends ChangeNotifier {
   void redo() {
     if (_disposed) return;
     if (commandHistory.redo(project)) {
-      _statusMessage = 'Redo: ${commandHistory.lastUndoDescription ?? ""}';
+      _statusMessage = 'Redo: ${commandHistory.lastRedoDescription ?? ""}';
       notifyListeners();
     }
   }
@@ -615,6 +799,9 @@ class EditorController extends ChangeNotifier {
     // clips of the new project (and the map grew unbounded across projects).
     _nativeClipIdMap.clear();
     _nextNativeClipId = 1;
+    _engineSyncDirty = false;
+    // v0.8.0: Drop all native clips — the new project starts empty.
+    if (_engine.isReady) _engine.clearClips();
     _statusMessage = 'New project created';
     notifyListeners();
   }
@@ -657,6 +844,14 @@ class EditorController extends ChangeNotifier {
       // v0.7.8: Reset native clip id mapping for the new project.
       _nativeClipIdMap.clear();
       _nextNativeClipId = 1;
+      _engineSyncDirty = false;
+      // v0.8.0: Drop ALL native clips first — ids are reassigned from 1 on
+      // load, so clips of the previous project beyond the new project's clip
+      // count would otherwise survive as invisible ghost clips on the engine
+      // timeline (they are never removed by the differential sync).
+      if (_engine.isReady) _engine.clearClips();
+      // v0.8.0: Rebuild the native timeline from the loaded project.
+      syncTimelineToEngine();
       _statusMessage = 'Loaded: ${project.name}';
       notifyListeners();
       return true;
@@ -817,6 +1012,9 @@ class EditorController extends ChangeNotifier {
 
   void _onCommandHistoryChanged() {
     if (!_disposed) notifyListeners();
+    // v0.8.0: Keep the native timeline in sync with every command (add/remove/
+    // move/trim/split/filter/property) — deferred once per event-loop turn.
+    _markEngineSync();
   }
 
   void _startAutoSave() {

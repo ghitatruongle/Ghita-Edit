@@ -25,7 +25,12 @@ class ProjectService {
   /// never repoint project.filePath/_lastSavePath at an autosave file.
   /// Writes to a temp file first and renames, so a crash mid-write cannot
   /// corrupt the project file.
+  /// v0.7.9: True atomic replace — try rename first (POSIX overwrites the
+  /// destination), and only delete-then-rename on Windows where rename fails
+  /// when the target exists. On failure the temp file is cleaned up so a
+  /// failed save cannot leave junk behind.
   Future<bool> _writeFile(Project project, String filePath) async {
+    final tmpFile = File('$filePath.tmp');
     try {
       final file = File(filePath);
       final dir = file.parent;
@@ -34,15 +39,28 @@ class ProjectService {
       }
 
       final jsonStr = project.toJsonString();
-      final tmpFile = File('$filePath.tmp');
       await tmpFile.writeAsString(jsonStr, flush: true);
-      if (await file.exists()) {
-        await file.delete();
+
+      try {
+        await tmpFile.rename(filePath);
+      } catch (_) {
+        // Windows: rename fails when the destination exists — remove it
+        // first, then retry. The data was already flushed to the temp file,
+        // so this still cannot corrupt the destination on crash.
+        if (await file.exists()) {
+          await file.delete();
+        }
+        await tmpFile.rename(filePath);
       }
-      await tmpFile.rename(filePath);
       return true;
     } catch (e) {
       debugPrint('[ProjectService] Write failed: $e');
+      // v0.7.9: Never leave a stray .tmp file behind on failure.
+      try {
+        if (await tmpFile.exists()) {
+          await tmpFile.delete();
+        }
+      } catch (_) {}
       return false;
     }
   }

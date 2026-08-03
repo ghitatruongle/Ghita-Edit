@@ -50,6 +50,9 @@ set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
 # Native Engine build
+# v0.8.0: The app build must not compile the native test runner — it needs
+# its own FFmpeg/winmm linkage and slows release builds.
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../native_engine" "${CMAKE_CURRENT_BINARY_DIR}/native_engine")
 
 # Application build; see runner/CMakeLists.txt.
@@ -78,6 +81,20 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS ${BINARY_NAME} ghita_engine RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
+
+# v0.8.0: Bundle the FFmpeg runtime DLLs (avcodec/avformat/avutil/swscale/
+# swresample) next to the executable — the engine links them dynamically and
+# without them the app silently falls back to Demo Mode / synthetic content.
+if(DEFINED GHITA_FFMPEG_BIN_DIR AND EXISTS "${GHITA_FFMPEG_BIN_DIR}")
+  file(GLOB FFMPEG_RUNTIME_DLLS
+    "${GHITA_FFMPEG_BIN_DIR}/av*.dll"
+    "${GHITA_FFMPEG_BIN_DIR}/sw*.dll")
+  if(FFMPEG_RUNTIME_DLLS)
+    install(FILES ${FFMPEG_RUNTIME_DLLS}
+      DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+      COMPONENT Runtime)
+  endif()
+endif()
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)

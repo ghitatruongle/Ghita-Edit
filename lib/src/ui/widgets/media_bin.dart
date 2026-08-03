@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../controllers/editor_controller.dart';
@@ -205,8 +206,35 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
     final mediaItems = _filteredMedia.where((m) => ['video', 'image', 'overlay'].contains(m['type'])).toList();
 
     if (mediaItems.isEmpty) {
-      return const Center(
-        child: Text('No media imported.\nClick "Import" to add media.', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+      // v0.7.9: UX-02 — friendlier empty state with a direct import action.
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.folder_open_rounded, size: 48, color: AppTheme.textMuted),
+            const SizedBox(height: 12),
+            const Text(
+              'No media imported yet',
+              style: TextStyle(color: AppTheme.textMain, fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Click "Import" or drag media in from your files',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primary,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.add_rounded, size: 16),
+              label: const Text('Import Media', style: TextStyle(fontSize: 11)),
+              onPressed: _openFilePicker,
+            ),
+          ],
+        ),
       );
     }
 
@@ -221,10 +249,16 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       itemCount: mediaItems.length,
       itemBuilder: (context, index) {
         final item = mediaItems[index];
+        final path = item['path'] as String? ?? '';
+        // v0.7.9: PERF-03 — serve cached thumbnails when the engine has
+        // produced one; otherwise the tile falls back to its type icon.
+        final thumb = path.isNotEmpty
+            ? widget.controller.engineService.getCachedThumbnail(path)
+            : null;
         return LongPressDraggable<Map<String, dynamic>>(
           data: item,
-          feedback: Material(color: Colors.transparent, child: _MediaTile(name: item['name'] as String, duration: item['duration'] as String, type: item['type'] as String, isDragging: true)),
-          child: _MediaTile(name: item['name'] as String, duration: item['duration'] as String, type: item['type'] as String, isDragging: false),
+          feedback: Material(color: Colors.transparent, child: _MediaTile(name: item['name'] as String, duration: item['duration'] as String, type: item['type'] as String, isDragging: true, thumbnail: thumb)),
+          child: _MediaTile(name: item['name'] as String, duration: item['duration'] as String, type: item['type'] as String, isDragging: false, thumbnail: thumb),
         );
       },
     );
@@ -243,8 +277,15 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
         if (audioItems.isNotEmpty) ...[
           const Text('Imported Audio', style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.3)),
           const SizedBox(height: 4),
+          // v0.8.0: Tapping selects the existing clip (and seeks to it) —
+          // it used to call importMedia again, duplicating the clip on the
+          // timeline on every tap.
           ...audioItems.map((item) => _presetTile(item['name'] as String, 'Audio', Icons.music_note_rounded, () {
-            widget.controller.importMedia(item['path'] as String);
+            final clip = item['clip'] as dynamic;
+            if (clip != null) {
+              widget.controller.selectClip(clip.id as String);
+              widget.controller.seek(clip.timelineStartMs as int);
+            }
           })),
           const SizedBox(height: 10),
         ],
@@ -338,9 +379,8 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
   }
 
   List<Widget> _defaultFilterTiles() {
-    // v0.7.8: Tiles 0-10 are engine-supported and wired to setFilter;
-    // tiles 11-20 are NOT supported by the engine — they are shown as
-    // disabled "coming soon" instead of silently doing nothing on tap.
+    // v0.8.0: All 21 filters (0-20) are engine-supported and wired to
+    // setFilter — the "Coming soon" state is gone.
     final supported = <int, String>{
       0: 'Original (No Filter)',
       1: 'Grayscale',
@@ -353,8 +393,6 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       8: 'BCSH Adjust',
       9: 'Pixelate',
       10: 'Mosaic',
-    };
-    final comingSoon = <int, String>{
       11: 'VHS Effect',
       12: 'Glitch',
       13: 'Chromatic Aberration',
@@ -370,7 +408,6 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
     return [
       ...supported.entries.map((e) =>
           _buildFilterTile(e.value, e.key, ctrl.activeFilterType == e.key, ctrl)),
-      ...comingSoon.entries.map((e) => _filterTileStatic(e.value, e.key, supported: false)),
     ];
   }
 
@@ -483,27 +520,6 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       ),
     );
   }
-
-  // v0.7.8: supported=false renders a disabled "coming soon" tile instead of
-  // a dead tap target.
-  Widget _filterTileStatic(String name, int type, {bool supported = true}) {
-    return Card(
-      color: AppTheme.card,
-      margin: const EdgeInsets.only(bottom: 6),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm), side: const BorderSide(color: AppTheme.divider, width: 0.5)),
-      child: ListTile(
-        leading: Icon(Icons.color_lens_rounded, color: AppTheme.textMuted, size: 16),
-        title: Text(name, style: const TextStyle(color: AppTheme.textMain, fontSize: 11)),
-        subtitle: supported
-            ? null
-            : const Text('Coming soon', style: TextStyle(color: AppTheme.warning, fontSize: 9)),
-        trailing: supported
-            ? const Icon(Icons.play_arrow_rounded, color: AppTheme.textMuted, size: 16)
-            : const Icon(Icons.lock_rounded, color: AppTheme.textMuted, size: 14),
-        onTap: supported ? () => widget.controller.setFilter(type, 1.0) : null,
-      ),
-    );
-  }
 }
 
 // ============================================================
@@ -515,11 +531,14 @@ class _MediaTile extends StatelessWidget {
   final String duration;
   final String type;
   final bool isDragging;
+  // v0.7.9: PERF-03 — optional cached thumbnail (path-keyed from EngineService).
+  final Uint8List? thumbnail;
 
-  const _MediaTile({required this.name, required this.duration, required this.type, this.isDragging = false});
+  const _MediaTile({required this.name, required this.duration, required this.type, this.isDragging = false, this.thumbnail});
 
   @override
   Widget build(BuildContext context) {
+    final thumb = thumbnail;
     return Container(
       decoration: BoxDecoration(
         color: isDragging ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.card,
@@ -529,11 +548,17 @@ class _MediaTile extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            type == 'video' ? Icons.movie_rounded : type == 'audio' ? Icons.music_note_rounded : type == 'text' ? Icons.title_rounded : Icons.image_rounded,
-            color: AppTheme.accent,
-            size: 28,
-          ),
+          if (thumb != null)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.memory(thumb, width: 48, height: 48, fit: BoxFit.cover, gaplessPlayback: true),
+            )
+          else
+            Icon(
+              type == 'video' ? Icons.movie_rounded : type == 'audio' ? Icons.music_note_rounded : type == 'text' ? Icons.title_rounded : Icons.image_rounded,
+              color: AppTheme.accent,
+              size: 28,
+            ),
           const SizedBox(height: 6),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),

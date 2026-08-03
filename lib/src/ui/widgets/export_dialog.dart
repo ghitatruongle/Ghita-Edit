@@ -259,13 +259,27 @@ class _ExportDialogState extends State<ExportDialog> {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
-  String get _elapsedTime {
-    if (_exportStartTime == null) return '--:--';
-    final elapsed = DateTime.now().difference(_exportStartTime!);
-    if (elapsed.inHours > 0) {
-      return '${elapsed.inHours}:${elapsed.inMinutes.remainder(60).toString().padLeft(2, '0')}:${elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+  // v0.7.9: UX-01 — estimated time remaining, extrapolated from progress.
+  String get _estimatedTimeRemaining {
+    if (_exportStartTime == null || _exportProgress <= 0.01) return '--:--';
+    final elapsedMs = DateTime.now().difference(_exportStartTime!).inMilliseconds;
+    final totalMs = elapsedMs / _exportProgress;
+    final remaining = Duration(milliseconds: totalMs.round() - elapsedMs);
+    if (remaining <= Duration.zero) return '--:--';
+    if (remaining.inHours > 0) {
+      return '${remaining.inHours}:${remaining.inMinutes.remainder(60).toString().padLeft(2, '0')}:${remaining.inSeconds.remainder(60).toString().padLeft(2, '0')}';
     }
-    return '${elapsed.inMinutes}:${elapsed.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+    return '${remaining.inMinutes}:${remaining.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+  }
+
+  // v0.7.9: UX-01 — coarse phase label so the user knows what stage the
+  // pipeline is at, not just a percentage.
+  String get _exportPhase {
+    final p = _exportProgress;
+    if (p < 0.2) return 'Initializing encoder...';
+    if (p < 0.5) return 'Encoding video frames...';
+    if (p < 0.85) return 'Processing audio / muxing...';
+    return 'Finalizing output...';
   }
 
   String get _aspectRatioLabel {
@@ -531,8 +545,9 @@ class _ExportDialogState extends State<ExportDialog> {
               '${(_exportProgress * 100).toInt()}% completed',
               style: const TextStyle(color: AppTheme.accent, fontWeight: FontWeight.bold),
             ),
+            // v0.7.9: UX-01 — ETA alongside elapsed time.
             Text(
-              'Elapsed: $_elapsedTime',
+              'ETA: $_estimatedTimeRemaining',
               style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
             ),
           ],
@@ -551,6 +566,12 @@ class _ExportDialogState extends State<ExportDialog> {
                 style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
               ),
           ],
+        ),
+        // v0.7.9: UX-01 — pipeline stage indicator.
+        const SizedBox(height: 8),
+        Text(
+          _exportPhase,
+          style: const TextStyle(color: AppTheme.accent, fontSize: 10, fontStyle: FontStyle.italic),
         ),
       ],
     );

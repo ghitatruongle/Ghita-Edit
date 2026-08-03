@@ -1,19 +1,24 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../controllers/editor_controller.dart';
 import '../../models/track.dart';
+import '../../models/studio_mode.dart';
 import '../theme/app_theme.dart';
 import '../widgets/preview_player.dart';
 import '../widgets/media_bin.dart';
 import '../widgets/inspector_panel.dart';
 import '../widgets/timeline_panel.dart';
+import '../widgets/audio_daw_panel.dart';
+import '../widgets/photo_editor_panel.dart';
 
 // ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
 import '../widgets/export_dialog.dart';
 import '../widgets/undo_history_panel.dart';
+import '../widgets/voiceover_recorder.dart';
 
 // ============================================================
 // EditorView — CapCut-style Main Layout v0.7.0
@@ -198,7 +203,10 @@ class _EditorViewState extends State<EditorView> {
     return KeyboardListener(
       focusNode: _focusNode,
       autofocus: true,
-      onKeyEvent: _controller.handleKeyEvent,
+      // v0.7.9: UX-04 — Ctrl+T toggles the theme at the view level (the
+      // controller only knows the editor, not the theme), everything else
+      // falls through to the controller's shortcut handler.
+      onKeyEvent: _handleKeyEvent,
       child: AnimatedBuilder(
         animation: _controller,
         builder: (context, child) {
@@ -215,55 +223,86 @@ class _EditorViewState extends State<EditorView> {
 
                 const Divider(height: 1, color: AppTheme.divider),
 
-                // ====== Main Content Area ======
+                // ====== Main Content Area (Triple-Studio Suite v1.0.0) ======
                 Expanded(
+                  child: Builder(
+                    builder: (context) {
+                      if (_controller.activeStudioMode == StudioMode.audioDaw) {
+                        return AudioDawPanel(controller: _controller);
+                      }
+                      if (_controller.activeStudioMode == StudioMode.photo) {
+                        return PhotoEditorPanel(controller: _controller);
+                      }
+
+                      // Default: Video Studio (CapCut & WinK Pro)
+                      return Row(
+                        children: [
+                          // Media Bin (collapsible)
+                          if (_mediaBinVisible) ...[
+                            AnimatedContainer(
+                              duration: AppTheme.durationNormal,
+                              curve: AppTheme.curveStandard,
+                              width: 280,
+                              child: MediaBin(controller: _controller),
+                            ),
+                            _buildPanelDivider(
+                              onTap: () => setState(() => _mediaBinVisible = !_mediaBinVisible),
+                            ),
+                          ],
+
+                          // Center: Preview + Timeline
+                          Expanded(
+                            child: Column(
+                              children: [
+                                // Preview Player
+                                Expanded(
+                                  flex: 5,
+                                  child: PreviewPlayer(controller: _controller),
+                                ),
+
+                                const Divider(height: 1, color: AppTheme.divider),
+
+                                // Timeline Panel
+                                Expanded(
+                                  flex: 4,
+                                  child: TimelinePanel(controller: _controller),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // Inspector Panel (collapsible)
+                          if (_inspectorVisible) ...[
+                            _buildPanelDivider(
+                              onTap: () => setState(() => _inspectorVisible = !_inspectorVisible),
+                            ),
+                            AnimatedContainer(
+                              duration: AppTheme.durationNormal,
+                              curve: AppTheme.curveStandard,
+                              width: 320,
+                              child: InspectorPanel(controller: _controller),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+                ),
+
+                // v0.5.5: Status bar
+                Container(
+                  height: 24,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: const BoxDecoration(
+                    color: AppTheme.surface,
+                    border: Border(top: BorderSide(color: AppTheme.divider)),
+                  ),
                   child: Row(
                     children: [
-                      // Media Bin (collapsible)
-                      if (_mediaBinVisible) ...[
-                        AnimatedContainer(
-                          duration: AppTheme.durationNormal,
-                          curve: AppTheme.curveStandard,
-                          width: 280,
-                          child: MediaBin(controller: _controller),
-                        ),
-                        _buildPanelDivider(
-                          onTap: () => setState(() => _mediaBinVisible = !_mediaBinVisible),
-                        ),
-                      ],
-
-                      // Center: Preview + Timeline
-                      Expanded(
-                        child: Column(
-                          children: [
-                            // Preview Player
-                            Expanded(
-                              flex: 5,
-                              child: PreviewPlayer(controller: _controller),
-                            ),
-
-                            const Divider(height: 1, color: AppTheme.divider),
-
-                            // Timeline Panel
-                            Expanded(
-                              flex: 4,
-                              child: TimelinePanel(controller: _controller),
-                            ),
-
-                            // v0.5.5: Status bar
-                            Container(
-                              height: 24,
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
-                              decoration: const BoxDecoration(
-                                color: AppTheme.surface,
-                                border: Border(top: BorderSide(color: AppTheme.divider)),
-                              ),
-                              child: Row(
-                                children: [
-                                  Text(
-                                    'v${AppTheme.appVersion}',
-                                    style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
-                                  ),
+                      Text(
+                        'v${AppTheme.appVersion}',
+                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
+                      ),
                                   const SizedBox(width: 16),
                                   Text(
                                     '${_controller.project.allClips.length} clips',
@@ -295,29 +334,11 @@ class _EditorViewState extends State<EditorView> {
                                     ),
                                   ),
                                   const SizedBox(width: 10),
+                                  const SizedBox(width: 10),
                                   _buildEngineStatusBadge(),
                                 ],
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-
-                      // Inspector (collapsible)
-                      if (_inspectorVisible) ...[
-                        _buildPanelDivider(
-                          onTap: () => setState(() => _inspectorVisible = !_inspectorVisible),
-                        ),
-                        AnimatedContainer(
-                          duration: AppTheme.durationNormal,
-                          curve: AppTheme.curveStandard,
-                          width: 260,
-                          child: InspectorPanel(controller: _controller),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
 
                 // ====== Bottom Toolbar (v0.7.0 CapCut-style) ======
                 _buildBottomToolbar(),
@@ -401,7 +422,13 @@ class _EditorViewState extends State<EditorView> {
             _MenuItem('Redo (Ctrl+Y)', Icons.redo_rounded, () {
               if (_controller.canRedo) { _controller.redo(); _showToast('Redone'); }
             }),
-            _MenuItem('Cut (Ctrl+X)', Icons.cut_rounded, () { _controller.copySelectedClip(); }),
+            // v0.7.9: Cut now really cuts (copy + delete) — previously the
+            // menu item only copied, unlike the Ctrl+X shortcut.
+            _MenuItem('Cut (Ctrl+X)', Icons.cut_rounded, () {
+              _controller.copySelectedClip();
+              _controller.deleteSelectedClip();
+              _showToast('Cut clip');
+            }),
             _MenuItem('Copy (Ctrl+C)', Icons.copy_rounded, () {
               _controller.copySelectedClip(); _showToast('Copied clip');
             }),
@@ -411,8 +438,11 @@ class _EditorViewState extends State<EditorView> {
             _MenuItem('Delete (Del)', Icons.delete_outline_rounded, () {
               _controller.deleteSelectedClip(); _showToast('Deleted clip');
             }),
+            // v0.7.9: Select All now reports how many clips were selected.
             _MenuItem('Select All (Ctrl+A)', Icons.select_all_rounded, () {
-              _controller.project.selectAll(); _showToast('All selected');
+              final count = _controller.project.allClips.length;
+              _controller.project.selectAll();
+              _showToast(count > 0 ? 'Selected $count clips' : 'No clips to select');
             }),
           ]),
           _buildPopupMenu('Track', [
@@ -443,6 +473,59 @@ class _EditorViewState extends State<EditorView> {
             _MenuItem('About Ghita Edit', Icons.info_outline_rounded, () => _showAboutDialog(context)),
           ]),
 
+          const SizedBox(width: 16),
+          Container(width: 1, height: 20, color: AppTheme.divider),
+          const SizedBox(width: 12),
+
+          // Triple-Studio Mode Switcher (v1.0.0)
+          Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: AppTheme.card,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.divider),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: StudioMode.values.map((mode) {
+                final isActive = _controller.activeStudioMode == mode;
+                return InkWell(
+                  onTap: () {
+                    _controller.setStudioMode(mode);
+                    _showToast('Switched to ${mode.displayName}');
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: AnimatedContainer(
+                    duration: AppTheme.durationFast,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isActive ? AppTheme.primary : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: isActive ? AppTheme.shadowSm : null,
+                    ),
+                    child: Row(
+                      children: [
+                        Text(
+                          mode.displayName.split(' ')[0],
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          mode.displayName.substring(2).trim(),
+                          style: TextStyle(
+                            color: isActive ? Colors.white : AppTheme.textMuted,
+                            fontSize: 11,
+                            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+
           const Spacer(),
 
           // Undo/Redo buttons
@@ -463,6 +546,16 @@ class _EditorViewState extends State<EditorView> {
               _controller.redo();
               _showToast('Redone');
             },
+          ),
+
+          const SizedBox(width: 8),
+
+          // v0.7.9: UX-04 — visible theme toggle button (Ctrl+T).
+          _buildToolbarIconButton(
+            widget.themeMode == ThemeMode.dark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+            AppTheme.textSecondary,
+            widget.themeMode == ThemeMode.dark ? 'Switch to Light Theme (Ctrl+T)' : 'Switch to Dark Theme (Ctrl+T)',
+            _toggleTheme,
           ),
 
           const SizedBox(width: 8),
@@ -590,7 +683,9 @@ class _EditorViewState extends State<EditorView> {
         _showToast('Select a filter from Media Bin → Effects tab');
         break;
       case 'audio':
-        _showToast('Audio mixer: use Inspector → Audio Mixer panel');
+        // v0.8.0: The Audio tool opens the voiceover recorder (record
+        // mic → WAV → timeline clip) instead of a dead-end toast.
+        _showVoiceoverSheet();
         break;
       case 'more':
         _showMoreToolsDialog();
@@ -600,8 +695,44 @@ class _EditorViewState extends State<EditorView> {
     }
   }
 
-  void _showMoreToolsDialog() {
-    showDialog(
+  // v0.7.9: UX-04 — view-level key handling: Ctrl+T toggles the theme;
+  // every other key falls through to the editor controller.
+  bool _handleKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent &&
+        HardwareKeyboard.instance.isControlPressed &&
+        event.logicalKey == LogicalKeyboardKey.keyT) {
+      _toggleTheme();
+      return true;
+    }
+    return _controller.handleKeyEvent(event);
+  }
+
+  // v0.7.9: UX-04 — theme toggle with toast feedback (also used by the
+  // header button and the View menu).
+  Future<void> _toggleTheme() async {
+    final newMode = widget.themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+    await widget.onThemeModeChanged(newMode);
+    _showToast('Theme switched to ${newMode.name}');
+  }
+
+  // v0.8.0: The Audio tool opens the voiceover recorder in a bottom sheet.
+  void _showVoiceoverSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: VoiceoverRecorder(controller: _controller),
+      ),
+    );
+  }
+
+  void _showMoreToolsDialog() {    showDialog(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: AppTheme.card,
@@ -981,63 +1112,116 @@ class _EditorViewState extends State<EditorView> {
   // Dialogs
   // ============================================================
 
+  // v0.7.9: UX-04 — shortcuts dialog with live search filter.
   void _showShortcutsDialog(BuildContext context) {
+    final sections = <String, List<(String, String)>>{
+      'Playback': [
+        ('Space', 'Play / Pause'),
+        ('J / K / L', 'Shuttle: -5s / Play-Pause / +5s'),
+        ('← / →', 'Seek -1s / +1s'),
+        ('Home / End', 'Go to start / end'),
+      ],
+      'Editing': [
+        ('Ctrl+Z', 'Undo'),
+        ('Ctrl+Shift+Z / Ctrl+Y', 'Redo'),
+        ('Ctrl+S', 'Quick Save'),
+        ('Ctrl+X', 'Cut'),
+        ('Ctrl+C / Ctrl+V', 'Copy / Paste clip'),
+        ('S', 'Split clip at playhead'),
+        ('Delete', 'Delete selected clip'),
+        ('Ctrl+A', 'Select all clips'),
+      ],
+      'View': [
+        ('Ctrl+T', 'Toggle theme'),
+        ('Ctrl+G', 'Group selected clips'),
+        ('Ctrl+Shift+G', 'Ungroup clips'),
+        ('Ctrl+B', 'Toggle Media Bin'),
+        ('Ctrl+I', 'Toggle Inspector'),
+        ('Ctrl+Shift+F', 'Focus mode (fullscreen preview)'),
+      ],
+    };
+
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.card,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
-        title: const Row(
-          children: [
-            Icon(Icons.keyboard_rounded, color: AppTheme.primaryLight),
-            SizedBox(width: 10),
-            Text('Keyboard Shortcuts', style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
-          ],
-        ),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _shortcutSection('Playback', [
-                _shortcutRow('Space', 'Play / Pause'),
-                _shortcutRow('J / K / L', 'Shuttle: -5s / Play-Pause / +5s'),
-                _shortcutRow('← / →', 'Seek -1s / +1s'),
-                _shortcutRow('Home / End', 'Go to start / end'),
-              ]),
-              const SizedBox(height: 12),
-              _shortcutSection('Editing', [
-                _shortcutRow('Ctrl+Z', 'Undo'),
-                _shortcutRow('Ctrl+Shift+Z / Ctrl+Y', 'Redo'),
-                _shortcutRow('Ctrl+S', 'Quick Save'),
-                _shortcutRow('Ctrl+X', 'Cut'),
-                _shortcutRow('Ctrl+C / Ctrl+V', 'Copy / Paste clip'),
-                _shortcutRow('S', 'Split clip at playhead'),
-                _shortcutRow('Delete', 'Delete selected clip'),
-                _shortcutRow('Ctrl+A', 'Select all clips'),
-              ]),
-              const SizedBox(height: 12),
-              _shortcutSection('View', [
-                _shortcutRow('Ctrl+G', 'Group selected clips'),
-                _shortcutRow('Ctrl+Shift+G', 'Ungroup clips'),
-                _shortcutRow('Ctrl+B', 'Toggle Media Bin'),
-                _shortcutRow('Ctrl+I', 'Toggle Inspector'),
-                _shortcutRow('Ctrl+Shift+F', 'Focus mode (fullscreen preview)'),
-              ]),
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) {
+          final query = _shortcutsQuery;
+          final filtered = <String, List<(String, String)>>{};
+          sections.forEach((title, rows) {
+            final match = rows.where((r) {
+              final q = query.toLowerCase();
+              return r.$1.toLowerCase().contains(q) ||
+                  r.$2.toLowerCase().contains(q) ||
+                  title.toLowerCase().contains(q);
+            }).toList();
+            if (match.isNotEmpty) filtered[title] = match;
+          });
+          final anyMatch = filtered.isNotEmpty;
+
+          return AlertDialog(
+            backgroundColor: AppTheme.card,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
+            title: const Row(
+              children: [
+                Icon(Icons.keyboard_rounded, color: AppTheme.primaryLight),
+                SizedBox(width: 10),
+                Text('Keyboard Shortcuts', style: TextStyle(color: AppTheme.textMain, fontSize: 16)),
+              ],
+            ),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    autofocus: false,
+                    decoration: InputDecoration(
+                      hintText: 'Search shortcuts...',
+                      hintStyle: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
+                      prefixIcon: const Icon(Icons.search_rounded, color: AppTheme.textMuted, size: 16),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm), borderSide: BorderSide.none),
+                      fillColor: AppTheme.surfaceVariant,
+                      filled: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                    style: const TextStyle(color: AppTheme.textMain, fontSize: 12),
+                    onChanged: (value) => setState(() => _shortcutsQuery = value),
+                  ),
+                  const SizedBox(height: 12),
+                  if (!anyMatch)
+                    const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text('No shortcuts found',
+                          style: TextStyle(color: AppTheme.textMuted, fontSize: 13)),
+                    )
+                  else
+                    ...filtered.entries.expand((entry) => [
+                          _shortcutSection(entry.key,
+                              entry.value.map((r) => _shortcutRow(r.$1, r.$2)).toList()),
+                          const SizedBox(height: 12),
+                        ]),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  _shortcutsQuery = '';
+                  Navigator.pop(context);
+                },
+                style: TextButton.styleFrom(foregroundColor: AppTheme.primaryLight),
+                child: const Text('Close'),
+              ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            style: TextButton.styleFrom(foregroundColor: AppTheme.primaryLight),
-            child: const Text('Close'),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
+
+  // v0.7.9: UX-04 — persistent search text for the shortcuts dialog.
+  String _shortcutsQuery = '';
 
   Widget _shortcutSection(String title, List<Widget> children) {
     return Column(

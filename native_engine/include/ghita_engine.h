@@ -11,6 +11,9 @@
 #include <memory>
 #include <thread>
 #include <sstream>
+#include <unordered_map>
+#include <list>
+#include <iomanip>
 
 #ifdef GHITA_HAS_FFMPEG
 extern "C" {
@@ -68,16 +71,38 @@ struct MediaInfo {
 
     /** Serialize to JSON string. */
     std::string toJson() const {
+        // v0.8.0: Escape JSON string fields — file paths containing quotes or
+        // backslashes produced invalid JSON that broke Dart's parser.
+        auto esc = [](const std::string& s) {
+            std::ostringstream out;
+            for (char c : s) {
+                switch (c) {
+                    case '"': out << "\\\""; break;
+                    case '\\': out << "\\\\"; break;
+                    case '\n': out << "\\n"; break;
+                    case '\r': out << "\\r"; break;
+                    case '\t': out << "\\t"; break;
+                    default:
+                        if (static_cast<unsigned char>(c) < 0x20) {
+                            out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                                << static_cast<int>(static_cast<unsigned char>(c)) << std::dec;
+                        } else {
+                            out << c;
+                        }
+                }
+            }
+            return out.str();
+        };
         std::ostringstream json;
         json << "{"
-             << "\"filePath\":\"" << filePath << "\","
+             << "\"filePath\":\"" << esc(filePath) << "\","
              << "\"durationMs\":" << durationMs << ","
              << "\"width\":" << width << ","
              << "\"height\":" << height << ","
              << "\"fps\":" << fps << ","
              << "\"bitrate\":" << bitrate << ","
-             << "\"videoCodec\":\"" << videoCodec << "\","
-             << "\"audioCodec\":\"" << audioCodec << "\","
+             << "\"videoCodec\":\"" << esc(videoCodec) << "\","
+             << "\"audioCodec\":\"" << esc(audioCodec) << "\","
              << "\"audioSampleRate\":" << audioSampleRate << ","
              << "\"audioChannels\":" << audioChannels << ","
              << "\"hasVideo\":" << (hasVideo ? "true" : "false") << ","
@@ -169,9 +194,28 @@ public:
     bool extractPcmAudioSamples(float* outSamples, int sampleCount, float volume);
 
     /**
+     * @brief v0.8.0: Decode a PCM segment starting at startMs, resampled to
+     * interleaved float stereo at 44100 Hz (the mixing format). Returns false
+     * when the file has no decodable audio stream.
+     */
+    bool decodeAudioSegment(int64_t startMs, float* outSamples, int sampleCount, float volume);
+
+    /**
      * @brief Returns true if FFmpeg is actually being used (not fallback).
      */
     bool hasFFmpeg() const { return m_hasFFmpeg; }
+
+    /**
+     * @brief v0.8.0: True when the file actually has a decodable audio stream
+     * (used by the audio mixer to skip silent sources).
+     */
+    bool hasAudioStream() const {
+#ifdef GHITA_HAS_FFMPEG
+        return m_hasFFmpeg && m_audioStreamIdx >= 0;
+#else
+        return false;
+#endif
+    }
 
 private:
     int64_t m_durationMs{60000};
@@ -188,6 +232,8 @@ private:
     AVCodecContext* m_audioCodecCtx{nullptr};
     SwsContext* m_swsCtx{nullptr};
     SwrContext* m_swrCtx{nullptr};
+    // v0.8.0: Dedicated resampler to interleaved FLT stereo @ 44100 (mix format).
+    SwrContext* m_mixSwrCtx{nullptr};
 
     int m_videoStreamIdx{-1};
     int m_audioStreamIdx{-1};
@@ -237,6 +283,31 @@ struct NativeTransition {
 };
 
 /**
+ * @brief Kind of a native timeline clip (v0.8.0).
+ */
+enum class NativeClipKind {
+    Video = 0,
+    Audio = 1,
+    Image = 2,
+    Text = 3,
+    Sticker = 4
+};
+
+/**
+ * @brief Per-clip color correction parameters (v0.8.0, ranges -1.0..1.0).
+ */
+struct ColorCorrection {
+    float exposure{0.0f};
+    float contrast{0.0f};
+    float saturation{0.0f};
+    float temperature{0.0f};
+    float tint{0.0f};
+    float vibrance{0.0f};
+    float highlights{0.0f};
+    float shadows{0.0f};
+};
+
+/**
  * @brief Represents a clip in the native timeline.
  */
 struct NativeClip {
@@ -244,11 +315,33 @@ struct NativeClip {
     std::string filePath;
     int64_t startMs;
     int64_t durationMs;
+    // v0.8.0: Source in-point (where to start reading from the media file).
+    int64_t sourceInMs{0};
     int trackIndex;
     int filterType;
     float filterIntensity;
+    // v0.8.0: Per-clip playback properties mirrored from the Dart model.
+    float volume{1.0f};   // 0.0 - 2.0
+    float opacity{1.0f};  // 0.0 - 1.0
+    float speed{1.0f};    // 0.25 - 4.0
+    NativeClipKind kind{NativeClipKind::Video};
+    // v0.8.0: Text/sticker payload (rendered via GDI on Windows).
+    std::string textContent;
+    float textFontSize{48.0f};
+    uint32_t textColor{0xFFFFFFFF};
+    // v0.8.0: Per-clip color correction (applied after the filter).
+    ColorCorrection cc;
     NativeTransition transition;
     std::vector<Keyframe> keyframes; // v0.4.5: keyframe animation
+};
+
+/**
+ * @brief Per-track render state (v0.8.0): mute/visibility/volume.
+ */
+struct NativeTrackState {
+    bool muted{false};
+    bool visible{true};
+    float volume{1.0f};
 };
 
 /**
@@ -313,8 +406,31 @@ public:
     /** @brief Checks if engine is ready for rendering. */
     bool isReady() const { return m_ready.load(); }
 
+    // v0.8.0: Audio preview (waveOut on Windows). The engine mixes PCM from
+    // the timeline's audio-bearing clips while playing and streams it to the
+    // default audio device. Falls back to silence on any failure.
+    void setAudioPreviewEnabled(bool enabled) { m_audioPreviewEnabled.store(enabled); }
+    bool isAudioPreviewEnabled() const { return m_audioPreviewEnabled.load(); }
+
+    /**
+     * @brief v0.8.0: Mixs PCM (interleaved float stereo @ 44100) for the
+     * window [startMs, endMs) from all clips that overlap it, applying clip
+     * volume, track volume/mute and the master volume. The output buffer must
+     * hold sampleCount floats. Returns true when any clip contributed audio.
+     * Must be called with m_engineMutex held (read) — it takes m_renderMutex
+     * for the decoder access.
+     */
+    bool mixAudioWindow(int64_t startMs, int64_t endMs, float* outSamples, int sampleCount, bool applyMasterVolume);
+
     /** @brief Renders current RGBA frame into destination memory buffer. */
     bool renderFrameRGBA(uint8_t* outBuffer, int width, int height);
+
+    /**
+     * @brief v0.7.9: Renders the frame at an explicit timeline position
+     * without mutating playback state (no seek/position race). Foundation
+     * for batch/thumbnail rendering from Dart.
+     */
+    bool renderFrameAt(uint8_t* outBuffer, int width, int height, int64_t positionMs);
 
     /** @brief Returns direct memory buffer pointer for zero-copy GPU texture sharing. */
     uint8_t* getFrameDirectBufferPointer(int* outWidth, int* outHeight);
@@ -336,6 +452,23 @@ public:
     bool setClipPosition(int clipId, int64_t startMs);
     bool setClipFilter(int clipId, int filterType, float intensity);
     bool setClipTransition(int clipId, TransitionType type, int durationMs);
+
+    // v0.8.0: Full timeline sync API — the Dart side resyncs the whole
+    // timeline through upsert/clear instead of the legacy addClip path.
+    /** @brief Inserts or updates a clip. Returns 1 on success, 0 on failure. */
+    int upsertClip(int clipId, const std::string& filePath, int64_t startMs, int64_t durationMs,
+                   int64_t sourceInMs, int trackIndex, NativeClipKind kind,
+                   float volume, float opacity, float speed);
+    /** @brief Removes all clips and resets the timeline (new project/load). */
+    void clearClips();
+    /** @brief Sets mute/visible/volume for a track. Returns 1 on success. */
+    int setTrackState(int trackIndex, bool muted, bool visible, float volume);
+    /** @brief Sets per-clip color correction (all values -1.0..1.0). */
+    int setClipColorCorrection(int clipId, const ColorCorrection& cc);
+    /** @brief Sets text/sticker payload for a clip (used by GDI renderer). */
+    int setClipText(int clipId, const std::string& text, float fontSize, uint32_t colorArgb);
+    /** @brief Returns true when the clip exists in the native timeline. */
+    bool hasClip(int clipId) const;
 
     // v0.4.5: Keyframe animation
     bool addClipKeyframe(int clipId, int64_t timeMs, float value);
@@ -418,6 +551,25 @@ private:
     std::vector<NativeClip> m_clips;
     int m_nextClipId{1};
 
+    // v0.8.0: Per-track render state (mute/visible/volume), indexed by trackIndex.
+    std::vector<NativeTrackState> m_trackStates;
+
+    // v0.8.0: Serializes all decoder access. RealFFmpegMediaDecoder is NOT
+    // thread-safe (shared packets/frames), so concurrent render calls were a
+    // data race before this mutex. The audio preview thread also takes it.
+    mutable std::mutex m_renderMutex;
+
+    // v0.8.0: Per-clip decoder cache (LRU, capped) so each timeline clip keeps
+    // its own FFmpeg context instead of re-opening the file every frame.
+    std::unordered_map<int, std::shared_ptr<IMediaDecoder>> m_clipDecoders;
+    std::list<int> m_decoderLruOrder;
+    static constexpr size_t kMaxClipDecoders = 8;
+    // v0.8.0: Scratch buffer for compositing (one full frame).
+    std::vector<uint8_t> m_renderScratch;
+    // v0.8.0: Pre-cached "close enough" position per decoder to skip redundant
+    // seeks when the timeline walks forward (keyed by clip id).
+    std::unordered_map<int, int64_t> m_decoderLastPos;
+
     // Export state & async worker
     std::atomic<bool> m_isExporting{false};
     std::atomic<bool> m_cancelExportFlag{false};
@@ -434,11 +586,33 @@ private:
     std::mutex m_exportJoinMutex;
     std::thread m_exportThread;
 
+    // v0.8.0: Audio preview state. The preview thread mixes 100ms chunks and
+    // streams them via waveOut; it is stopped on pause/seek/destroy.
+    std::atomic<bool> m_audioPreviewEnabled{true};
+    std::atomic<bool> m_audioThreadRunning{false};
+    std::atomic<bool> m_audioStopFlag{false};
+    std::thread m_audioThread;
+
+    void startAudioPreviewThread();
+    void stopAudioPreviewThread();
+    void audioPreviewLoop();
+
     void updateClock();
     void recalculateDuration();
     void runExportLoop(std::string outputPath, int width, int height, int fps);
     void runExportLoopEx(std::string outputPath, int width, int height, int fps,
                          std::string codec, int64_t bitrate, bool includeAudio);
+
+    // v0.8.0: Timeline compositor internals (must be called with m_engineMutex
+    // held; they take m_renderMutex for the actual decode).
+    bool renderTimelineFrame(uint8_t* outBuffer, int width, int height, int64_t posMs);
+    bool decodeClipFrame(int clipId, uint8_t* outBuffer, int width, int height,
+                         int64_t sourcePosMs, int filterType, float filterIntensity);
+    std::shared_ptr<IMediaDecoder> getClipDecoder(int clipId, const std::string& filePath);
+    void applyColorCorrectionToBuffer(uint8_t* buffer, int width, int height,
+                                      const ColorCorrection& cc) const;
+    bool renderTextGdi(uint8_t* outBuffer, int width, int height, const std::string& text,
+                       float fontSize, uint32_t colorArgb) const;
 };
 
 #endif // GHITA_ENGINE_H

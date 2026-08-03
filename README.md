@@ -1,8 +1,19 @@
-# Ghita Edit — v0.7.8+0
+# Ghita Edit — v1.0.0+0 Production Release (Triple-Studio Suite)
 
 A cross-platform multimedia editor suite built with **Flutter** and a native **C++20 rendering engine** connected via Dart FFI.
 
 ## Features
+
+### v0.8.0 — Real Timeline Engine, Audio, & Feature Completeness
+
+- 🎬 **Timeline compositor thật** — Preview/export render đúng timeline: nhiều clip/track, trim/split/move phản ánh ngay, opacity, speed, per-clip filter, text/sticker, transitions FadeIn/FadeOut/Crossfade
+- 🔊 **Âm thanh trong preview** — Engine mix PCM (clip × track × master volume, mute) phát qua waveOut khi Play
+- 🎵 **Export có audio** — MP4 với H.264/H.265/VP9 + AAC 44.1kHz; encoder fallback chain luôn ra file chạy được
+- 🎙 **Voiceover recorder thật** — Thu WAV → audio clip undoable (toolbar → Audio)
+- 🎨 **21 filters đầy đủ** — Thêm VHS, Glitch, Chromatic Aberration, Vignette, Film Grain, Light Leak, Sharpen, Posterize, Duotone, Background Blur
+- 🎚 **Color correction vào engine** — Exposure/Contrast/Saturation/Temperature/Tint/Vibrance/Highlights/Shadows hiển thị trên preview + export
+- 🎛 **Track mute/visible/volume thật** — Ảnh hưởng render + mix
+- 🛡 **Ổn định** — Fix concurrency decoder (m_renderMutex), deadlock audio thread, SIGFPE export (stream trước header + AAC priming), heap underflow text, JSON escape, loadMedia báo lỗi thật
 
 ### v0.5.5 — Editor Experience Update
 
@@ -76,6 +87,13 @@ brew install ffmpeg pkg-config
 ./scripts/build_macos.sh
 ```
 
+### Windows FFmpeg notes (v0.8.0)
+
+- **MinGW builds prefer a MinGW-built FFmpeg** (`C:/msys64/mingw64`). MSVC-built FFmpeg (vcpkg) lacks the libx264/libx265/libvpx encoders — export still works via the fallback chain (mpeg4 last resort), but full-quality H.264/H.265/VP9 requires the MinGW FFmpeg.
+- The engine DLL **statically links libstdc++/libgcc** (no version-skewed runtime DLLs from PATH).
+- `flutter run -d windows` copies the FFmpeg runtime DLLs next to the exe automatically (see `windows/CMakeLists.txt`).
+- **Runtime PATH order matters when running the engine tests manually**: put the FFmpeg bin dir first, e.g. `PATH="C:\Program Files\CodeBlocks\MinGW\bin;C:\msys64\mingw64\bin;%PATH%"`.
+
 ## Architecture
 
 ```
@@ -143,7 +161,7 @@ flutter test                    # Dart unit tests
 ## Versioning
 
 Version is centralized in `lib/src/core/version.dart` and auto-verified by CI.
-Current: **v0.7.8+0** (build 0)
+Current: **v1.0.0+0** (build 0)
 
 ## License
 

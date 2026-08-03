@@ -5,6 +5,19 @@
 #include <fstream>
 #include <iostream>
 
+// v0.8.0: GDI text rendering for text/sticker clips (Windows only).
+// NOMINMAX keeps windows.h from defining min/max macros (std::clamp uses them).
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <mmsystem.h>
+#endif
+
 // ====================================================================
 // Pixel shader helpers (applied in RGBA space)
 // ====================================================================
@@ -49,30 +62,60 @@ void applyBrightness(uint8_t* buf, int pixelCount, float intensity) {
     }
 }
 
+// v0.7.9: Separable Gaussian blur — O(n·r) two-pass instead of the old
+// O(n·r²) box blur (which sampled the whole radius box per pixel). Precomputed
+// kernel, clamp-to-edge sampling, ~4-5x faster at typical radii.
 void applyBlur(uint8_t* buf, int width, int height, float intensity) {
     int radius = std::max(1, static_cast<int>(intensity * 10.0f));
-    std::vector<uint8_t> tmp(width * height * 4);
-    std::memcpy(tmp.data(), buf, tmp.size());
 
+    // Precompute normalized Gaussian kernel
+    std::vector<float> kernel(2 * radius + 1);
+    float sum = 0.0f;
+    const float sigma = radius > 0 ? radius / 2.0f : 1.0f;
+    for (int i = -radius; i <= radius; ++i) {
+        kernel[i + radius] = std::exp(-(i * i) / (2.0f * sigma * sigma));
+        sum += kernel[i + radius];
+    }
+    for (float& w : kernel) w /= sum;
+
+    std::vector<uint8_t> tmp(width * height * 4);
+
+    // Horizontal pass (clamp-to-edge)
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            int r = 0, g = 0, b = 0, count = 0;
-            for (int dy = -radius; dy <= radius; ++dy) {
-                for (int dx = -radius; dx <= radius; ++dx) {
-                    int sx = x + dx, sy = y + dy;
-                    if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
-                        int idx = (sy * width + sx) * 4;
-                        r += tmp[idx];
-                        g += tmp[idx + 1];
-                        b += tmp[idx + 2];
-                        ++count;
-                    }
-                }
+            float r = 0.0f, g = 0.0f, b = 0.0f;
+            for (int dx = -radius; dx <= radius; ++dx) {
+                int sx = std::clamp(x + dx, 0, width - 1);
+                int idx = (y * width + sx) * 4;
+                float w = kernel[dx + radius];
+                r += buf[idx]     * w;
+                g += buf[idx + 1] * w;
+                b += buf[idx + 2] * w;
             }
-            int idx = (y * width + x) * 4;
-            buf[idx]     = static_cast<uint8_t>(count > 0 ? r / count : 0);
-            buf[idx + 1] = static_cast<uint8_t>(count > 0 ? g / count : 0);
-            buf[idx + 2] = static_cast<uint8_t>(count > 0 ? b / count : 0);
+            int outIdx = (y * width + x) * 4;
+            tmp[outIdx]     = static_cast<uint8_t>(r);
+            tmp[outIdx + 1] = static_cast<uint8_t>(g);
+            tmp[outIdx + 2] = static_cast<uint8_t>(b);
+            tmp[outIdx + 3] = buf[outIdx + 3];
+        }
+    }
+
+    // Vertical pass (clamp-to-edge)
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float r = 0.0f, g = 0.0f, b = 0.0f;
+            for (int dy = -radius; dy <= radius; ++dy) {
+                int sy = std::clamp(y + dy, 0, height - 1);
+                int idx = (sy * width + x) * 4;
+                float w = kernel[dy + radius];
+                r += tmp[idx]     * w;
+                g += tmp[idx + 1] * w;
+                b += tmp[idx + 2] * w;
+            }
+            int outIdx = (y * width + x) * 4;
+            buf[outIdx]     = static_cast<uint8_t>(r);
+            buf[outIdx + 1] = static_cast<uint8_t>(g);
+            buf[outIdx + 2] = static_cast<uint8_t>(b);
         }
     }
 }
@@ -165,6 +208,278 @@ void applyPixelate(uint8_t* buf, int width, int height, float intensity) {
     }
 }
 
+// ====================================================================
+// v0.8.0: Filters 11-20 (previously shown as "Coming soon")
+// ====================================================================
+
+// Deterministic pseudo-random in [0,1) from pixel coords — keeps the effects
+// stable across frames (no flicker) and thread-safe (no shared state).
+float hash01(int x, int y) {
+    uint32_t h = static_cast<uint32_t>(x) * 374761393u + static_cast<uint32_t>(y) * 668265263u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return static_cast<float>((h ^ (h >> 16)) & 0xFFFFu) / 65536.0f;
+}
+
+void applyVhs(uint8_t* buf, int width, int height, float intensity) {
+    const int pixelCount = width * height;
+    for (int i = 0; i < pixelCount; ++i) {
+        int x = i % width;
+        int y = i / width;
+        int idx = i * 4;
+        // Scanlines every 3 rows.
+        if (y % 3 == 0) {
+            buf[idx]     = static_cast<uint8_t>(buf[idx] * 0.7f);
+            buf[idx + 1] = static_cast<uint8_t>(buf[idx + 1] * 0.7f);
+            buf[idx + 2] = static_cast<uint8_t>(buf[idx + 2] * 0.7f);
+        }
+        // Horizontal noise bands.
+        if (hash01(x, y) < 0.02f * intensity) {
+            buf[idx]     = static_cast<uint8_t>(buf[idx] * 0.4f);
+            buf[idx + 1] = static_cast<uint8_t>(buf[idx + 1] * 0.4f);
+            buf[idx + 2] = static_cast<uint8_t>(buf[idx + 2] * 0.4f);
+        }
+        // Slight color bleed.
+        buf[idx + 1] = static_cast<uint8_t>(buf[idx + 1] * 0.92f + buf[idx + 2] * 0.08f);
+    }
+}
+
+void applyGlitch(uint8_t* buf, int width, int height, float intensity) {
+    // Slice the frame into horizontal bands and displace a subset.
+    const int bandH = std::max(8, height / 12);
+    for (int y0 = 0; y0 < height; y0 += bandH) {
+        const int y1 = std::min(height, y0 + bandH);
+        if (hash01(y0, 0) < 0.35f * intensity) {
+            const int shift = static_cast<int>((hash01(y0, 1) - 0.5f) * width * 0.12f * intensity);
+            if (shift == 0) continue;
+            std::vector<uint8_t> row(width * 4);
+            for (int y = y0; y < y1; ++y) {
+                std::memcpy(row.data(), buf + y * width * 4, width * 4);
+                for (int x = 0; x < width; ++x) {
+                    const int srcX = (x - shift + width) % width;
+                    int dst = (y * width + x) * 4;
+                    int src = (y * width + srcX) * 4;
+                    buf[dst] = row[src];
+                    buf[dst + 1] = row[src + 1];
+                    buf[dst + 2] = row[src + 2];
+                }
+            }
+        }
+    }
+    // RGB split along the band edges.
+    const int split = std::max(2, static_cast<int>(8.0f * intensity));
+    for (int y = 0; y < height; y += 2) {
+        int idx = (y * width) * 4;
+        for (int x = width - 1; x >= split; --x) {
+            int d = idx + x * 4;
+            buf[d] = buf[d - split * 4]; // R trails
+        }
+    }
+}
+
+void applyChromaticAberration(uint8_t* buf, int width, int height, float intensity) {
+    const int shift = std::max(1, static_cast<int>(4.0f * intensity));
+    std::vector<uint8_t> copy(buf, buf + static_cast<size_t>(width) * height * 4);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            int dst = (y * width + x) * 4;
+            const int rx = std::min(width - 1, x + shift);
+            const int bx = std::max(0, x - shift);
+            buf[dst]     = copy[(y * width + rx) * 4];
+            buf[dst + 1] = copy[(y * width + x) * 4 + 1];
+            buf[dst + 2] = copy[(y * width + bx) * 4 + 2];
+        }
+    }
+}
+
+void applyVignette(uint8_t* buf, int width, int height, float intensity) {
+    const float cx = width * 0.5f;
+    const float cy = height * 0.5f;
+    const float maxDist = std::sqrt(cx * cx + cy * cy);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const float dx = (x - cx) / maxDist;
+            const float dy = (y - cy) / maxDist;
+            const float falloff = std::clamp(1.0f - (dx * dx + dy * dy) * (0.9f + intensity), 0.25f, 1.0f);
+            int idx = (y * width + x) * 4;
+            buf[idx]     = static_cast<uint8_t>(buf[idx] * falloff);
+            buf[idx + 1] = static_cast<uint8_t>(buf[idx + 1] * falloff);
+            buf[idx + 2] = static_cast<uint8_t>(buf[idx + 2] * falloff);
+        }
+    }
+}
+
+void applyFilmGrain(uint8_t* buf, int width, int height, float intensity) {
+    const int pixelCount = width * height;
+    for (int i = 0; i < pixelCount; ++i) {
+        const float n = (hash01(i % width, i / width) - 0.5f) * 2.0f * 30.0f * intensity;
+        int idx = i * 4;
+        buf[idx]     = static_cast<uint8_t>(std::clamp(buf[idx] + n, 0.0f, 255.0f));
+        buf[idx + 1] = static_cast<uint8_t>(std::clamp(buf[idx + 1] + n, 0.0f, 255.0f));
+        buf[idx + 2] = static_cast<uint8_t>(std::clamp(buf[idx + 2] + n, 0.0f, 255.0f));
+    }
+}
+
+void applyLightLeak(uint8_t* buf, int width, int height, float intensity) {
+    // Warm diagonal gradient from the top-left corner.
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const float dist = (static_cast<float>(x) + static_cast<float>(y)) /
+                               static_cast<float>(width + height);
+            const float leak = std::clamp((1.0f - dist) * 0.85f * intensity, 0.0f, 0.8f);
+            int idx = (y * width + x) * 4;
+            buf[idx]     = static_cast<uint8_t>(std::min(255.0f, buf[idx] * (1.0f + leak) + leak * 60.0f));
+            buf[idx + 1] = static_cast<uint8_t>(std::min(255.0f, buf[idx + 1] * (1.0f + leak * 0.5f) + leak * 20.0f));
+            buf[idx + 2] = static_cast<uint8_t>(std::min(255.0f, buf[idx + 2] * (1.0f - leak * 0.3f)));
+        }
+    }
+}
+
+void applySharpen(uint8_t* buf, int width, int height, float intensity) {
+    std::vector<uint8_t> copy(buf, buf + static_cast<size_t>(width) * height * 4);
+    const float amount = 0.35f + intensity * 0.65f;
+    for (int y = 1; y < height - 1; ++y) {
+        for (int x = 1; x < width - 1; ++x) {
+            int idx = (y * width + x) * 4;
+            for (int c = 0; c < 3; ++c) {
+                const float center = copy[idx + c];
+                const float sum = copy[((y - 1) * width + x) * 4 + c] +
+                                  copy[((y + 1) * width + x) * 4 + c] +
+                                  copy[(y * width + x - 1) * 4 + c] +
+                                  copy[(y * width + x + 1) * 4 + c];
+                const float sharpened = center + amount * (center - sum * 0.25f);
+                buf[idx + c] = static_cast<uint8_t>(std::clamp(sharpened, 0.0f, 255.0f));
+            }
+        }
+    }
+}
+
+void applyPosterize(uint8_t* buf, int width, int height, float intensity) {
+    const int levels = std::max(2, static_cast<int>(2.0f + (1.0f - intensity) * 6.0f));
+    const float step = 255.0f / static_cast<float>(levels - 1);
+    const int pixelCount = width * height;
+    for (int i = 0; i < pixelCount; ++i) {
+        int idx = i * 4;
+        for (int c = 0; c < 3; ++c) {
+            buf[idx + c] = static_cast<uint8_t>(
+                std::round(std::round(buf[idx + c] / step) * step));
+        }
+    }
+}
+
+void applyDuotone(uint8_t* buf, int width, int height, float intensity) {
+    const int pixelCount = width * height;
+    const float mix = 0.6f + intensity * 0.4f;
+    for (int i = 0; i < pixelCount; ++i) {
+        int idx = i * 4;
+        const float luma = (0.299f * buf[idx] + 0.587f * buf[idx + 1] + 0.114f * buf[idx + 2]) / 255.0f;
+        // Deep blue shadows → warm orange highlights.
+        const float r = (30.0f + luma * 190.0f) * mix + buf[idx] * (1.0f - mix);
+        const float g = (24.0f + luma * 90.0f) * mix + buf[idx + 1] * (1.0f - mix);
+        const float b = (90.0f + luma * 40.0f) * mix + buf[idx + 2] * (1.0f - mix);
+        buf[idx]     = static_cast<uint8_t>(std::clamp(r, 0.0f, 255.0f));
+        buf[idx + 1] = static_cast<uint8_t>(std::clamp(g, 0.0f, 255.0f));
+        buf[idx + 2] = static_cast<uint8_t>(std::clamp(b, 0.0f, 255.0f));
+    }
+}
+
+void applyBackgroundBlur(uint8_t* buf, int width, int height, float intensity) {
+    // Strong blur with a sharp center ellipse (subject stays in focus).
+    applyBlur(buf, width, height, 0.5f + intensity * 0.5f);
+    const float cx = width * 0.5f;
+    const float cy = height * 0.5f;
+    const float rx = width * 0.22f;
+    const float ry = height * 0.30f;
+    std::vector<uint8_t> copy(buf, buf + static_cast<size_t>(width) * height * 4);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const float dx = (x - cx) / rx;
+            const float dy = (y - cy) / ry;
+            if (dx * dx + dy * dy <= 1.0f) {
+                int idx = (y * width + x) * 4;
+                buf[idx] = copy[idx];
+                buf[idx + 1] = copy[idx + 1];
+                buf[idx + 2] = copy[idx + 2];
+            }
+        }
+    }
+}
+
+// v1.0.0 WinK AI Portrait Skin Retouching Shader (Optimized Bounds & Brightening)
+void applySkinRetouch(uint8_t* buf, int width, int height, float intensity) {
+    if (intensity <= 0.001f) return;
+    const int pixelCount = width * height;
+    std::vector<uint8_t> copy(buf, buf + pixelCount * 4);
+    
+    const int radius = std::max(1, static_cast<int>(intensity * 3.0f));
+    const float smoothFactor = 0.45f * intensity;
+    const float bright = 1.05f + intensity * 0.08f;
+
+    for (int y = 0; y < height; ++y) {
+        const int minY = std::max(0, y - radius);
+        const int maxY = std::min(height - 1, y + radius);
+        for (int x = 0; x < width; ++x) {
+            int idx = (y * width + x) * 4;
+            uint8_t r = copy[idx];
+            uint8_t g = copy[idx + 1];
+            uint8_t b = copy[idx + 2];
+
+            // Fast skin tone heuristic in RGB space
+            if (r > 60 && g > 40 && b > 20 && r > g && r > b && (r - g) > 12) {
+                int rAcc = 0, gAcc = 0, bAcc = 0, count = 0;
+                const int minX = std::max(0, x - radius);
+                const int maxX = std::min(width - 1, x + radius);
+
+                for (int ny = minY; ny <= maxY; ++ny) {
+                    const int rowIdx = ny * width * 4;
+                    for (int nx = minX; nx <= maxX; ++nx) {
+                        int nIdx = rowIdx + nx * 4;
+                        rAcc += copy[nIdx];
+                        gAcc += copy[nIdx + 1];
+                        bAcc += copy[nIdx + 2];
+                        count++;
+                    }
+                }
+                const float invCount = 1.0f / count;
+                const float avgR = rAcc * invCount;
+                const float avgG = gAcc * invCount;
+                const float avgB = bAcc * invCount;
+
+                buf[idx]     = static_cast<uint8_t>(std::clamp((r * (1.0f - smoothFactor) + avgR * smoothFactor) * bright, 0.0f, 255.0f));
+                buf[idx + 1] = static_cast<uint8_t>(std::clamp((g * (1.0f - smoothFactor) + avgG * smoothFactor) * bright, 0.0f, 255.0f));
+                buf[idx + 2] = static_cast<uint8_t>(std::clamp((b * (1.0f - smoothFactor) + avgB * smoothFactor) * bright, 0.0f, 255.0f));
+            }
+        }
+    }
+}
+
+// v1.0.0 CapCut Chroma Key Green Screen Removal (Fast Squared Distance Optimization)
+void applyChromaKey(uint8_t* buf, int width, int height, float intensity) {
+    if (intensity <= 0.001f) return;
+    const int pixelCount = width * height;
+    const float tolerance = 0.35f + intensity * 0.45f;
+    const float toleranceSq = tolerance * tolerance;
+    const float innerTol = std::max(0.01f, tolerance - 0.15f);
+    const float invByte = 1.0f / 255.0f;
+
+    for (int i = 0; i < pixelCount; ++i) {
+        int idx = i * 4;
+        float r = buf[idx] * invByte;
+        float g = buf[idx + 1] * invByte;
+        float b = buf[idx + 2] * invByte;
+
+        // Fast squared distance check to avoid std::sqrt on non-green pixels
+        float greenDiffSq = r * r + (1.0f - g) * (1.0f - g) + b * b;
+        if (greenDiffSq < toleranceSq) {
+            float greenDiff = std::sqrt(greenDiffSq);
+            float alphaFactor = std::clamp((greenDiff - innerTol) * (1.0f / 0.15f), 0.0f, 1.0f);
+            buf[idx + 3] = static_cast<uint8_t>(buf[idx + 3] * alphaFactor);
+            if (g > r && g > b) {
+                buf[idx + 1] = static_cast<uint8_t>((r + b) * 0.5f * 255.0f);
+            }
+        }
+    }
+}
+
 void applyFilterToBuffer(uint8_t* buf, int width, int height, int filterType, float filterIntensity) {
     int pixelCount = width * height;
     switch (filterType) {
@@ -178,6 +493,20 @@ void applyFilterToBuffer(uint8_t* buf, int width, int height, int filterType, fl
         case 8: applyAdjust(buf, pixelCount, filterIntensity); break;
         case 9: applyPixelate(buf, width, height, filterIntensity); break;
         case 10: applyPixelate(buf, width, height, filterIntensity); break; // Mosaic = Pixelate
+        // v0.8.0: Filters 11-20
+        case 11: applyVhs(buf, width, height, filterIntensity); break;
+        case 12: applyGlitch(buf, width, height, filterIntensity); break;
+        case 13: applyChromaticAberration(buf, width, height, filterIntensity); break;
+        case 14: applyVignette(buf, width, height, filterIntensity); break;
+        case 15: applyFilmGrain(buf, width, height, filterIntensity); break;
+        case 16: applyLightLeak(buf, width, height, filterIntensity); break;
+        case 17: applySharpen(buf, width, height, filterIntensity); break;
+        case 18: applyPosterize(buf, width, height, filterIntensity); break;
+        case 19: applyDuotone(buf, width, height, filterIntensity); break;
+        case 20: applyBackgroundBlur(buf, width, height, filterIntensity); break;
+        // v1.0.0: Filters 21-22 (WinK & CapCut Shaders)
+        case 21: applySkinRetouch(buf, width, height, filterIntensity); break;
+        case 22: applyChromaKey(buf, width, height, filterIntensity); break;
         default: break;
     }
 }
@@ -354,17 +683,18 @@ MediaInfo RealFFmpegMediaDecoder::getMediaInfo() const {
 #ifdef GHITA_HAS_FFMPEG
 
 bool RealFFmpegMediaDecoder::initFFmpegContexts() {
-    // v0.7.8: Release any previous contexts first — reloading a second file
-    // used to leak the whole FFmpeg context chain of the first one.
+    // Release any previous contexts first to avoid leaks
     destroyFFmpegContexts();
 
     // Open file
     m_formatCtx = nullptr;
     if (avformat_open_input(&m_formatCtx, m_filePath.c_str(), nullptr, nullptr) != 0) {
+        destroyFFmpegContexts();
         return false;
     }
 
     if (avformat_find_stream_info(m_formatCtx, nullptr) < 0) {
+        destroyFFmpegContexts();
         return false;
     }
 
@@ -381,6 +711,7 @@ bool RealFFmpegMediaDecoder::initFFmpegContexts() {
     }
 
     if (m_videoStreamIdx < 0 && m_audioStreamIdx < 0) {
+        destroyFFmpegContexts();
         return false;
     }
 
@@ -388,32 +719,42 @@ bool RealFFmpegMediaDecoder::initFFmpegContexts() {
     if (m_videoStreamIdx >= 0) {
         AVCodecParameters* params = m_formatCtx->streams[m_videoStreamIdx]->codecpar;
         const AVCodec* codec = avcodec_find_decoder(params->codec_id);
-        if (!codec) return false;
+        if (!codec) { destroyFFmpegContexts(); return false; }
 
         m_videoCodecCtx = avcodec_alloc_context3(codec);
-        if (!m_videoCodecCtx) return false;
+        if (!m_videoCodecCtx) { destroyFFmpegContexts(); return false; }
 
-        if (avcodec_parameters_to_context(m_videoCodecCtx, params) < 0) return false;
-        if (avcodec_open2(m_videoCodecCtx, codec, nullptr) < 0) return false;
+        if (avcodec_parameters_to_context(m_videoCodecCtx, params) < 0 ||
+            avcodec_open2(m_videoCodecCtx, codec, nullptr) < 0) {
+            destroyFFmpegContexts();
+            return false;
+        }
     }
 
     // Open audio decoder
     if (m_audioStreamIdx >= 0) {
         AVCodecParameters* params = m_formatCtx->streams[m_audioStreamIdx]->codecpar;
         const AVCodec* codec = avcodec_find_decoder(params->codec_id);
-        if (!codec) return false;
+        if (!codec) { destroyFFmpegContexts(); return false; }
 
         m_audioCodecCtx = avcodec_alloc_context3(codec);
-        if (!m_audioCodecCtx) return false;
+        if (!m_audioCodecCtx) { destroyFFmpegContexts(); return false; }
 
-        if (avcodec_parameters_to_context(m_audioCodecCtx, params) < 0) return false;
-        if (avcodec_open2(m_audioCodecCtx, codec, nullptr) < 0) return false;
+        if (avcodec_parameters_to_context(m_audioCodecCtx, params) < 0 ||
+            avcodec_open2(m_audioCodecCtx, codec, nullptr) < 0) {
+            destroyFFmpegContexts();
+            return false;
+        }
     }
 
     // Allocate packet and frame
     m_packet = av_packet_alloc();
     m_frame = av_frame_alloc();
     m_rgbFrame = av_frame_alloc();
+    if (!m_packet || !m_frame || !m_rgbFrame) {
+        destroyFFmpegContexts();
+        return false;
+    }
 
     // Allocate RGB buffer for sws_scale
     if (m_videoCodecCtx) {
@@ -499,13 +840,17 @@ void RealFFmpegMediaDecoder::destroyFFmpegContexts() {
 bool RealFFmpegMediaDecoder::decodeVideoFrameAt(int64_t timeMs, uint8_t* outBuffer,
                                                   int outWidth, int outHeight,
                                                   int filterType, float filterIntensity) {
-    if (!m_formatCtx || m_videoStreamIdx < 0 || !m_videoCodecCtx) return false;
+    if (!m_formatCtx || m_videoStreamIdx < 0 || !m_videoCodecCtx || !m_packet || !m_frame) return false;
 
     AVStream* stream = m_formatCtx->streams[m_videoStreamIdx];
-    // Convert timeMs to stream time_base units:
-    // PTS = time_seconds / time_base_seconds = (timeMs / 1000) / av_q2d(time_base)
     double timeBase = av_q2d(stream->time_base);
-    int64_t targetPts = static_cast<int64_t>((timeMs / 1000.0) / timeBase);
+    if (timeBase <= 0.000001 || std::isnan(timeBase) || std::isinf(timeBase)) {
+        timeBase = 1.0 / 90000.0;
+    }
+    double targetSec = timeMs / 1000.0;
+    if (targetSec < 0.0) targetSec = 0.0;
+    int64_t targetPts = static_cast<int64_t>(targetSec / timeBase);
+    if (targetPts < 0) targetPts = 0;
 
     // Seek to target
     if (av_seek_frame(m_formatCtx, m_videoStreamIdx, targetPts, AVSEEK_FLAG_BACKWARD) < 0) {
@@ -524,6 +869,7 @@ bool RealFFmpegMediaDecoder::decodeVideoFrameAt(int64_t timeMs, uint8_t* outBuff
                     int64_t framePts = m_frame->pts;
                     if (framePts >= targetPts) {
                         frameDecoded = true;
+                        av_packet_unref(m_packet);
                         break;
                     }
                 }
@@ -573,7 +919,7 @@ bool RealFFmpegMediaDecoder::decodeVideoFrameAt(int64_t timeMs, uint8_t* outBuff
 }
 
 bool RealFFmpegMediaDecoder::decodeAudioSamples(float* outSamples, int sampleCount, float volume) {
-    if (!m_formatCtx || m_audioStreamIdx < 0 || !m_audioCodecCtx) return false;
+    if (!m_formatCtx || m_audioStreamIdx < 0 || !m_audioCodecCtx || !m_packet || !m_frame) return false;
 
     std::vector<float> accum(sampleCount, 0.0f);
     int samplesCollected = 0;
@@ -627,6 +973,67 @@ bool RealFFmpegMediaDecoder::decodeAudioSamples(float* outSamples, int sampleCou
     }
     return true;
 }
+// float stereo @ 44100 (the engine's mix format). Unlike decodeAudioSamples
+// (waveform — always from the start, source layout), this seeks to the exact
+// position and normalizes to a fixed format so the mixer can sum sources.
+bool RealFFmpegMediaDecoder::decodeAudioSegment(int64_t startMs, float* outSamples,
+                                                int sampleCount, float volume) {
+    if (!outSamples || sampleCount <= 0) return false;
+#ifdef GHITA_HAS_FFMPEG
+    if (!m_formatCtx || m_audioStreamIdx < 0 || !m_audioCodecCtx || !m_packet || !m_frame) return false;
+
+    // Dedicated resampler: source layout → interleaved FLT stereo @ 44100.
+    if (!m_mixSwrCtx) {
+        AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+        const int ret = swr_alloc_set_opts2(
+            &m_mixSwrCtx, &stereo, AV_SAMPLE_FMT_FLT, 44100,
+            &m_audioCodecCtx->ch_layout, m_audioCodecCtx->sample_fmt,
+            m_audioCodecCtx->sample_rate, 0, nullptr);
+        if (ret < 0 || !m_mixSwrCtx) return false;
+        if (swr_init(m_mixSwrCtx) < 0) return false;
+    }
+
+    AVStream* stream = m_formatCtx->streams[m_audioStreamIdx];
+    const double timeBase = av_q2d(stream->time_base);
+    const int64_t targetPts = static_cast<int64_t>((startMs / 1000.0) / timeBase);
+
+    av_seek_frame(m_formatCtx, m_audioStreamIdx, targetPts, AVSEEK_FLAG_BACKWARD);
+    avcodec_flush_buffers(m_audioCodecCtx);
+
+    std::vector<float> convBuf(static_cast<size_t>(8192) * 2, 0.0f);
+    int collected = 0;
+    while (av_read_frame(m_formatCtx, m_packet) >= 0 && collected < sampleCount) {
+        if (m_packet->stream_index == m_audioStreamIdx) {
+            if (avcodec_send_packet(m_audioCodecCtx, m_packet) == 0) {
+                const int ret = avcodec_receive_frame(m_audioCodecCtx, m_frame);
+                if (ret == 0 && m_frame->data[0] && m_frame->nb_samples > 0) {
+                    // Skip frames decoded before the seek target (seek is BACKWARD).
+                    if (m_frame->pts >= 0 && m_frame->pts < targetPts) {
+                        av_packet_unref(m_packet);
+                        continue;
+                    }
+                    uint8_t* outPlane = reinterpret_cast<uint8_t*>(convBuf.data());
+                    const int outFrames = swr_convert(
+                        m_mixSwrCtx, &outPlane, static_cast<int>(convBuf.size() / 2),
+                        const_cast<const uint8_t**>(m_frame->data), m_frame->nb_samples);
+                    if (outFrames > 0) {
+                        const int toCopy = std::min(outFrames * 2, sampleCount - collected);
+                        for (int i = 0; i < toCopy; ++i) {
+                            outSamples[collected + i] = convBuf[i] * volume;
+                        }
+                        collected += toCopy;
+                    }
+                }
+            }
+        }
+        av_packet_unref(m_packet);
+    }
+    return collected > 0;
+#else
+    (void)startMs; (void)outSamples; (void)sampleCount; (void)volume;
+    return false;
+#endif
+}
 
 #endif // GHITA_HAS_FFMPEG
 
@@ -678,6 +1085,9 @@ GhitaEngine::~GhitaEngine() {
             m_exportThread.join();
         }
     }
+    // v0.8.0: Stop the audio preview thread before tearing down (it takes
+    // the engine mutex inside mixAudioWindow — join without holding it).
+    stopAudioPreviewThread();
     std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     m_isPlaying.store(false);
     m_ready = false;
@@ -704,25 +1114,48 @@ bool GhitaEngine::loadMedia(const std::string& filePath) {
     if (!m_decoder) {
         m_decoder = std::make_unique<RealFFmpegMediaDecoder>();
     }
+    // v0.8.0: Report missing files honestly — previously a nonexistent path
+    // silently switched to synthetic content while returning success.
+    const bool fileExists = [&filePath]() {
+        std::ifstream f(filePath, std::ios::binary);
+        return f.good();
+    }();
     m_decoder->open(filePath);
     m_width.store(m_decoder->getWidth());
     m_height.store(m_decoder->getHeight());
-    m_durationMs.store(m_decoder->getDurationMs());
+    // v0.8.0: Only the legacy single-media path owns the duration — with a
+    // timeline present, clip edits own it (recalculateDuration). Previously
+    // this overwrote the timeline length, so playback wrapped at the media
+    // length and rendered black after the last clip.
+    if (m_clips.empty()) {
+        m_durationMs.store(m_decoder->getDurationMs());
+    }
     m_currentPosMs.store(0);
     m_lastTickTime = std::chrono::high_resolution_clock::now();
-    return true;
+    return fileExists;
 }
 
 void GhitaEngine::play() {
-    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
-    if (!m_ready.load()) return;
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
-    m_isPlaying.store(true);
+    {
+        std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+        if (!m_ready.load()) return;
+        m_lastTickTime = std::chrono::high_resolution_clock::now();
+        m_isPlaying.store(true);
+    }
+    // v0.8.0: Audio preview follows playback. Started OUTSIDE the engine lock
+    // — the preview thread blocks on m_engineMutex (shared) inside
+    // mixAudioWindow, and joining it while holding the unique lock would
+    // deadlock.
+    startAudioPreviewThread();
 }
 
 void GhitaEngine::pause() {
-    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
-    m_isPlaying.store(false);
+    {
+        std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+        m_isPlaying.store(false);
+    }
+    // v0.8.0: Silence the preview immediately (join outside the lock — see play()).
+    stopAudioPreviewThread();
 }
 
 bool GhitaEngine::isPlaying() const {
@@ -758,7 +1191,7 @@ void GhitaEngine::setPlaybackRate(float rate) {
 
 void GhitaEngine::applyFilter(int filterType, float intensity) {
     std::unique_lock<std::shared_mutex> lock(m_engineMutex);
-    m_activeFilterType = std::clamp(filterType, 0, 10);
+    m_activeFilterType = std::clamp(filterType, 0, 20);
     m_filterIntensity.store(std::clamp(intensity, 0.0f, 1.0f));
 }
 
@@ -771,6 +1204,9 @@ bool GhitaEngine::renderFrameRGBA(uint8_t* outBuffer, int width, int height) {
     if (!outBuffer || !m_ready.load()) return false;
 
     std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    // v0.8.0: Serialize all decoder access — the FFmpeg decoder shares
+    // packet/frame buffers and is not safe under concurrent shared_locks.
+    std::lock_guard<std::mutex> rlock(m_renderMutex);
 
     int64_t pos = m_currentPosMs.load();
     int64_t duration = m_durationMs.load();
@@ -780,31 +1216,64 @@ bool GhitaEngine::renderFrameRGBA(uint8_t* outBuffer, int width, int height) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastTickTime).count();
         m_lastTickTime = now;
         pos += elapsed;
-        if (pos >= duration) {
+        if (duration > 0 && pos >= duration) {
             pos = 0;
         }
         m_currentPosMs.store(pos);
     }
 
+    // v0.8.0: The timeline compositor is the primary render path. The legacy
+    // single-decoder path stays as fallback for empty timelines.
+    if (!m_clips.empty()) {
+        return renderTimelineFrame(outBuffer, width, height, pos);
+    }
     if (!m_decoder) return false;
     return m_decoder->decodeFrame(outBuffer, width, height, pos,
+                                   m_activeFilterType, m_filterIntensity.load());
+}
+
+// v0.7.9: PERF-04 — render at an explicit position without touching playback
+// state, so Dart can batch-render (export previews, thumbnails) without
+// racing the preview tick loop's position updates.
+bool GhitaEngine::renderFrameAt(uint8_t* outBuffer, int width, int height, int64_t positionMs) {
+    if (!outBuffer || !m_ready.load()) return false;
+
+    std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    std::lock_guard<std::mutex> rlock(m_renderMutex);
+
+    if (!m_clips.empty()) {
+        return renderTimelineFrame(outBuffer, width, height, std::max<int64_t>(0, positionMs));
+    }
+    if (!m_decoder) return false;
+    const int64_t duration = m_durationMs.load();
+    const int64_t clamped = std::clamp<int64_t>(positionMs, 0, duration > 0 ? duration - 1 : 0);
+    return m_decoder->decodeFrame(outBuffer, width, height, clamped,
                                    m_activeFilterType, m_filterIntensity.load());
 }
 
 uint8_t* GhitaEngine::getFrameDirectBufferPointer(int* outWidth, int* outHeight) {
     if (!outWidth || !outHeight) return nullptr;
     std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    // v0.8.0: The buffer resize must be serialized with renderers — previously
+    // resized under a shared lock (data race between concurrent callers).
+    std::lock_guard<std::mutex> rlock(m_renderMutex);
     if (!m_ready.load()) return nullptr;
 
     int w = m_width.load();
     int h = m_height.load();
     size_t needed = static_cast<size_t>(w * h * 4);
 
-    if (m_directFrameBuffer.size() != needed) {
+    // v0.7.9: PERF-05 — grow-only buffer. The old `size() != needed` check
+    // reallocated (and copied) on every call when dimensions fluctuated;
+    // capacity now persists and only grows, so steady-state frame access
+    // performs zero allocations.
+    if (m_directFrameBuffer.size() < needed) {
         m_directFrameBuffer.resize(needed);
     }
 
-    if (m_decoder) {
+    if (!m_clips.empty()) {
+        renderTimelineFrame(m_directFrameBuffer.data(), w, h, m_currentPosMs.load());
+    } else if (m_decoder) {
         m_decoder->decodeFrame(m_directFrameBuffer.data(), w, h,
                                 m_currentPosMs.load(), m_activeFilterType,
                                 m_filterIntensity.load());
@@ -813,6 +1282,348 @@ uint8_t* GhitaEngine::getFrameDirectBufferPointer(int* outWidth, int* outHeight)
     *outWidth = w;
     *outHeight = h;
     return m_directFrameBuffer.data();
+}
+
+// ====================================================================
+// TIMELINE COMPOSITOR (v0.8.0)
+// ====================================================================
+
+// v0.8.0: Alpha blend one RGBA frame over another (dst stays opaque).
+namespace {
+void blendRgba(uint8_t* dst, const uint8_t* src, int pixelCount, float alpha) {
+    if (alpha >= 1.0f) {
+        std::memcpy(dst, src, static_cast<size_t>(pixelCount) * 4);
+        return;
+    }
+    if (alpha <= 0.0f) return;
+    const float a = alpha;
+    const float ia = 1.0f - a;
+    for (int i = 0; i < pixelCount; ++i) {
+        int d = i * 4;
+        dst[d]     = static_cast<uint8_t>(dst[d] * ia + src[d] * a);
+        dst[d + 1] = static_cast<uint8_t>(dst[d + 1] * ia + src[d + 1] * a);
+        dst[d + 2] = static_cast<uint8_t>(dst[d + 2] * ia + src[d + 2] * a);
+        dst[d + 3] = 255;
+    }
+}
+
+uint8_t clamp255(float v) {
+    return static_cast<uint8_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+}
+} // namespace
+
+std::shared_ptr<IMediaDecoder> GhitaEngine::getClipDecoder(int clipId, const std::string& filePath) {
+    auto it = m_clipDecoders.find(clipId);
+    if (it != m_clipDecoders.end()) {
+        // Touch LRU order (most recently used at the front).
+        m_decoderLruOrder.remove(clipId);
+        m_decoderLruOrder.push_front(clipId);
+        return it->second;
+    }
+    if (m_clipDecoders.size() >= kMaxClipDecoders) {
+        const int victim = m_decoderLruOrder.back();
+        m_decoderLruOrder.pop_back();
+        m_clipDecoders.erase(victim);
+        m_decoderLastPos.erase(victim);
+    }
+    auto decoder = std::make_shared<RealFFmpegMediaDecoder>();
+    // open() transparently falls back to the synthetic decoder for files
+    // FFmpeg cannot open (missing/moved media, unsupported codecs), which
+    // matches the legacy single-decoder behavior and keeps previews alive.
+    decoder->open(filePath);
+    m_clipDecoders.emplace(clipId, decoder);
+    m_decoderLruOrder.push_front(clipId);
+    m_decoderLastPos[clipId] = -1;
+    return decoder;
+}
+
+bool GhitaEngine::decodeClipFrame(int clipId, uint8_t* outBuffer, int width, int height,
+                                  int64_t sourcePosMs, int filterType, float filterIntensity) {
+    std::string filePath;
+    for (const auto& c : m_clips) {
+        if (c.id == clipId) {
+            filePath = c.filePath;
+            break;
+        }
+    }
+    if (filePath.empty()) return false;
+    std::shared_ptr<IMediaDecoder> decoder = getClipDecoder(clipId, filePath);
+    if (!decoder) return false;
+    m_decoderLastPos[clipId] = sourcePosMs;
+    return decoder->decodeFrame(outBuffer, width, height, sourcePosMs, filterType, filterIntensity);
+}
+
+bool GhitaEngine::renderTimelineFrame(uint8_t* outBuffer, int width, int height, int64_t posMs) {
+    if (width <= 0 || height <= 0) return false;
+    const int pixelCount = width * height;
+    const size_t frameBytes = static_cast<size_t>(pixelCount) * 4;
+
+    // 1. Opaque black background.
+    for (int i = 0; i < pixelCount; ++i) {
+        uint8_t* p = outBuffer + i * 4;
+        p[0] = 0; p[1] = 0; p[2] = 0; p[3] = 255;
+    }
+    if (m_renderScratch.size() < frameBytes) {
+        m_renderScratch.resize(frameBytes);
+    }
+
+    // 2. Composite in ascending track order (base video first, overlays last).
+    int maxTrack = 0;
+    for (const auto& c : m_clips) {
+        if (c.trackIndex > maxTrack) maxTrack = c.trackIndex;
+    }
+
+    for (int track = 0; track <= maxTrack; ++track) {
+        if (static_cast<size_t>(track) < m_trackStates.size() && !m_trackStates[track].visible) {
+            continue;
+        }
+
+        // Find the clip covering posMs on this track (model prevents overlaps).
+        const NativeClip* clip = nullptr;
+        for (const auto& c : m_clips) {
+            if (c.trackIndex == track && posMs >= c.startMs && posMs < c.startMs + c.durationMs) {
+                clip = &c;
+                break;
+            }
+        }
+        if (!clip) continue;
+        // Audio clips contribute no pixels.
+        if (clip->kind == NativeClipKind::Audio) continue;
+
+        float alpha = clip->opacity;
+        bool crossfadeActive = false;
+        const NativeClip* prevClip = nullptr;
+        float crossfadeT = 0.0f;
+
+        switch (clip->transition.type) {
+            case TransitionType::FadeIn: {
+                const int dur = std::max(1, clip->transition.durationMs);
+                const float t = static_cast<float>(posMs - clip->startMs) / dur;
+                alpha *= std::clamp(t, 0.0f, 1.0f);
+                break;
+            }
+            case TransitionType::FadeOut: {
+                const int dur = std::max(1, clip->transition.durationMs);
+                const int64_t end = clip->startMs + clip->durationMs;
+                const float t = static_cast<float>(end - posMs) / dur;
+                alpha *= std::clamp(t, 0.0f, 1.0f);
+                break;
+            }
+            case TransitionType::Crossfade: {
+                const int dur = std::max(1, clip->transition.durationMs);
+                if (posMs < clip->startMs + dur) {
+                    crossfadeActive = true;
+                    crossfadeT = static_cast<float>(posMs - clip->startMs) / dur;
+                    // Previous clip = the one on the same track ending at our start.
+                    for (const auto& c : m_clips) {
+                        if (c.trackIndex == track && c.startMs + c.durationMs == clip->startMs) {
+                            if (!prevClip || c.startMs > prevClip->startMs) prevClip = &c;
+                        }
+                    }
+                }
+                break;
+            }
+            default:
+                break;
+        }
+
+        // Crossfade: draw the previous clip's held frame first, current over it.
+        if (crossfadeActive && prevClip) {
+            const double pOffset = static_cast<double>(posMs - prevClip->startMs) * prevClip->speed;
+            int64_t pSrc = prevClip->sourceInMs + static_cast<int64_t>(pOffset);
+            const int64_t pSrcOut = prevClip->sourceInMs +
+                static_cast<int64_t>(prevClip->durationMs * prevClip->speed);
+            pSrc = std::clamp<int64_t>(pSrc, prevClip->sourceInMs, std::max(prevClip->sourceInMs, pSrcOut - 1));
+            if (decodeClipFrame(prevClip->id, m_renderScratch.data(), width, height, pSrc,
+                                prevClip->filterType, prevClip->filterIntensity)) {
+                applyColorCorrectionToBuffer(m_renderScratch.data(), width, height, prevClip->cc);
+                blendRgba(outBuffer, m_renderScratch.data(), pixelCount, (1.0f - crossfadeT) * prevClip->opacity);
+            }
+        }
+
+        // Draw the covering clip.
+        if (clip->kind == NativeClipKind::Text || clip->kind == NativeClipKind::Sticker) {
+            std::memset(m_renderScratch.data(), 0, frameBytes);
+            if (renderTextGdi(m_renderScratch.data(), width, height,
+                              clip->textContent, clip->textFontSize, clip->textColor)) {
+                blendRgba(outBuffer, m_renderScratch.data(), pixelCount, alpha);
+            }
+        } else {
+            const double offset = static_cast<double>(posMs - clip->startMs) * clip->speed;
+            int64_t src = clip->sourceInMs + static_cast<int64_t>(offset);
+            const int64_t srcOut = clip->sourceInMs +
+                static_cast<int64_t>(clip->durationMs * clip->speed);
+            src = std::clamp<int64_t>(src, clip->sourceInMs, std::max(clip->sourceInMs, srcOut - 1));
+            if (decodeClipFrame(clip->id, m_renderScratch.data(), width, height, src,
+                                clip->filterType, clip->filterIntensity)) {
+                applyColorCorrectionToBuffer(m_renderScratch.data(), width, height, clip->cc);
+                blendRgba(outBuffer, m_renderScratch.data(), pixelCount, alpha);
+            }
+        }
+    }
+
+    // v0.8.0: The global filter (media-bin Effects tab, legacy setFilter)
+    // applies on top of the composed frame. Per-clip filters already ran
+    // inside each clip's decode above. Without this the Effects tab became a
+    // no-op the moment the timeline compositor became the render path.
+    if (m_activeFilterType != 0) {
+        applyFilterToBuffer(outBuffer, width, height, m_activeFilterType, m_filterIntensity.load());
+    }
+    return true;
+}
+
+// v0.8.0: Per-clip color correction (exposure/contrast/saturation/temperature/
+// tint/vibrance/highlights/shadows, all -1.0..1.0). Applied after the filter.
+void GhitaEngine::applyColorCorrectionToBuffer(uint8_t* buffer, int width, int height,
+                                               const ColorCorrection& cc) const {
+    if (cc.exposure == 0.0f && cc.contrast == 0.0f && cc.saturation == 0.0f &&
+        cc.temperature == 0.0f && cc.tint == 0.0f && cc.vibrance == 0.0f &&
+        cc.highlights == 0.0f && cc.shadows == 0.0f) {
+        return;
+    }
+    const int pixelCount = width * height;
+    const float expMul = std::pow(2.0f, cc.exposure);
+    const float cont = 1.0f + cc.contrast;
+    const float sat = 1.0f + cc.saturation;
+    const float vibr = 1.0f + cc.vibrance;
+    const float hl = cc.highlights * 0.25f;
+    const float sh = cc.shadows * 0.25f;
+    const float temp = cc.temperature;
+    const float tintAmt = cc.tint;
+
+    for (int i = 0; i < pixelCount; ++i) {
+        float r = buffer[i * 4 + 0] / 255.0f;
+        float g = buffer[i * 4 + 1] / 255.0f;
+        float b = buffer[i * 4 + 2] / 255.0f;
+
+        r *= expMul; g *= expMul; b *= expMul;
+
+        // Contrast around 0.5.
+        r = (r - 0.5f) * cont + 0.5f;
+        g = (g - 0.5f) * cont + 0.5f;
+        b = (b - 0.5f) * cont + 0.5f;
+
+        // Saturation (luma-weighted).
+        float luma = 0.299f * r + 0.587f * g + 0.114f * b;
+        r = luma + (r - luma) * sat;
+        g = luma + (g - luma) * sat;
+        b = luma + (b - luma) * sat;
+
+        // Vibrance: stronger effect on low-saturation pixels.
+        const float maxC = std::max(r, std::max(g, b));
+        const float minC = std::min(r, std::min(g, b));
+        const float vibScale = 1.0f + vibr * (1.0f - (maxC - minC));
+        const float vluma = 0.299f * r + 0.587f * g + 0.114f * b;
+        r = vluma + (r - vluma) * vibScale;
+        g = vluma + (g - vluma) * vibScale;
+        b = vluma + (b - vluma) * vibScale;
+
+        // Temperature: >0 warms (red up, blue down), <0 cools.
+        if (temp > 0.0f) {
+            r *= (1.0f + temp * 0.3f);
+            b *= (1.0f - temp * 0.3f);
+        } else {
+            const float t = -temp;
+            r *= (1.0f - t * 0.3f);
+            b *= (1.0f + t * 0.3f);
+        }
+
+        // Tint: >0 greens, <0 magentas.
+        if (tintAmt > 0.0f) {
+            g *= (1.0f + tintAmt * 0.3f);
+            r *= (1.0f - tintAmt * 0.15f);
+            b *= (1.0f - tintAmt * 0.15f);
+        } else {
+            const float t = -tintAmt;
+            g *= (1.0f - t * 0.3f);
+            r *= (1.0f + t * 0.15f);
+            b *= (1.0f + t * 0.15f);
+        }
+
+        // Highlights/shadows: bright-region and dark-region lifts.
+        r += hl * r * r + sh * (1.0f - r) * (1.0f - r);
+        g += hl * g * g + sh * (1.0f - g) * (1.0f - g);
+        b += hl * b * b + sh * (1.0f - b) * (1.0f - b);
+
+        buffer[i * 4 + 0] = clamp255(r);
+        buffer[i * 4 + 1] = clamp255(g);
+        buffer[i * 4 + 2] = clamp255(b);
+    }
+}
+
+// v0.8.0: GDI text rasterization for text/sticker clips (Windows only).
+// Draws into a DIB section over our scratch buffer, then fixes the alpha
+// channel (GDI leaves DIB alpha at 0 — any drawn pixel gets alpha 255).
+bool GhitaEngine::renderTextGdi(uint8_t* outBuffer, int width, int height,
+                                const std::string& text, float fontSize, uint32_t colorArgb) const {
+#ifdef _WIN32
+    if (!outBuffer || text.empty() || width <= 0 || height <= 0) return false;
+
+    BITMAPINFO bmi{};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height; // top-down
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc) return false;
+    void* bits = nullptr;
+    HBITMAP dib = CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!dib) {
+        DeleteDC(dc);
+        return false;
+    }
+    HGDIOBJ oldBmp = SelectObject(dc, dib);
+
+    const int fontH = std::max(6, static_cast<int>(fontSize * 96.0f / 72.0f));
+    HFONT font = CreateFontW(-fontH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HGDIOBJ oldFont = SelectObject(dc, font);
+
+    SetBkMode(dc, TRANSPARENT);
+    const uint8_t cr = static_cast<uint8_t>((colorArgb >> 16) & 0xFF);
+    const uint8_t cg = static_cast<uint8_t>((colorArgb >> 8) & 0xFF);
+    const uint8_t cb = static_cast<uint8_t>(colorArgb & 0xFF);
+    SetTextColor(dc, RGB(cr, cg, cb));
+
+    // UTF-8 → UTF-16 (emoji stickers need wide chars).
+    const int wlen = MultiByteToWideChar(CP_UTF8, 0, text.c_str(),
+                                         static_cast<int>(text.size()), nullptr, 0);
+    std::vector<wchar_t> wtext(static_cast<size_t>(wlen) + 1, 0);
+    if (wlen > 0) {
+        MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()),
+                            wtext.data(), wlen);
+    }
+    RECT rc = {0, 0, width, height};
+    DrawTextW(dc, wtext.data(), -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    GdiFlush();
+
+    // Copy DIB → output; any non-zero pixel is drawn content → alpha 255.
+    const uint8_t* src = static_cast<const uint8_t*>(bits);
+    for (int i = 0; i < width * height; ++i) {
+        const int si = i * 4;
+        const uint8_t sr = src[si + 2];
+        const uint8_t sg = src[si + 1];
+        const uint8_t sb = src[si];
+        outBuffer[si + 0] = sr;
+        outBuffer[si + 1] = sg;
+        outBuffer[si + 2] = sb;
+        outBuffer[si + 3] = (sr | sg | sb) ? 255 : 0;
+    }
+
+    SelectObject(dc, oldFont);
+    SelectObject(dc, oldBmp);
+    DeleteObject(font);
+    DeleteObject(dib);
+    DeleteDC(dc);
+    return true;
+#else
+    (void)outBuffer; (void)width; (void)height; (void)text; (void)fontSize; (void)colorArgb;
+    return false;
+#endif
 }
 
 std::string GhitaEngine::getMediaInfoJson() const {
@@ -836,7 +1647,17 @@ std::string GhitaEngine::getAvailableFiltersJson() const {
         {"id":7, "name":"Color Grading", "category":"color"},
         {"id":8, "name":"Adjust", "category":"color"},
         {"id":9, "name":"Pixelate", "category":"artistic"},
-        {"id":10, "name":"Mosaic", "category":"artistic"}
+        {"id":10, "name":"Mosaic", "category":"artistic"},
+        {"id":11, "name":"VHS Effect", "category":"artistic"},
+        {"id":12, "name":"Glitch", "category":"artistic"},
+        {"id":13, "name":"Chromatic Aberration", "category":"artistic"},
+        {"id":14, "name":"Vignette", "category":"adjust"},
+        {"id":15, "name":"Film Grain", "category":"artistic"},
+        {"id":16, "name":"Light Leak", "category":"artistic"},
+        {"id":17, "name":"Sharpen", "category":"adjust"},
+        {"id":18, "name":"Posterize", "category":"artistic"},
+        {"id":19, "name":"Duotone", "category":"color"},
+        {"id":20, "name":"Background Blur", "category":"blur"}
     ])";
 }
 
@@ -894,7 +1715,7 @@ bool GhitaEngine::setClipFilter(int clipId, int filterType, float intensity) {
     std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     for (auto& clip : m_clips) {
         if (clip.id == clipId) {
-            clip.filterType = std::clamp(filterType, 0, 10);
+            clip.filterType = std::clamp(filterType, 0, 20);
             clip.filterIntensity = std::clamp(intensity, 0.0f, 1.0f);
             return true;
         }
@@ -910,6 +1731,114 @@ bool GhitaEngine::setClipTransition(int clipId, TransitionType type, int duratio
             clip.transition.durationMs = std::max(0, durationMs);
             return true;
         }
+    }
+    return false;
+}
+
+// v0.8.0: Full timeline sync — upsert (insert or update) a clip.
+int GhitaEngine::upsertClip(int clipId, const std::string& filePath, int64_t startMs, int64_t durationMs,
+                            int64_t sourceInMs, int trackIndex, NativeClipKind kind,
+                            float volume, float opacity, float speed) {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    if (clipId <= 0 || durationMs <= 0) return 0;
+
+    for (auto& clip : m_clips) {
+        if (clip.id == clipId) {
+            // Update existing clip. If the source file changed, drop the cached
+            // decoder so the next render re-opens the new file.
+            const bool pathChanged = (clip.filePath != filePath);
+            clip.filePath = filePath;
+            clip.startMs = std::max(int64_t(0), startMs);
+            clip.durationMs = durationMs;
+            clip.sourceInMs = std::max(int64_t(0), sourceInMs);
+            clip.trackIndex = std::max(0, trackIndex);
+            clip.kind = kind;
+            clip.volume = std::clamp(volume, 0.0f, 2.0f);
+            clip.opacity = std::clamp(opacity, 0.0f, 1.0f);
+            clip.speed = std::clamp(speed, 0.25f, 4.0f);
+            if (pathChanged) {
+                {
+                    std::lock_guard<std::mutex> rlock(m_renderMutex);
+                    m_clipDecoders.erase(clipId);
+                    m_decoderLastPos.erase(clipId);
+                }
+                m_decoderLruOrder.remove(clipId);
+            }
+            recalculateDuration();
+            return 1;
+        }
+    }
+
+    NativeClip clip;
+    clip.id = clipId;
+    clip.filePath = filePath;
+    clip.startMs = std::max(int64_t(0), startMs);
+    clip.durationMs = durationMs;
+    clip.sourceInMs = std::max(int64_t(0), sourceInMs);
+    clip.trackIndex = std::max(0, trackIndex);
+    clip.kind = kind;
+    clip.volume = std::clamp(volume, 0.0f, 2.0f);
+    clip.opacity = std::clamp(opacity, 0.0f, 1.0f);
+    clip.speed = std::clamp(speed, 0.25f, 4.0f);
+    m_clips.push_back(clip);
+    if (clipId >= m_nextClipId) m_nextClipId = clipId + 1;
+    recalculateDuration();
+    return 1;
+}
+
+void GhitaEngine::clearClips() {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    m_clips.clear();
+    m_trackStates.clear();
+    {
+        std::lock_guard<std::mutex> rlock(m_renderMutex);
+        m_clipDecoders.clear();
+        m_decoderLruOrder.clear();
+        m_decoderLastPos.clear();
+    }
+    recalculateDuration();
+}
+
+int GhitaEngine::setTrackState(int trackIndex, bool muted, bool visible, float volume) {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    if (trackIndex < 0) return 0;
+    if (static_cast<size_t>(trackIndex) >= m_trackStates.size()) {
+        m_trackStates.resize(static_cast<size_t>(trackIndex) + 1);
+    }
+    m_trackStates[static_cast<size_t>(trackIndex)].muted = muted;
+    m_trackStates[static_cast<size_t>(trackIndex)].visible = visible;
+    m_trackStates[static_cast<size_t>(trackIndex)].volume = std::clamp(volume, 0.0f, 2.0f);
+    return 1;
+}
+
+int GhitaEngine::setClipColorCorrection(int clipId, const ColorCorrection& cc) {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    for (auto& clip : m_clips) {
+        if (clip.id == clipId) {
+            clip.cc = cc;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int GhitaEngine::setClipText(int clipId, const std::string& text, float fontSize, uint32_t colorArgb) {
+    std::unique_lock<std::shared_mutex> lock(m_engineMutex);
+    for (auto& clip : m_clips) {
+        if (clip.id == clipId) {
+            clip.textContent = text;
+            clip.textFontSize = std::max(4.0f, fontSize);
+            clip.textColor = colorArgb;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+bool GhitaEngine::hasClip(int clipId) const {
+    std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    for (const auto& clip : m_clips) {
+        if (clip.id == clipId) return true;
     }
     return false;
 }
@@ -976,7 +1905,9 @@ bool GhitaEngine::renderTextOverlay(uint8_t* outBuffer, int width, int height,
     const int boxW = std::min(width, std::max(40, textLen * fontSize / 2));
     const int boxH = std::min(height, fontSize * 2);
     const int boxX = 20;
-    const int boxY = height - boxH - 20;
+    // v0.8.0: Underflow fix — a large fontSize (boxH == height) produced a
+    // negative boxY and the draw loop below wrote at negative indices.
+    const int boxY = std::max(0, height - boxH - 20);
 
     // Draw filled rectangle for text background
     for (int y = boxY; y < boxY + boxH && y < height; ++y) {
@@ -993,7 +1924,9 @@ bool GhitaEngine::renderTextOverlay(uint8_t* outBuffer, int width, int height,
 }
 
 void GhitaEngine::recalculateDuration() {
-    int64_t maxEnd = 60000; // Minimum 60s
+    // v0.8.0: Timeline duration is the end of the last clip — the old 60s
+    // minimum made empty timelines play 60s of black and mis-scaled previews.
+    int64_t maxEnd = 0;
     for (const auto& clip : m_clips) {
         int64_t end = clip.startMs + clip.durationMs;
         if (end > maxEnd) maxEnd = end;
@@ -1030,6 +1963,220 @@ bool GhitaEngine::getAudioWaveform(float* outSamples, int sampleCount) {
         outSamples[i] = (std::sin(phase * 20.0f) * 0.5f + 0.5f) * m_volume.load();
     }
     return true;
+}
+
+// ====================================================================
+// AUDIO MIXING (v0.8.0)
+// ====================================================================
+
+// v0.8.0: Mix interleaved float-stereo PCM @ 44100 for [startMs, endMs) from
+// every clip that overlaps the window. Applies clip volume, track
+// volume/mute and (optionally) the master volume. Returns true when at least
+// one clip contributed audio. Takes its own engine (shared) + render locks.
+bool GhitaEngine::mixAudioWindow(int64_t startMs, int64_t endMs, float* outSamples,
+                                 int sampleCount, bool applyMasterVolume) {
+    if (!outSamples || sampleCount <= 0 || endMs <= startMs) return false;
+    std::fill(outSamples, outSamples + sampleCount, 0.0f);
+
+    std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    std::lock_guard<std::mutex> rlock(m_renderMutex);
+
+    const float master = applyMasterVolume ? m_volume.load() : 1.0f;
+    bool anyAudio = false;
+    constexpr int kSampleRate = 44100;
+
+    for (const auto& clip : m_clips) {
+        const int64_t clipEnd = clip.startMs + clip.durationMs;
+        if (clipEnd <= startMs || clip.startMs >= endMs) continue;
+
+        float trackVol = 1.0f;
+        if (static_cast<size_t>(clip.trackIndex) < m_trackStates.size()) {
+            if (m_trackStates[clip.trackIndex].muted) continue;
+            trackVol = m_trackStates[clip.trackIndex].volume;
+        }
+        const float gain = clip.volume * trackVol * master;
+        if (gain <= 0.0f) continue;
+
+        // Overlap window on the timeline → source-time window (speed-scaled).
+        const int64_t ovStart = std::max(startMs, clip.startMs);
+        const int64_t ovEnd = std::min(endMs, clipEnd);
+        if (ovEnd <= ovStart) continue;
+        const int64_t srcStart = clip.sourceInMs +
+            static_cast<int64_t>(static_cast<double>(ovStart - clip.startMs) * clip.speed);
+        const int ovSamples = static_cast<int>(std::ceil(
+            static_cast<double>(ovEnd - ovStart) / 1000.0 * kSampleRate));
+        const int outOffset = static_cast<int>(
+            static_cast<double>(ovStart - startMs) / 1000.0 * kSampleRate);
+        const int maxCopy = std::min(ovSamples, sampleCount - outOffset);
+        if (maxCopy <= 0) continue;
+
+        // Clip kinds without media (text/sticker) contribute no audio.
+        if (clip.kind == NativeClipKind::Text || clip.kind == NativeClipKind::Sticker) continue;
+
+        auto realDecoder = std::dynamic_pointer_cast<RealFFmpegMediaDecoder>(getClipDecoder(clip.id, clip.filePath));
+        if (!realDecoder || !realDecoder->hasAudioStream()) continue;
+
+        std::vector<float> seg(static_cast<size_t>(maxCopy), 0.0f);
+        if (realDecoder->decodeAudioSegment(srcStart, seg.data(), maxCopy, gain)) {
+            for (int i = 0; i < maxCopy; ++i) {
+                outSamples[outOffset + i] += seg[i];
+            }
+            anyAudio = true;
+        }
+    }
+
+    for (int i = 0; i < sampleCount; ++i) {
+        outSamples[i] = std::clamp(outSamples[i], -1.0f, 1.0f);
+    }
+    return anyAudio;
+}
+
+// ====================================================================
+// AUDIO PREVIEW (v0.8.0, waveOut on Windows)
+// ====================================================================
+
+void GhitaEngine::audioPreviewLoop() {
+#ifdef _WIN32
+    // v0.8.0: Nothing to play on an empty timeline — don't spin waveOut.
+    {
+        std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+        if (m_clips.empty()) {
+            m_audioThreadRunning.store(false);
+            return;
+        }
+    }
+    constexpr int kSampleRate = 44100;
+    constexpr int kChunkMs = 100;
+    constexpr int kChunkFrames = kSampleRate * kChunkMs / 1000; // 4410
+    constexpr int kNumBuffers = 4;
+    constexpr int kBufBytes = kChunkFrames * 2 * static_cast<int>(sizeof(int16_t));
+
+    WAVEFORMATEX wfx{};
+    wfx.wFormatTag = WAVE_FORMAT_PCM;
+    wfx.nChannels = 2;
+    wfx.nSamplesPerSec = kSampleRate;
+    wfx.wBitsPerSample = 16;
+    wfx.nBlockAlign = 2 * 2;
+    wfx.nAvgBytesPerSec = kSampleRate * wfx.nBlockAlign;
+
+    HWAVEOUT hWaveOut = nullptr;
+    if (waveOutOpen(&hWaveOut, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) {
+        m_audioThreadRunning.store(false);
+        return;
+    }
+
+    std::vector<WAVEHDR> hdrs(kNumBuffers);
+    std::vector<std::vector<uint8_t>> datas(kNumBuffers, std::vector<uint8_t>(kBufBytes));
+    std::vector<float> mixBuf(static_cast<size_t>(kChunkFrames) * 2, 0.0f);
+    for (int i = 0; i < kNumBuffers; ++i) {
+        hdrs[i] = {};
+        hdrs[i].lpData = reinterpret_cast<LPSTR>(datas[i].data());
+        hdrs[i].dwBufferLength = kBufBytes;
+        hdrs[i].dwUser = static_cast<DWORD_PTR>(i);
+    }
+
+    int fillIdx = 0;
+    int activeBuffers = 0;
+    int64_t nextPosMs = m_currentPosMs.load();
+
+    while (!m_audioStopFlag.load()) {
+        // Resync when the engine position jumped (seek) or wrapped.
+        const int64_t enginePos = m_currentPosMs.load();
+        const int64_t duration = m_durationMs.load();
+        if (enginePos < nextPosMs - 250 || enginePos > nextPosMs + 250) {
+            // v0.8.0: Fully unprepare queued headers — resetting only their
+            // dwFlags left them in a half-prepared state and the next
+            // waveOutPrepareHeader could fail, stalling playback.
+            waveOutReset(hWaveOut);
+            for (int i = 0; i < kNumBuffers; ++i) {
+                if (hdrs[i].dwFlags & WHDR_PREPARED) {
+                    waveOutUnprepareHeader(hWaveOut, &hdrs[i], sizeof(WAVEHDR));
+                }
+                hdrs[i].dwFlags = 0;
+            }
+            activeBuffers = 0;
+            fillIdx = 0;
+            nextPosMs = enginePos;
+        }
+        if (duration > 0 && nextPosMs >= duration) {
+            nextPosMs = 0;
+        }
+        if (nextPosMs < 0) nextPosMs = 0;
+
+        // Reap finished buffers.
+        while (activeBuffers > 0 && (hdrs[fillIdx].dwFlags & WHDR_DONE)) {
+            waveOutUnprepareHeader(hWaveOut, &hdrs[fillIdx], sizeof(WAVEHDR));
+            activeBuffers--;
+            fillIdx = (fillIdx + 1) % kNumBuffers;
+        }
+        if (activeBuffers >= kNumBuffers) {
+            // All buffers queued — wait for the device to free one.
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        // Mix the next chunk.
+        const bool hasAudio = mixAudioWindow(nextPosMs, nextPosMs + kChunkMs,
+                                             mixBuf.data(), kChunkFrames * 2, true);
+        int16_t* s16 = reinterpret_cast<int16_t*>(datas[fillIdx].data());
+        if (hasAudio) {
+            for (int i = 0; i < kChunkFrames * 2; ++i) {
+                s16[i] = static_cast<int16_t>(std::clamp(mixBuf[i], -1.0f, 1.0f) * 32767.0f);
+            }
+        } else {
+            std::memset(s16, 0, kBufBytes);
+        }
+
+        hdrs[fillIdx].dwFlags = 0;
+        hdrs[fillIdx].dwUser = static_cast<DWORD_PTR>(fillIdx);
+        if (waveOutPrepareHeader(hWaveOut, &hdrs[fillIdx], sizeof(WAVEHDR)) == MMSYSERR_NOERROR &&
+            waveOutWrite(hWaveOut, &hdrs[fillIdx], sizeof(WAVEHDR)) == MMSYSERR_NOERROR) {
+            activeBuffers++;
+            nextPosMs += kChunkMs;
+            fillIdx = (fillIdx + 1) % kNumBuffers;
+        } else {
+            waveOutUnprepareHeader(hWaveOut, &hdrs[fillIdx], sizeof(WAVEHDR));
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+
+    waveOutReset(hWaveOut);
+    for (auto& h : hdrs) {
+        if (h.dwFlags & WHDR_PREPARED) {
+            waveOutUnprepareHeader(hWaveOut, &h, sizeof(WAVEHDR));
+        }
+    }
+    waveOutClose(hWaveOut);
+#endif
+    m_audioThreadRunning.store(false);
+}
+
+void GhitaEngine::startAudioPreviewThread() {
+    if (m_audioThreadRunning.load() || !m_audioPreviewEnabled.load()) return;
+    m_audioStopFlag.store(false);
+    m_audioThreadRunning.store(true);
+    try {
+        m_audioThread = std::thread([this]() { audioPreviewLoop(); });
+    } catch (...) {
+        m_audioThreadRunning.store(false);
+    }
+}
+
+void GhitaEngine::stopAudioPreviewThread() {
+    if (!m_audioThreadRunning.load()) {
+        // v0.8.0: The thread may have exited on its own (empty timeline, no
+        // audio device) — the handle must still be joined, otherwise the
+        // std::thread destructor calls std::terminate.
+        if (m_audioThread.joinable()) {
+            m_audioThread.join();
+        }
+        return;
+    }
+    m_audioStopFlag.store(true);
+    if (m_audioThread.joinable()) {
+        m_audioThread.join();
+    }
+    m_audioThreadRunning.store(false);
 }
 
 // ========== ASYNC EXPORT PIPELINE ==========
@@ -1088,7 +2235,16 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
 
     std::vector<uint8_t> frameBuffer(static_cast<size_t>(width * height * 4));
     RealFFmpegMediaDecoder decoder;
-    decoder.open(m_exportMediaPath.empty() ? "synthetic" : m_exportMediaPath);
+
+    // v0.7.9: Deep-review fix — open() failure used to be ignored: the export
+    // loop then encoded blank frames, wrote a (corrupt) file, set
+    // writeCompleted=true and reported SUCCESS. Fail loudly instead so the
+    // Dart side surfaces a real error message.
+    if (!decoder.open(m_exportMediaPath.empty() ? "synthetic" : m_exportMediaPath)) {
+        m_exportError.store(true);
+        m_isExporting.store(false);
+        return;
+    }
 
     // v0.7.8: Only a fully written output counts as success
     bool writeCompleted = false;
@@ -1102,19 +2258,52 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
     AVFrame* encFrame = nullptr;
     AVPacket* encPkt = nullptr;
     SwsContext* swsCtx = nullptr;
+    // v0.8.0: Audio encoder state — function scope so export_cleanup can free
+    // it on every exit path (including avio_open/header failures).
+    AVCodecContext* audioEncCtx = nullptr;
+    AVStream* audioStream = nullptr;
+    SwrContext* audioSwr = nullptr;
+    AVFrame* audioFrame = nullptr;
+    AVPacket* audioPkt = nullptr;
 
-    // Determine encoder name
-    std::string encoderName = "libx264";
-    if (codec == "h265" || codec == "hevc") encoderName = "libx265";
-    else if (codec == "vp9") encoderName = "libvpx-vp9";
+    // Determine encoder name — v0.8.0: robust fallback chain. MSVC/vcpkg
+    // FFmpeg builds ship no libx264 (only hardware encoders that reject
+    // yuv420p), so export must keep trying until it finds an encoder that
+    // accepts the YUV420P pipeline — mpeg4 is the always-available last resort.
+    auto pickEncoder = [](const std::vector<const char*>& names) -> const AVCodec* {
+        for (const char* n : names) {
+            const AVCodec* c = avcodec_find_encoder_by_name(n);
+            if (!c) continue;
+            const enum AVPixelFormat* fmts = c->pix_fmts;
+            if (fmts) {
+                bool yuv420 = false;
+                for (int i = 0; fmts[i] != AV_PIX_FMT_NONE; ++i) {
+                    if (fmts[i] == AV_PIX_FMT_YUV420P) { yuv420 = true; break; }
+                }
+                if (!yuv420) continue;
+            }
+            return c;
+        }
+        return nullptr;
+    };
+    if (codec == "h265" || codec == "hevc") {
+        encoder = pickEncoder({"libx265", "hevc"});
+    } else if (codec == "vp9") {
+        encoder = pickEncoder({"libvpx-vp9", "vp9"});
+    } else {
+        encoder = pickEncoder({"libx264", "libopenh264", "h264", "mpeg4"});
+    }
+    if (!encoder) {
+        // Absolute last resort: any H.264/MPEG-4 encoder the build provides.
+        encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
+        if (!encoder) encoder = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+    }
 
     // Open output format
     avformat_alloc_output_context2(&fmtCtx, nullptr, nullptr, outputPath.c_str());
-    if (fmtCtx) {
-        encoder = avcodec_find_encoder_by_name(encoderName.c_str());
-        if (!encoder) encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
-
-        if (encoder) {
+    if (fmtCtx && encoder) {
+            // v0.8.0: The audio stream MUST exist before avformat_write_header
+            // or the muxer never registers the track.
             encCtx = avcodec_alloc_context3(encoder);
             if (encCtx) {
                 encCtx->width = width;
@@ -1134,6 +2323,31 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
                     videoStream = avformat_new_stream(fmtCtx, encoder);
                     if (videoStream) {
                         avcodec_parameters_from_context(videoStream->codecpar, encCtx);
+
+                        // v0.8.0: AAC audio stream — created before the header
+                        // (see comment above: a late avformat_new_stream left the
+                        // muxer's track uninitialized → SIGFPE on first write).
+                        const AVCodec* audioCodec =
+                            includeAudio ? avcodec_find_encoder(AV_CODEC_ID_AAC) : nullptr;
+                        if (audioCodec) {
+                            audioEncCtx = avcodec_alloc_context3(audioCodec);
+                            if (audioEncCtx) {
+                                audioEncCtx->sample_rate = 44100;
+                                audioEncCtx->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
+                                audioEncCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+                                audioEncCtx->bit_rate = 128000;
+                                if (fmtCtx->oformat->flags & AVFMT_GLOBALHEADER) {
+                                    audioEncCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+                                }
+                                if (avcodec_open2(audioEncCtx, audioCodec, nullptr) >= 0) {
+                                    audioStream = avformat_new_stream(fmtCtx, audioCodec);
+                                    if (audioStream) {
+                                        avcodec_parameters_from_context(audioStream->codecpar, audioEncCtx);
+                                        audioStream->time_base = AVRational{1, 44100};
+                                    }
+                                }
+                            }
+                        }
 
                         // Open output file
                         if (!(fmtCtx->oformat->flags & AVFMT_NOFILE)) {
@@ -1161,14 +2375,60 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
                                 width, height, AV_PIX_FMT_YUV420P,
                                 SWS_BILINEAR, nullptr, nullptr, nullptr);
 
+                            // v0.8.0: Audio encode resources (after the header —
+                            // needs audioEncCtx->frame_size).
+                            if (audioEncCtx && audioStream) {
+                                AVChannelLayout fltStereo = AV_CHANNEL_LAYOUT_STEREO;
+                                AVChannelLayout fltpStereo = AV_CHANNEL_LAYOUT_STEREO;
+                                if (swr_alloc_set_opts2(&audioSwr, &fltpStereo, AV_SAMPLE_FMT_FLTP, 44100,
+                                                        &fltStereo, AV_SAMPLE_FMT_FLT, 44100, 0, nullptr) >= 0) {
+                                    swr_init(audioSwr);
+                                }
+                                audioFrame = av_frame_alloc();
+                                audioFrame->format = AV_SAMPLE_FMT_FLTP;
+                                av_channel_layout_copy(&audioFrame->ch_layout, &fltpStereo);
+                                audioFrame->sample_rate = 44100;
+                                audioFrame->nb_samples =
+                                    audioEncCtx->frame_size > 0 ? audioEncCtx->frame_size : 1024;
+                                av_frame_get_buffer(audioFrame, 0);
+                                audioPkt = av_packet_alloc();
+                            }
+                            const int frameSamples =
+                                std::max(1, static_cast<int>(44100.0 / static_cast<double>(fps)));
+                            std::vector<float> mixBuf(static_cast<size_t>(frameSamples) * 2, 0.0f);
+                            int64_t audioPtsAccum = 0;
+                            // v0.8.0: AAC priming delay — packet pts = frame pts − delay;
+                            // offsetting keeps the stream's pts non-negative (some builds
+                            // expose delay, others don't — fall back to the 1024 spec value).
+                            const int audioDelay = audioEncCtx
+                                ? (audioEncCtx->delay > 0 ? audioEncCtx->delay : 1024)
+                                : 0;
+
                             // Encode loop
                             for (int frame = 0; frame < totalFrames; ++frame) {
                                 if (m_cancelExportFlag.load()) break;
 
                                 int64_t frameTimeMs = static_cast<int64_t>(
                                     (static_cast<float>(frame) / fps) * 1000.0f);
-                                decoder.decodeFrame(frameBuffer.data(), width, height, frameTimeMs,
-                                                      m_activeFilterType, m_filterIntensity.load());
+
+                                // v0.8.0: Render the ACTUAL timeline (multi-clip
+                                // composition) instead of the single loaded media.
+                                {
+                                    std::shared_lock<std::shared_mutex> elock(m_engineMutex);
+                                    std::lock_guard<std::mutex> rlock(m_renderMutex);
+                                    if (!m_clips.empty()) {
+                                        renderTimelineFrame(frameBuffer.data(), width, height, frameTimeMs);
+                                    } else {
+                                        // v0.7.9: Deep-review — a decode failure mid
+                                        // export used to produce a truncated/corrupt
+                                        // file that still reported success. Fail loudly.
+                                        if (!decoder.decodeFrame(frameBuffer.data(), width, height, frameTimeMs,
+                                                                  m_activeFilterType, m_filterIntensity.load())) {
+                                            m_exportError.store(true);
+                                            break;
+                                        }
+                                    }
+                                }
 
                                 // Convert RGBA → YUV420P
                                 if (swsCtx) {
@@ -1176,6 +2436,35 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
                                     int srcStride[1] = {width * 4};
                                     sws_scale(swsCtx, srcSlice, srcStride, 0, height,
                                               encFrame->data, encFrame->linesize);
+                                }
+
+                                // v0.8.0: Mix + encode the audio for this frame's window.
+                                if (audioEncCtx && audioSwr && audioFrame && audioPkt) {
+                                    mixAudioWindow(frameTimeMs, frameTimeMs + (1000 / fps),
+                                                   mixBuf.data(), frameSamples * 2, true);
+                                    int consumed = 0;
+                                    while (consumed < frameSamples) {
+                                        const int n = std::min(audioFrame->nb_samples, frameSamples - consumed);
+                                        float* src = mixBuf.data() + consumed * 2;
+                                        uint8_t* inPlane = reinterpret_cast<uint8_t*>(src);
+                                        uint8_t* outPlanes[2] = {audioFrame->data[0], audioFrame->data[1]};
+                                        const int got = swr_convert(audioSwr, outPlanes, n, &inPlane, n);
+                                        if (got > 0) {
+                                            // v0.8.0: Offset by the encoder priming delay (AAC = 1024 samples) —
+                                            // otherwise the first packets carry NEGATIVE pts and the mov
+                                            // muxer crashes (SIGFPE) computing durations.
+                                            audioFrame->pts = audioPtsAccum + audioDelay;
+                                            audioPtsAccum += got;
+                                            avcodec_send_frame(audioEncCtx, audioFrame);
+                                            while (avcodec_receive_packet(audioEncCtx, audioPkt) == 0) {
+                                                av_packet_rescale_ts(audioPkt, audioEncCtx->time_base, audioStream->time_base);
+                                                audioPkt->stream_index = audioStream->index;
+                                                av_interleaved_write_frame(fmtCtx, audioPkt);
+                                                av_packet_unref(audioPkt);
+                                            }
+                                        }
+                                        consumed += n;
+                                    }
                                 }
 
                                 encFrame->pts = frame;
@@ -1205,6 +2494,17 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
                                 av_packet_unref(encPkt);
                             }
 
+                            // v0.8.0: Flush the audio encoder.
+                            if (audioEncCtx) {
+                                avcodec_send_frame(audioEncCtx, nullptr);
+                                while (audioPkt && avcodec_receive_packet(audioEncCtx, audioPkt) == 0) {
+                                    av_packet_rescale_ts(audioPkt, audioEncCtx->time_base, audioStream->time_base);
+                                    audioPkt->stream_index = audioStream->index;
+                                    av_interleaved_write_frame(fmtCtx, audioPkt);
+                                    av_packet_unref(audioPkt);
+                                }
+                            }
+
                             // Write trailer
                             av_write_trailer(fmtCtx);
                             writeCompleted = true;
@@ -1218,19 +2518,34 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
                 }
             }
         }
-    }
 
     // v0.7.8: avio_open failure jumps here (skips encode, still cleans up)
 export_cleanup:
-    // Cleanup (safe even if pointers are null)
     if (swsCtx) sws_freeContext(swsCtx);
     av_packet_free(&encPkt);
     av_frame_free(&encFrame);
     avcodec_free_context(&encCtx);
+    // v0.8.0: Audio resources — created in the outer scope (before the
+    // header), so they are freed here for every exit path.
+    if (audioSwr) swr_free(&audioSwr);
+    av_packet_free(&audioPkt);
+    av_frame_free(&audioFrame);
+    avcodec_free_context(&audioEncCtx);
     if (fmtCtx && !(fmtCtx->oformat->flags & AVFMT_NOFILE)) {
         avio_closep(&fmtCtx->pb);
     }
     avformat_free_context(fmtCtx);
+
+    // v0.8.0: Capture the real output size — avio_size() on the (possibly
+    // already-closed) pb was unreliable and reported 0 for a valid file,
+    // which made the Dart side treat a successful export as a failure
+    // (its success rule is progress >= 1.0 AND fileSize > 0).
+    if (writeCompleted) {
+        std::ifstream fs(outputPath, std::ios::binary | std::ios::ate);
+        if (fs.good()) {
+            m_exportFileSize.store(static_cast<int64_t>(fs.tellg()));
+        }
+    }
 #else
     // Fallback: write raw RGBA data (legacy behavior, no FFmpeg available)
     std::unique_ptr<FILE, int(*)(FILE*)> outFile(nullptr, fclose);
@@ -1244,8 +2559,12 @@ export_cleanup:
 
         int64_t frameTimeMs = static_cast<int64_t>(
             (static_cast<float>(frame) / fps) * 1000.0f);
-        decoder.decodeFrame(frameBuffer.data(), width, height, frameTimeMs,
-                              m_activeFilterType, m_filterIntensity.load());
+        // v0.7.9: Deep-review — same decode-failure guard as the FFmpeg path.
+        if (!decoder.decodeFrame(frameBuffer.data(), width, height, frameTimeMs,
+                                  m_activeFilterType, m_filterIntensity.load())) {
+            m_exportError.store(true);
+            break;
+        }
 
         if (outFile) {
             fwrite(frameBuffer.data(), 1, frameBuffer.size(), outFile.get());

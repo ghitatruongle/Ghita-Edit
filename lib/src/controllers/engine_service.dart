@@ -23,10 +23,6 @@ class EngineService extends ChangeNotifier {
   Timer? _renderTimer;
   bool _isRunning = false;
 
-  // v0.5.8: Frame caching for improved performance during scrubbing
-  final Map<String, Uint8List> _frameCache = {};
-  final int _maxCacheSize = 50; // Max cached frames
-
   bool get isReady => _ctx != null && _ctx != nullptr;
   bool get isRunning => _isRunning;
   bool get isNativeLibraryLoaded => _nativeLibraryLoaded; // For fallback detection
@@ -266,9 +262,10 @@ class EngineService extends ChangeNotifier {
   }
 
   // v0.4.5: Extended filter range (0-10 instead of 0-4)
+  // v0.8.0: Range extended to 0-20 (VHS/Glitch/Vignette/Grain/...).
   void applyFilter(int filterType, double intensity) {
     _checkDisposed();
-    if (filterType < 0 || filterType > 10) return;
+    if (filterType < 0 || filterType > 20) return;
     if (intensity < 0.0) intensity = 0.0;
     if (intensity > 1.0) intensity = 1.0;
     _activeFilterType = filterType;
@@ -276,6 +273,198 @@ class EngineService extends ChangeNotifier {
     final bindings = _bindings;
     if (isReady && bindings != null) {
       bindings.applyFilter(_ctx!, filterType, intensity);
+    }
+  }
+
+  // ========== v0.8.0: Full timeline sync ==========
+
+  /// Insert or update a clip in the native timeline. [kind] follows the
+  /// engine enum: 0=video, 1=audio, 2=image, 3=text, 4=sticker.
+  bool upsertClip({
+    required int clipId,
+    required String filePath,
+    required int startMs,
+    required int durationMs,
+    required int sourceInMs,
+    required int trackIndex,
+    required int kind,
+    double volume = 1.0,
+    double opacity = 1.0,
+    double speed = 1.0,
+  }) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null || clipId <= 0) return false;
+    final pathPtr = filePath.toNativeUtf8();
+    try {
+      return bindings.upsertClip(
+        _ctx!,
+        clipId,
+        pathPtr,
+        startMs,
+        durationMs,
+        sourceInMs,
+        trackIndex,
+        kind,
+        volume,
+        opacity,
+        speed,
+      ) != 0;
+    } catch (e) {
+      debugPrint('[EngineService] upsertClip failed: $e');
+      return false;
+    } finally {
+      calloc.free(pathPtr);
+    }
+  }
+
+  /// Remove all clips from the native timeline (new project / project load).
+  void clearClips() {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return;
+    try {
+      bindings.clearClips(_ctx!);
+    } catch (e) {
+      debugPrint('[EngineService] clearClips failed: $e');
+    }
+  }
+
+  /// Remove a single clip from the native timeline (differential sync).
+  bool removeClip(int clipId) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null || clipId <= 0) return false;
+    try {
+      return bindings.removeClip(_ctx!, clipId) != 0;
+    } catch (e) {
+      debugPrint('[EngineService] removeClip failed: $e');
+      return false;
+    }
+  }
+
+  /// Mirror track mute/visibility/volume to the native renderer.
+  bool setTrackState(int trackIndex, {required bool muted, required bool visible, double volume = 1.0}) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null || trackIndex < 0) return false;
+    try {
+      return bindings.setTrackState(
+            _ctx!,
+            trackIndex,
+            muted ? 1 : 0,
+            visible ? 1 : 0,
+            volume,
+          ) != 0;
+    } catch (e) {
+      debugPrint('[EngineService] setTrackState failed: $e');
+      return false;
+    }
+  }
+
+  /// Mirror per-clip color correction (all values -1.0..1.0) to the engine.
+  bool setClipColorCorrection({
+    required int clipId,
+    double exposure = 0.0,
+    double contrast = 0.0,
+    double saturation = 0.0,
+    double temperature = 0.0,
+    double tint = 0.0,
+    double vibrance = 0.0,
+    double highlights = 0.0,
+    double shadows = 0.0,
+  }) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null || clipId <= 0) return false;
+    try {
+      return bindings.setClipColorCorrection(
+            _ctx!,
+            clipId,
+            exposure,
+            contrast,
+            saturation,
+            temperature,
+            tint,
+            vibrance,
+            highlights,
+            shadows,
+          ) != 0;
+    } catch (e) {
+      debugPrint('[EngineService] setClipColorCorrection failed: $e');
+      return false;
+    }
+  }
+
+  /// Mirror text/sticker payload to the engine (rendered via GDI).
+  bool setClipText({required int clipId, required String text, double fontSize = 48.0, int colorArgb = 0xFFFFFFFF}) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null || clipId <= 0) return false;
+    final textPtr = text.toNativeUtf8();
+    try {
+      return bindings.setClipText(_ctx!, clipId, textPtr, fontSize, colorArgb) != 0;
+    } catch (e) {
+      debugPrint('[EngineService] setClipText failed: $e');
+      return false;
+    } finally {
+      calloc.free(textPtr);
+    }
+  }
+
+  /// Whether a clip id exists in the native timeline.
+  bool hasClip(int clipId) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null) return false;
+    try {
+      return bindings.hasClip(_ctx!, clipId) != 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Mirror per-clip filter to the engine (used by syncTimelineToEngine).
+  bool setClipFilter(int clipId, int filterType, double intensity) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null || clipId <= 0) return false;
+    try {
+      return bindings.setClipFilter(_ctx!, clipId, filterType, intensity) != 0;
+    } catch (e) {
+      debugPrint('[EngineService] setClipFilter failed: $e');
+      return false;
+    }
+  }
+
+  /// Mirror per-clip transition to the engine (used by syncTimelineToEngine).
+  bool setClipTransition(int clipId, int transitionType, int durationMs) {
+    _checkDisposed();
+    final bindings = _bindings;
+    if (!isReady || bindings == null || clipId <= 0) return false;
+    try {
+      return bindings.setClipTransition(_ctx!, clipId, transitionType, durationMs);
+    } catch (e) {
+      debugPrint('[EngineService] setClipTransition failed: $e');
+      return false;
+    }
+  }
+
+  // v0.7.9: PERF-04 — render a frame at an explicit position without touching
+  // playback state (foundation for batch/thumbnail rendering). Uses the shared
+  // _framePointer buffer; returns a copy so callers own their bytes.
+  Uint8List? renderFrameAt(int positionMs, {int width = renderWidth, int height = renderHeight}) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.renderFrameAt;
+    if (!isReady || fn == null || _framePointer == null) return null;
+    try {
+      if (!fn(_ctx!, _framePointer!, width, height, positionMs)) return null;
+      final list = _framePointer!.asTypedList(width * height * 4);
+      return Uint8List.fromList(list);
+    } catch (e, st) {
+      debugPrint('[EngineService] renderFrameAt failed: $e\n$st');
+      return null;
     }
   }
 
@@ -293,7 +482,7 @@ class EngineService extends ChangeNotifier {
     _positionMs = 0;
 
     // v0.7.8: Invalidate the waveform cache when the media changes.
-    _waveformCache = null;
+    _waveformCacheByCount.clear();
 
     // v0.4.5: Fetch media info after loading
     fetchMediaInfo();
@@ -302,7 +491,9 @@ class EngineService extends ChangeNotifier {
   // v0.7.8: Waveform cache — the timeline calls getAudioWaveform during
   // build(); with per-tick UI rebuilds during playback this used to hit FFI
   // every frame. Invalidate on loadMedia instead.
-  Float32List? _waveformCache;
+  // v0.7.9: Multi-level cache — one native fetch per sample count, then
+  // cheap interpolation serves every other zoom level.
+  final Map<int, Float32List> _waveformCacheByCount = {};
 
   /// Retrieve audio waveform samples from the native engine (v0.3.0).
   Float32List getAudioWaveform(int count, {int? downsamplingFactor}) {
@@ -310,32 +501,30 @@ class EngineService extends ChangeNotifier {
     final bindings = _bindings;
     if (!isReady || bindings == null || count <= 0) return Float32List(0);
 
-    // v0.7.8: Serve from cache when nothing changed since the last fetch.
-    final cache = _waveformCache;
-    if (cache != null && cache.length == count) {
-      return Float32List.fromList(cache);
-    }
-    if (cache != null && downsamplingFactor == null) {
-      _waveformCache = null;
+    // v0.5.8: Apply downsampling for lower resolution at small zoom levels
+    final effectiveCount = downsamplingFactor != null
+        ? (count / downsamplingFactor).round().clamp(1, count)
+        : count;
+
+    // v0.7.9: Serve from the cache — a native fetch happens once per
+    // effectiveCount; all zoom levels sharing that count reuse it.
+    final cached = _waveformCacheByCount[effectiveCount];
+    if (cached != null) {
+      if (downsamplingFactor != null && effectiveCount < count) {
+        return _upsampleWaveform(cached, count);
+      }
+      return Float32List.fromList(cached);
     }
 
-    // v0.5.8: Apply downsampling for lower resolution at small zoom levels
-    final effectiveCount = downsamplingFactor != null 
-        ? (count / downsamplingFactor).round()
-        : count;
-    
     final ptr = calloc<Float>(effectiveCount);
     try {
       final ok = bindings.getAudioWaveform(_ctx!, ptr, effectiveCount);
       if (ok) {
         var result = Float32List.fromList(ptr.asTypedList(effectiveCount));
+        _waveformCacheByCount[effectiveCount] = result;
         // If downsampling was requested, upsample by interpolating
         if (downsamplingFactor != null && effectiveCount < count) {
           result = _upsampleWaveform(result, count);
-        }
-        // v0.7.8: Cache only the plain 200-sample request (timeline default).
-        if (downsamplingFactor == null) {
-          _waveformCache = result;
         }
         return result;
       }
@@ -421,11 +610,17 @@ class EngineService extends ChangeNotifier {
   }
 
   // v0.5.5: Playback rate control
+  // v0.7.9: Also cache the rate locally — the cache key below needs it and
+  // calling FFI per tick to read it would defeat the purpose.
+  double _playbackRate = 1.0;
+  double get playbackRate => _playbackRate;
+
   void setPlaybackRate(double rate) {
     _checkDisposed();
+    _playbackRate = rate.clamp(0.25, 4.0).toDouble();
     final bindings = _bindings;
     if (!isReady || bindings == null) return;
-    bindings.setPlaybackRate(_ctx!, rate.clamp(0.25, 4.0).toDouble());
+    bindings.setPlaybackRate(_ctx!, _playbackRate);
   }
 
   double getPlaybackRate() {
@@ -436,24 +631,49 @@ class EngineService extends ChangeNotifier {
   }
 
   // v0.5.8: Frame caching for improved performance
+  // v0.7.9: True LRU — getCachedFrame re-inserts the entry so the least
+  // recently used frame is always evicted first (was FIFO, which kept frames
+  // that were never revisited and evicted hot scrub frames).
+  final Map<String, Uint8List> _frameCache = {};
+  final int _maxCacheSize = 50; // Max cached frames
+
   void cacheFrame(String key, Uint8List frame) {
     if (_disposed || !isReady) return;
-    // Remove oldest if cache is full
-    if (_frameCache.length >= _maxCacheSize) {
-      // Remove first entry (simple LRU - could be improved)
-      final firstKey = _frameCache.keys.first;
-      _frameCache.remove(firstKey);
+    // LRU eviction: drop the least recently used entry when full
+    if (_frameCache.length >= _maxCacheSize && !_frameCache.containsKey(key)) {
+      _frameCache.remove(_frameCache.keys.first);
     }
     _frameCache[key] = frame;
   }
 
   Uint8List? getCachedFrame(String key) {
-    return _frameCache[key];
+    final frame = _frameCache.remove(key); // touch: promotes entry to newest
+    if (frame == null) return null;
+    _frameCache[key] = frame;
+    return frame;
   }
 
   void clearCache() {
     _frameCache.clear();
   }
+
+  // v0.7.9: PERF-03 — thumbnail cache (path-keyed, LRU, bounded). Native
+  // thumbnail extraction is currently unavailable in the DLL (missing
+  // symbol), but the cache stays ready for when the engine ships it —
+  // Media Bin can switch from icons to thumbnails without re-fetching.
+  final Map<String, Uint8List> _thumbnailCache = {};
+  final int _maxThumbnailCacheSize = 100;
+
+  Uint8List? getCachedThumbnail(String path) => _thumbnailCache[path];
+
+  void cacheThumbnail(String path, Uint8List bytes) {
+    if (_thumbnailCache.length >= _maxThumbnailCacheSize) {
+      _thumbnailCache.remove(_thumbnailCache.keys.first);
+    }
+    _thumbnailCache[path] = bytes;
+  }
+
+  void clearThumbnailCache() => _thumbnailCache.clear();
 
   // v0.5.5: Text overlay rendering (basic rasterizer stub)
   bool renderTextOverlay(Uint8List buffer, int width, int height,
@@ -570,9 +790,11 @@ class EngineService extends ChangeNotifier {
 
       // v0.7.8: Cache key includes render-affecting state — a frame rendered
       // with one filter/volume must not be reused after the filter changes.
+      // v0.7.9: ...and playback rate (frames differ under 2x vs 1x speed).
       // ignore: unnecessary_brace_in_string_interps
       final cacheKey = '${_positionMs}_${renderWidth}x${renderHeight}_f$_activeFilterType'
-          '_i${_filterIntensity.toStringAsFixed(3)}_v${_volume.toStringAsFixed(3)}';
+          '_i${_filterIntensity.toStringAsFixed(3)}_v${_volume.toStringAsFixed(3)}'
+          '_r${_playbackRate.toStringAsFixed(3)}';
       
       // Try to get frame from cache first
       final cachedFrame = getCachedFrame(cacheKey);

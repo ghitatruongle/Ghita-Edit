@@ -40,6 +40,10 @@ class AddClipCommand extends EditCommand {
   void execute(Project project) {
     final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
     if (track == null) return;
+    // v0.7.9: Deep-review — on redo this runs again; without clearing, stale
+    // entries from the first execution (clips since deleted/moved) would be
+    // captured at their CURRENT positions and undo would restore wrong values.
+    _shiftedOrigins.clear();
     for (final existing in track.clips) {
       if (existing.id != clip.id &&
           existing.timelineStartMs < clip.timelineEndMs &&

@@ -252,6 +252,13 @@ class Clip {
     final leftDuration = splitPoint;
     final rightDuration = durationMs - splitPoint;
 
+    // v0.7.9: Defensive guard — a boundary position (or degenerate clip)
+    // must never produce a zero-duration half, which cannot render and
+    // crashes export.
+    if (leftDuration <= 0 || rightDuration <= 0) {
+      return null;
+    }
+
     final left = copyWith(
       id: '${id}_L',
       durationMs: leftDuration,
@@ -318,13 +325,19 @@ class Clip {
         id: json['id'] as String,
         sourceFilePath: json['sourceFilePath'] as String,
         displayName: json['displayName'] as String,
-        timelineStartMs: json['timelineStartMs'] as int,
-        durationMs: json['durationMs'] as int,
+        // v0.7.9: Defensive — missing timelineStartMs used to throw TypeError.
+        timelineStartMs: json['timelineStartMs'] as int? ?? 0,
+        // v0.7.9: Null-safe — a corrupt/very old file missing durationMs
+        // used to throw TypeError here (hard cast of null).
+        durationMs: json['durationMs'] as int? ?? 0,
         sourceInMs: json['sourceInMs'] as int? ?? 0,
         // v0.7.8: Legacy files without sourceOutMs defaulted to durationMs,
         // ignoring a trimmed in-point — use sourceInMs + durationMs instead.
+        // v0.7.9: The `durationMs` cast could throw TypeError when the key was
+        // missing entirely (corrupt/very old files) — both operands are now
+        // null-safe so loading can never crash on a missing duration.
         sourceOutMs: json['sourceOutMs'] as int? ??
-            ((json['sourceInMs'] as int? ?? 0) + (json['durationMs'] as int)),
+            ((json['sourceInMs'] as int? ?? 0) + (json['durationMs'] as int? ?? 0)),
         trackIndex: json['trackIndex'] as int? ?? 0,
         filterType: json['filterType'] as int? ?? 0,
         filterIntensity: (json['filterIntensity'] as num?)?.toDouble() ?? 1.0,
