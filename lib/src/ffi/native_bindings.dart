@@ -102,6 +102,9 @@ typedef DartGhitaEngineCancelExport = void Function(Pointer<GhitaEngineContext> 
 typedef CGhitaEngineGetAudioWaveform = Bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Float> outSamples, Int32 sampleCount);
 typedef DartGhitaEngineGetAudioWaveform = bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Float> outSamples, int sampleCount);
 
+typedef CGhitaEngineSetNoiseSuppress = Void Function(Pointer<GhitaEngineContext> ctx, Int32 enabled);
+typedef DartGhitaEngineSetNoiseSuppress = void Function(Pointer<GhitaEngineContext> ctx, int enabled);
+
 // ========== v0.4.5 New API ==========
 
 // Media info
@@ -358,13 +361,18 @@ class GhitaNativeBindings {
   DartGhitaEngineSetFilterPreset? setFilterPreset;
   DartGhitaEngineGetAudioWaveformPeaks? getAudioWaveformPeaks;
 
-  // v0.8.0 New bindings
-  late DartGhitaEngineUpsertClip upsertClip;
-  late DartGhitaEngineClearClips clearClips;
-  late DartGhitaEngineSetTrackState setTrackState;
-  late DartGhitaEngineSetClipColorCorrection setClipColorCorrection;
-  late DartGhitaEngineSetClipText setClipText;
-  late DartGhitaEngineHasClip hasClip;
+  // v0.8.0 New bindings — v1.0.1: nullable with stub fallbacks so an older
+  // DLL missing these symbols degrades gracefully instead of crashing.
+  DartGhitaEngineUpsertClip? upsertClip;
+  DartGhitaEngineClearClips? clearClips;
+  DartGhitaEngineSetTrackState? setTrackState;
+  DartGhitaEngineSetClipColorCorrection? setClipColorCorrection;
+  DartGhitaEngineSetClipText? setClipText;
+  DartGhitaEngineHasClip? hasClip;
+
+  // v1.0.3: Noise suppression ("làm rõ âm thanh") — optional, missing on
+  // older DLLs.
+  DartGhitaEngineSetNoiseSuppress? setNoiseSuppress;
 
   GhitaNativeBindings._internal() {
     _loadLibrary();
@@ -518,22 +526,45 @@ class GhitaNativeBindings {
     getAudioWaveformPeaks = _tryLookup('ghita_engine_get_audio_waveform_peaks', () => _lib.lookupFunction<CGhitaEngineGetAudioWaveformPeaks, DartGhitaEngineGetAudioWaveformPeaks>('ghita_engine_get_audio_waveform_peaks'));
 
     // v0.8.0 New bindings
-    upsertClip = _lib.lookupFunction<CGhitaEngineUpsertClip, DartGhitaEngineUpsertClip>('ghita_engine_upsert_clip');
-    clearClips = _lib.lookupFunction<CGhitaEngineClearClips, DartGhitaEngineClearClips>('ghita_engine_clear_clips');
-    setTrackState = _lib.lookupFunction<CGhitaEngineSetTrackState, DartGhitaEngineSetTrackState>('ghita_engine_set_track_state');
-    setClipColorCorrection = _lib.lookupFunction<CGhitaEngineSetClipColorCorrection, DartGhitaEngineSetClipColorCorrection>('ghita_engine_set_clip_color_correction');
-    setClipText = _lib.lookupFunction<CGhitaEngineSetClipText, DartGhitaEngineSetClipText>('ghita_engine_set_clip_text');
-    hasClip = _lib.lookupFunction<CGhitaEngineHasClip, DartGhitaEngineHasClip>('ghita_engine_has_clip');
+    // v1.0.1: Use defensive lookups — a missing symbol in an older DLL
+    // must NOT silently disable the entire native engine (the v0.7.0
+    // pattern). Each binding that reports nullable is gracefully degraded.
+    upsertClip = _tryLookup('ghita_engine_upsert_clip', () => _lib.lookupFunction<CGhitaEngineUpsertClip, DartGhitaEngineUpsertClip>('ghita_engine_upsert_clip')) ?? _upsertClipStub;
+    clearClips = _tryLookup('ghita_engine_clear_clips', () => _lib.lookupFunction<CGhitaEngineClearClips, DartGhitaEngineClearClips>('ghita_engine_clear_clips')) ?? _clearClipsStub;
+    setTrackState = _tryLookup('ghita_engine_set_track_state', () => _lib.lookupFunction<CGhitaEngineSetTrackState, DartGhitaEngineSetTrackState>('ghita_engine_set_track_state')) ?? _setTrackStateStub;
+    setClipColorCorrection = _tryLookup('ghita_engine_set_clip_color_correction', () => _lib.lookupFunction<CGhitaEngineSetClipColorCorrection, DartGhitaEngineSetClipColorCorrection>('ghita_engine_set_clip_color_correction')) ?? _setClipColorCorrectionStub;
+    setClipText = _tryLookup('ghita_engine_set_clip_text', () => _lib.lookupFunction<CGhitaEngineSetClipText, DartGhitaEngineSetClipText>('ghita_engine_set_clip_text')) ?? _setClipTextStub;
+    hasClip = _tryLookup('ghita_engine_has_clip', () => _lib.lookupFunction<CGhitaEngineHasClip, DartGhitaEngineHasClip>('ghita_engine_has_clip')) ?? _hasClipStub;
+    setNoiseSuppress = _tryLookup('ghita_engine_set_noise_suppress', () => _lib.lookupFunction<CGhitaEngineSetNoiseSuppress, DartGhitaEngineSetNoiseSuppress>('ghita_engine_set_noise_suppress'));
   }
+
+  // v1.0.1: Stub implementations for v0.8.0 bindings that may be absent
+  // from older DLLs. Each stub matches the native function signature and
+  // returns a "not available" sentinel so callers can degrade gracefully.
+  static int _upsertClipStub(Pointer<GhitaEngineContext> ctx, int clipId, Pointer<Utf8> filePath, int startMs, int durationMs, int sourceInMs, int trackIndex, int kind, double volume, double opacity, double speed) => 0;
+  static void _clearClipsStub(Pointer<GhitaEngineContext> ctx) {}
+  static int _setTrackStateStub(Pointer<GhitaEngineContext> ctx, int trackIndex, int muted, int visible, double volume) => 0;
+  static int _setClipColorCorrectionStub(Pointer<GhitaEngineContext> ctx, int clipId, double exposure, double contrast, double saturation, double temperature, double tint, double vibrance, double highlights, double shadows) => 0;
+  static int _setClipTextStub(Pointer<GhitaEngineContext> ctx, int clipId, Pointer<Utf8> text, double fontSize, int colorArgb) => 0;
+  static int _hasClipStub(Pointer<GhitaEngineContext> ctx, int clipId) => 0;
 
   /// v0.7.8: Resolve a symbol defensively — returns null instead of throwing
   /// when the DLL doesn't export it. Without this, one stale binding silently
   /// disabled the entire native engine (Demo Mode even with DLL present).
+  /// v1.0.2: Catch the full exception family (ArgumentError for missing
+  /// symbols, plus any other FFI errors) so a single bad lookup can never
+  /// take down the whole binding layer.
   T? _tryLookup<T extends Function>(String symbol, T Function() doLookup) {
     try {
       return doLookup();
     } on ArgumentError {
       debugPrint('FFI: missing symbol in engine DLL: $symbol (feature disabled)');
+      return null;
+    } on Exception catch (e) {
+      debugPrint('FFI: error resolving symbol $symbol: $e (feature disabled)');
+      return null;
+    } on Error catch (e) {
+      debugPrint('FFI: error resolving symbol $symbol: $e (feature disabled)');
       return null;
     }
   }

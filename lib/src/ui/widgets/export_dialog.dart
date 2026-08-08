@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ffi';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -41,7 +42,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'YouTube 1080p',
       icon: Icons.play_circle_filled,
       width: 1920, height: 1080, fps: 60,
-      format: 'MP4', codec: 'H.264', bitrateMbps: 10, includeAudio: true,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 10.0, includeAudio: true,
       description: 'H.264 • 10 Mbps • 60fps',
     ),
     ExportPreset(
@@ -49,7 +50,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'YouTube 4K',
       icon: Icons.high_quality,
       width: 3840, height: 2160, fps: 60,
-      format: 'MP4', codec: 'H.265', bitrateMbps: 35, includeAudio: true,
+      format: 'MP4', codec: 'H.265', bitrateMbps: 35.0, includeAudio: true,
       description: 'H.265 • 35 Mbps • 60fps',
     ),
     ExportPreset(
@@ -57,7 +58,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'YouTube Shorts',
       icon: Icons.smartphone,
       width: 1080, height: 1920, fps: 30,
-      format: 'MP4', codec: 'H.264', bitrateMbps: 8, includeAudio: true,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 8.0, includeAudio: true,
       description: '9:16 • H.264 • 8 Mbps • 30fps',
     ),
     ExportPreset(
@@ -65,7 +66,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'TikTok / Reels',
       icon: Icons.phone_iphone,
       width: 1080, height: 1920, fps: 30,
-      format: 'MP4', codec: 'H.264', bitrateMbps: 8, includeAudio: true,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 8.0, includeAudio: true,
       description: '9:16 • H.264 • 8 Mbps • 30fps',
     ),
     ExportPreset(
@@ -73,7 +74,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'Instagram Story',
       icon: Icons.camera_alt,
       width: 1080, height: 1920, fps: 30,
-      format: 'MP4', codec: 'H.264', bitrateMbps: 7, includeAudio: true,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 7.0, includeAudio: true,
       description: '9:16 • H.264 • 7 Mbps • 30fps',
     ),
     ExportPreset(
@@ -81,7 +82,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'Instagram 1:1',
       icon: Icons.camera,
       width: 1080, height: 1080, fps: 30,
-      format: 'MP4', codec: 'H.264', bitrateMbps: 6, includeAudio: true,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 6.0, includeAudio: true,
       description: '1:1 • H.264 • 6 Mbps • 30fps',
     ),
     ExportPreset(
@@ -89,7 +90,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'Twitter / X',
       icon: Icons.chat,
       width: 1280, height: 720, fps: 30,
-      format: 'MP4', codec: 'H.264', bitrateMbps: 5, includeAudio: true,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 5.0, includeAudio: true,
       description: '720p • H.264 • 5 Mbps • 30fps',
     ),
     ExportPreset(
@@ -97,7 +98,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'Web (VP9)',
       icon: Icons.public,
       width: 1920, height: 1080, fps: 30,
-      format: 'MP4', codec: 'VP9', bitrateMbps: 8, includeAudio: true,
+      format: 'MP4', codec: 'VP9', bitrateMbps: 8.0, includeAudio: true,
       description: 'VP9 • 8 Mbps • 30fps',
     ),
     ExportPreset(
@@ -105,7 +106,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'Animated GIF',
       icon: Icons.gif_rounded,
       width: 480, height: 480, fps: 15,
-      format: 'GIF', codec: 'GIF', bitrateMbps: 0, includeAudio: false,
+      format: 'GIF', codec: 'GIF', bitrateMbps: 0.0, includeAudio: false,
       description: 'GIF • 480x480 • 15fps',
     ),
     ExportPreset(
@@ -113,15 +114,15 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'Audio Only (MP3)',
       icon: Icons.audiotrack_rounded,
       width: 0, height: 0, fps: 0,
-      format: 'MP3', codec: 'MP3', bitrateMbps: 3, includeAudio: true,
-      description: 'MP3 • 320 kbps',
+      format: 'MP3', codec: 'MP3', bitrateMbps: 0.128, includeAudio: true,
+      description: 'MP3 • 128 kbps',
     ),
     ExportPreset(
       name: 'Archive ProRes',
       label: 'Archive (ProRes)',
       icon: Icons.archive,
       width: 1920, height: 1080, fps: 60,
-      format: 'MOV', codec: 'ProRes', bitrateMbps: 200, includeAudio: true,
+      format: 'MOV', codec: 'ProRes', bitrateMbps: 200.0, includeAudio: true,
       description: 'ProRes • 200 Mbps • 60fps • MOV',
     ),
     ExportPreset(
@@ -129,7 +130,7 @@ class _ExportDialogState extends State<ExportDialog> {
       label: 'Custom...',
       icon: Icons.tune,
       width: 1920, height: 1080, fps: 60,
-      format: 'MP4', codec: 'H.264', bitrateMbps: 10, includeAudio: true,
+      format: 'MP4', codec: 'H.264', bitrateMbps: 10.0, includeAudio: true,
       description: 'Manual configuration',
     ),
   ];
@@ -235,6 +236,11 @@ class _ExportDialogState extends State<ExportDialog> {
           case 'H.265': return 'h265';
           case 'VP9': return 'vp9';
           case 'ProRes': return 'prores';
+          // v1.0.0: GIF/MP3 used to silently fall through to 'h264' —
+          // sending H.264 bytes down a `.gif`/`.mp3` filename produced an
+          // unusable file. Now they pass their intended codec through.
+          case 'GIF': return 'gif';
+          case 'MP3': return 'mp3';
           default: return 'h264';
         }
       }
@@ -243,20 +249,71 @@ class _ExportDialogState extends State<ExportDialog> {
       case 'H.265': return 'h265';
       case 'VP9': return 'vp9';
       case 'ProRes': return 'prores';
+      case 'GIF': return 'gif';
+      case 'MP3': return 'mp3';
       default: return 'h264';
     }
+  }
+
+  /// v1.0.0: True for audio-only exports (custom MP3 or Audio Only preset) —
+  /// used to skip the misleading "0×0 • 0 FPS" spec line.
+  bool get _isAudioOnly {
+    if (_customMode) return _selectedFormat == 'MP3';
+    final p = _getPreset(_selectedPreset ?? '');
+    return p != null && p.format == 'MP3';
   }
 
   String get _estimatedFileSize {
     final totalSeconds = widget.controller.durationMs ~/ 1000;
     if (totalSeconds <= 0) return 'Unknown';
+    // v1.0.0: GIF and MP3 don't use a video bitrate — estimating with the
+    // Mbps value reported absurd sizes (e.g. a 10s MP3 shown as 3.7 MB).
+    if (_isAudioOnly) {
+      final kbps = _exportBitrate ~/ 1000;
+      final bytes = (kbps * 1000 ~/ 8) * totalSeconds;
+      if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
     final preset = _customMode ? null : _getPreset(_selectedPreset ?? '');
-    final bitrate = (preset?.bitrateMbps ?? _bitrateMbps.toInt()).toDouble() * 1000000;
+    final bitrate = (preset?.bitrateMbps ?? _bitrateMbps) * 1000000;
     final bits = bitrate * totalSeconds;
     final bytes = bits ~/ 8;
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
     if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
+  // v1.0.0: Format elapsed/positioned ms as "M:SS" — used by the audio-only
+  // export progress row (the regular video path uses frame counts).
+  String _formatTime(double ms) {
+    final total = (ms / 1000).round().clamp(0, 1 << 30);
+    final m = total ~/ 60;
+    final s = total % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
+  /// v1.0.0: Bitrate passed to the native engine for this export. For MP3
+  /// audio-only exports, parse the user-selected kbps (e.g. "192 kbps")
+  /// from the kbps dropdown; otherwise fall back to the preset's Mbps.
+  int get _exportBitrate {
+    if (_isAudioOnly) {
+      if (_customMode && _selectedFps.endsWith('kbps')) {
+        final m = RegExp(r'^(\d+)').firstMatch(_selectedFps);
+        if (m != null) {
+          final kbps = int.tryParse(m.group(1)!);
+          if (kbps != null && kbps >= 32 && kbps <= 320) {
+            return kbps * 1000;
+          }
+        }
+      }
+      // Preset path or unrecognized custom value: use the preset's kbps.
+      final preset = _getPreset(_selectedPreset ?? '');
+      if (preset != null) {
+        return (preset.bitrateMbps * 1000000).toInt();
+      }
+      return 128000;
+    }
+    return ((_customMode ? _bitrateMbps : (_getPreset(_selectedPreset ?? '')?.bitrateMbps ?? 10.0)) * 1000000).toInt();
   }
 
   // v0.7.9: UX-01 — estimated time remaining, extrapolated from progress.
@@ -274,8 +331,15 @@ class _ExportDialogState extends State<ExportDialog> {
 
   // v0.7.9: UX-01 — coarse phase label so the user knows what stage the
   // pipeline is at, not just a percentage.
+  // v1.0.0: Audio-only exports never touch video frames — replacing the
+  // misleading "Encoding video frames..." with audio-appropriate copy.
   String get _exportPhase {
     final p = _exportProgress;
+    if (_isAudioOnly) {
+      if (p < 0.2) return 'Initializing audio encoder...';
+      if (p < 0.85) return 'Mixing & encoding audio...';
+      return 'Finalizing MP3 file...';
+    }
     if (p < 0.2) return 'Initializing encoder...';
     if (p < 0.5) return 'Encoding video frames...';
     if (p < 0.85) return 'Processing audio / muxing...';
@@ -285,6 +349,10 @@ class _ExportDialogState extends State<ExportDialog> {
   String get _aspectRatioLabel {
     final w = resWidth;
     final h = resHeight;
+    // v1.0.2: Audio Only (MP3) has width/height 0 — guard the division
+    // (_gcd(0,0) == 0 → `0 ~/ 0` threw IntegerDivisionByZeroException
+    // on every rebuild while that preset was selected).
+    if (w <= 0 || h <= 0) return 'Audio Only';
     final gcd = _gcd(w, h);
     return '${w ~/ gcd}:${h ~/ gcd}';
   }
@@ -370,7 +438,10 @@ class _ExportDialogState extends State<ExportDialog> {
       resHeight,
       _fps,
       _nativeCodecName,
-      (_customMode ? _bitrateMbps : (_getPreset(_selectedPreset ?? '')?.bitrateMbps ?? 10)) * 1000000 ~/ 1,
+      // v1.0.0: MP3 audio exports use the user-selected kbps (default 128),
+      // not the video Mbps value. The native side honors this for codec=='mp3'
+      // — it caps and clamps to the 32k–320k valid MP3 range.
+      _exportBitrate,
       _includeAudio,
     );
 
@@ -396,7 +467,15 @@ class _ExportDialogState extends State<ExportDialog> {
         return;
       }
 
-      final isExporting = bindings!.isExporting(ctx);
+      // v1.0.1: Null-safe — bindings may be null if the native library
+      // failed to load. Previously `bindings!.isExporting` threw NPE here.
+      if (bindings == null || ctx == nullptr) {
+        timer.cancel();
+        setState(() => _isExporting = false);
+        return;
+      }
+
+      final isExporting = bindings.isExporting(ctx);
       final progress = bindings.getExportProgress(ctx);
       final fileSize = engineService.getExportFileSize();
 
@@ -434,7 +513,11 @@ class _ExportDialogState extends State<ExportDialog> {
   void _cancelExport() {
     _progressTimer?.cancel();
     final engineService = widget.controller.engineService;
-    engineService.bindings?.cancelExport(engineService.ctx);
+    // v1.0.1: Null-safe — ctx may be nullptr when no native engine.
+    final ctx = engineService.ctx;
+    if (ctx != nullptr) {
+      engineService.bindings?.cancelExport(ctx);
+    }
     setState(() {
       _isExporting = false;
       _exportProgress = 0.0;
@@ -524,7 +607,10 @@ class _ExportDialogState extends State<ExportDialog> {
         ),
         const SizedBox(height: 8),
         Text(
-          '${resWidth}x$resHeight • $_fps FPS • $_nativeCodecName',
+          // v1.0.0: Audio-only exports hide the misleading "0×0 • 0 FPS" line.
+          _isAudioOnly
+              ? 'Audio only • $_nativeCodecName'
+              : '${resWidth}x$resHeight • $_fps FPS • $_nativeCodecName',
           style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
         ),
         const SizedBox(height: 16),
@@ -557,7 +643,12 @@ class _ExportDialogState extends State<ExportDialog> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              'Frame ${(_exportProgress * widget.controller.durationMs / 1000 * _fps).toInt()} / ${(widget.controller.durationMs / 1000 * _fps).toInt()}',
+              // v1.0.0: Audio-only exports show mm:ss progress instead of
+              // "Frame X / N" (the FPS field is repurposed for kbps in MP3
+              // mode, so the frame formula would be meaningless).
+              _isAudioOnly
+                  ? _formatTime(_exportProgress * widget.controller.durationMs)
+                  : 'Frame ${(_exportProgress * widget.controller.durationMs / 1000 * _fps).toInt()} / ${(widget.controller.durationMs / 1000 * _fps).toInt()}',
               style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
             ),
             if (_exportFileSizeBytes > 0)
@@ -677,12 +768,16 @@ class _ExportDialogState extends State<ExportDialog> {
                 const Icon(Icons.aspect_ratio, color: AppTheme.accent, size: 16),
                 const SizedBox(width: 8),
                 Text(
-                  '$_aspectRatioLabel aspect ratio',
+                  _selectedFormat == 'MP3'
+                      ? 'Audio-only export (no video)'
+                      : '$_aspectRatioLabel aspect ratio',
                   style: const TextStyle(color: AppTheme.textMain, fontSize: 12, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
                 Text(
-                  '${resWidth}x$resHeight',
+                  _selectedFormat == 'MP3'
+                      ? '44.1 kHz • Stereo'
+                      : '${resWidth}x$resHeight',
                   style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontFamily: 'monospace'),
                 ),
               ],
@@ -871,7 +966,7 @@ class ExportPreset {
   final int fps;
   final String format;
   final String codec;
-  final int bitrateMbps;
+  final double bitrateMbps;
   final bool includeAudio;
   final String description;
 

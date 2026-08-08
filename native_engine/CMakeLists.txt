@@ -136,19 +136,38 @@ add_library(ghita_engine SHARED
     ${ENGINE_HEADERS}
 )
 
-# v0.8.0: Copy the FFmpeg runtime DLLs next to the engine DLL so development
-# runs (flutter run -d windows) resolve them without relying on PATH.
-if(WIN32 AND DEFINED MSYS64_FFMPEG)
-    file(GLOB FFMPEG_RUNTIME_DLLS
-        "${MSYS64_FFMPEG}/bin/av*.dll"
-        "${MSYS64_FFMPEG}/bin/sw*.dll")
-    foreach(dll ${FFMPEG_RUNTIME_DLLS})
-        add_custom_command(TARGET ghita_engine POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:ghita_engine>"
-            COMMENT "Copying FFmpeg runtime DLL: ${dll}")
-    endforeach()
-    # Expose the runtime DLL directory for the Flutter Windows runner.
-    set(GHITA_FFMPEG_BIN_DIR "${MSYS64_FFMPEG}/bin" CACHE INTERNAL "FFmpeg runtime DLL directory")
+# v0.8.0 + v1.0.1: Copy the FFmpeg runtime DLLs next to the engine DLL so
+# development runs (flutter run -d windows) resolve them without relying on
+# PATH, and expose the directory so the Flutter Windows runner bundles them
+# into the Release output.
+# v1.0.1: This must ALSO run for MSVC builds. Previously only the MinGW path
+# set GHITA_FFMPEG_BIN_DIR, so MSVC Release builds shipped without the FFmpeg
+# DLLs — the engine DLL failed to load, the app silently fell back to Demo
+# Mode, and (in v1.0.0) stayed stuck on the loading shell with nothing
+# importable.
+if(WIN32)
+    if(DEFINED MSYS64_FFMPEG)
+        # MinGW build — msys64 MinGW FFmpeg shares the CRT with the engine.
+        set(GHITA_FFMPEG_BIN_DIR "${MSYS64_FFMPEG}/bin")
+    elseif(DEFINED VCPKG_INSTALLED AND EXISTS "${VCPKG_INSTALLED}/bin")
+        # MSVC build (the Flutter Windows toolchain) — vcpkg FFmpeg DLLs use
+        # the MSVC CRT (matches the engine) and are self-contained (no extra
+        # MinGW runtime dependencies like libbluray/libgnutls).
+        set(GHITA_FFMPEG_BIN_DIR "${VCPKG_INSTALLED}/bin")
+    else()
+        set(GHITA_FFMPEG_BIN_DIR "")
+    endif()
+    set(GHITA_FFMPEG_BIN_DIR "${GHITA_FFMPEG_BIN_DIR}" CACHE INTERNAL "FFmpeg runtime DLL directory")
+    if(GHITA_FFMPEG_BIN_DIR)
+        file(GLOB FFMPEG_RUNTIME_DLLS
+            "${GHITA_FFMPEG_BIN_DIR}/av*.dll"
+            "${GHITA_FFMPEG_BIN_DIR}/sw*.dll")
+        foreach(dll ${FFMPEG_RUNTIME_DLLS})
+            add_custom_command(TARGET ghita_engine POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:ghita_engine>"
+                COMMENT "Copying FFmpeg runtime DLL: ${dll}")
+        endforeach()
+    endif()
 endif()
 
 # v0.8.0: Statically link the C++ runtime on MinGW. The engine DLL must not
@@ -208,6 +227,18 @@ if(BUILD_TESTING)
 
   add_executable(native_engine_test test/native_engine_self_test.cpp)
   target_link_libraries(native_engine_test PRIVATE ghita_engine_static)
+  # v1.0.0e (CI fix): when FFmpeg is detected via pkg-config (macOS/Linux),
+  # FFMPEG_INCLUDE_DIRS is empty — the include dirs live on the
+  # PkgConfig::* IMPORTED targets, whose interface does NOT propagate to the
+  # test executable through a PRIVATE link on the static lib. Without this,
+  # the macOS CI build failed with "libavcodec/avcodec.h file not found"
+  # while compiling native_engine_self_test.cpp.
+  if(FFMPEG_INCLUDE_DIRS)
+      target_include_directories(native_engine_test PRIVATE ${FFMPEG_INCLUDE_DIRS})
+  endif()
+  if(FFMPEG_LIBS)
+      target_link_libraries(native_engine_test PRIVATE ${FFMPEG_LIBS})
+  endif()
   add_test(NAME native_engine_self_test COMMAND native_engine_test)
 
   if(WIN32)

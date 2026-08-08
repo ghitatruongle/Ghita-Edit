@@ -22,6 +22,8 @@ class EditorController extends ChangeNotifier {
   final ProjectService projectService = ProjectService();
 
   bool _disposed = false;
+  bool _initComplete = false;
+  bool _autoSaveInProgress = false;
   String _statusMessage = 'Initializing...';
   Timer? _autoSaveTimer;
 
@@ -60,6 +62,7 @@ class EditorController extends ChangeNotifier {
 
   String get statusMessage => _statusMessage;
   bool get isEngineNativeAvailable => _engine.isNativeLibraryLoaded; // Check if native library loaded successfully
+  bool get isInitComplete => _initComplete;
 
   // --- Clipboard ---
   Clip? _clipboardClip;
@@ -94,7 +97,14 @@ class EditorController extends ChangeNotifier {
   }
 
   void _onEngineTick() {
-    if (!_disposed) notifyListeners();
+    if (_disposed) return;
+    // v1.0.2: Sync the controller playhead from the engine tick. Previously
+    // this only forwarded the notification — _positionMs stayed 0 until the
+    // user manually seeked, so the timeline playhead appeared frozen while
+    // the engine position advanced (verified: engine reached 9907ms while
+    // controller.positionMs remained 0).
+    _positionMs = _engine.positionMs;
+    notifyListeners();
   }
 
   /// Initialize the native engine asynchronously.
@@ -103,22 +113,25 @@ class EditorController extends ChangeNotifier {
     try {
       await _engine.initialize();
       if (_disposed) return;
-      
+
       // Check if engine is actually ready or if we're in demo mode
       if (!_engine.isNativeLibraryLoaded || !isEngineReady) {
         _statusMessage = 'Native engine unavailable (Demo Mode - limited features)';
         // v0.7.8: Autosave must run in every mode — losing a project in
         // Demo Mode is just as bad as with the engine present
         _startAutoSave();
+        _initComplete = true;
         notifyListeners();
         return;
       }
       _statusMessage = 'Engine ready • v$flutterVersion';
       _startAutoSave();
+      _initComplete = true;
       notifyListeners();
     } catch (e, st) {
       if (!_disposed) {
         _statusMessage = 'Error: $e\n$st';
+        _initComplete = true;
         notifyListeners();
       }
     }
@@ -178,11 +191,20 @@ class EditorController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // v1.0.3: Noise suppression / "làm rõ âm thanh" — wires the DAW toggle to
+  // the native mixer.
+  void setNoiseSuppress(bool enabled) {
+    if (_disposed) return;
+    if (_engine.isReady) _engine.setNoiseSuppress(enabled);
+    notifyListeners();
+  }
+
   void setFilter(int filterType, double intensity) {
     if (_disposed) return;
     // v0.4.5: Extended filter range 0-10 (was 0-4)
     // v0.8.0: Extended to 0-20 (VHS/Glitch/Vignette/Grain/...).
-    final safeType = filterType.clamp(0, 20);
+    // v1.0.2: Extended to 0-22 (Skin Retouch 21, Chroma Key 22).
+    final safeType = filterType.clamp(0, 22);
     final safeIntensity = intensity.clamp(0.0, 1.0);
     _activeFilterType = safeType;
     _filterIntensity = safeIntensity;
@@ -333,6 +355,16 @@ class EditorController extends ChangeNotifier {
 
       final fileName = basename(path);
       final fileExtension = extension(fileName).toLowerCase().replaceFirst('.', '');
+
+      // v1.0.2: Surface a clear warning when the file is gone (deleted or
+      // moved between picking and import) instead of silently importing a
+      // placeholder that cannot decode. The clip is still added so the
+      // timeline stays usable — the engine probe below degrades gracefully.
+      final fileExists = File(path).existsSync();
+      if (!fileExists) {
+        _statusMessage = 'Warning: file not found — $fileName (placeholder)';
+        notifyListeners();
+      }
 
       // Determine clip type from fileExtension
       ClipType clipType;
@@ -504,8 +536,8 @@ class EditorController extends ChangeNotifier {
   /// Remove a track dynamically by ID (v0.3.5).
   void removeTrack(String trackId) {
     if (_disposed) return;
-    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
-    if (track.id.isEmpty) return;
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
     final cmd = RemoveTrackCommand(track: track);
     commandHistory.execute(cmd, project);
     _statusMessage = 'Removed track: ${track.name}';
@@ -517,8 +549,8 @@ class EditorController extends ChangeNotifier {
     if (_disposed) return;
     final track = project.trackForClip(clipId);
     if (track == null) return;
-    final clip = track.clips.firstWhere((c) => c.id == clipId, orElse: () => Clip(id: '', sourceFilePath: '', displayName: '', timelineStartMs: 0, durationMs: 0));
-    if (clip.id.isEmpty) return;
+    final clip = track.clips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
     final cmd = TrimClipCommand(trackId: track.id, clipId: clipId, trimStart: true, newBoundaryMs: newStartMs);
     commandHistory.execute(cmd, project);
     notifyListeners();
@@ -529,8 +561,8 @@ class EditorController extends ChangeNotifier {
     if (_disposed) return;
     final track = project.trackForClip(clipId);
     if (track == null) return;
-    final clip = track.clips.firstWhere((c) => c.id == clipId, orElse: () => Clip(id: '', sourceFilePath: '', displayName: '', timelineStartMs: 0, durationMs: 0));
-    if (clip.id.isEmpty) return;
+    final clip = track.clips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
     final cmd = TrimClipCommand(trackId: track.id, clipId: clipId, trimStart: false, newBoundaryMs: newEndMs);
     commandHistory.execute(cmd, project);
     notifyListeners();
@@ -591,8 +623,8 @@ class EditorController extends ChangeNotifier {
   /// Set track mute state.
   void setTrackMute(String trackId, bool muted) {
     if (_disposed) return;
-    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
-    if (track.id.isEmpty) return;
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
     track.isMuted = muted;
     // v0.8.0: Mirror to the native mixer (silences the track in preview/export).
     _syncTrackStateToEngine(track);
@@ -603,8 +635,8 @@ class EditorController extends ChangeNotifier {
   /// Set track visibility.
   void setTrackVisible(String trackId, bool visible) {
     if (_disposed) return;
-    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
-    if (track.id.isEmpty) return;
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
     track.isVisible = visible;
     // v0.8.0: Mirror to the native renderer (hides the track in preview).
     _syncTrackStateToEngine(track);
@@ -614,8 +646,8 @@ class EditorController extends ChangeNotifier {
   /// Set track lock state.
   void setTrackLock(String trackId, bool locked) {
     if (_disposed) return;
-    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
-    if (track.id.isEmpty) return;
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
     track.isLocked = locked;
     notifyListeners();
   }
@@ -623,8 +655,8 @@ class EditorController extends ChangeNotifier {
   /// Set track volume.
   void setTrackVolume(String trackId, double volume) {
     if (_disposed) return;
-    final track = project.tracks.firstWhere((t) => t.id == trackId, orElse: () => Track(id: '', name: '', type: TrackType.video));
-    if (track.id.isEmpty) return;
+    final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    if (track == null) return;
     track.volume = volume.clamp(0.0, 2.0);
     // v0.8.0: Mirror to the native mixer.
     _syncTrackStateToEngine(track);
@@ -641,8 +673,13 @@ class EditorController extends ChangeNotifier {
     engine.setTrackState(idx, muted: track.isMuted, visible: track.isVisible, volume: track.volume);
   }
 
-  /// v0.8.0: Update per-clip color correction (model + native mirror).
+  /// v0.8.0 → v1.0.0: Update per-clip color correction.
   /// All values are -1.0..1.0; the engine applies them after the filter.
+  /// v1.0.0: Now UNDOABLE — routes through ChangeClipColorCorrectionCommand
+  /// (one undo entry per drag gesture via _propertyGestureCounter). Previously
+  /// this mutated the clip directly, bypassing the command history, so color
+  /// edits could never be undone. Unspecified fields keep the clip's current
+  /// value so the command always carries the full 8-tuple.
   void setClipColorCorrection(
     String clipId, {
     double? exposure,
@@ -655,22 +692,110 @@ class EditorController extends ChangeNotifier {
     double? shadows,
   }) {
     if (_disposed) return;
-    final track = project.trackForClip(clipId);
-    if (track == null) return;
-    final clip = track.clips.firstWhere(
-      (c) => c.id == clipId,
-      orElse: () => Clip(id: '', sourceFilePath: '', displayName: '', timelineStartMs: 0, durationMs: 0),
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    commandHistory.execute(
+      ChangeClipColorCorrectionCommand(
+        clipId: clipId,
+        newExposure: exposure ?? clip.colorExposure,
+        newContrast: contrast ?? clip.colorContrast,
+        newHighlights: highlights ?? clip.colorHighlights,
+        newShadows: shadows ?? clip.colorShadows,
+        newTemperature: temperature ?? clip.colorTemperature,
+        newTint: tint ?? clip.colorTint,
+        newVibrance: vibrance ?? clip.colorVibrance,
+        newSaturation: saturation ?? clip.colorSaturation,
+        gestureId: _propertyGestureCounter,
+      ),
+      project,
     );
-    if (clip.id.isEmpty) return;
-    if (exposure != null) clip.colorExposure = exposure;
-    if (contrast != null) clip.colorContrast = contrast;
-    if (saturation != null) clip.colorSaturation = saturation;
-    if (temperature != null) clip.colorTemperature = temperature;
-    if (tint != null) clip.colorTint = tint;
-    if (vibrance != null) clip.colorVibrance = vibrance;
-    if (highlights != null) clip.colorHighlights = highlights;
-    if (shadows != null) clip.colorShadows = shadows;
-    _markEngineSync();
+    notifyListeners();
+  }
+
+  /// v1.0.0: Update per-clip text-overlay properties — UNDOABLE via
+  /// ChangeClipTextCommand. A whole typing session coalesces into one undo
+  /// entry. The inspector rich-text editor previously mutated clip fields
+  /// directly (not undoable). Unspecified fields keep the clip's current value.
+  void setClipText(
+    String clipId, {
+    String? content,
+    String? font,
+    double? fontSize,
+    int? colorValue,
+    bool? bold,
+    bool? italic,
+    bool? underline,
+    double? strokeWidth,
+    int? strokeColorValue,
+    bool? shadow,
+    int? bgColorValue,
+    int? alignment,
+    bool? gradient,
+  }) {
+    if (_disposed) return;
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    commandHistory.execute(
+      ChangeClipTextCommand(
+        clipId: clipId,
+        newContent: content ?? clip.textContent,
+        newFont: font ?? clip.textFont,
+        newFontSize: fontSize ?? clip.textFontSize,
+        newColorValue: colorValue ?? clip.textColorValue,
+        newBold: bold ?? clip.textBold,
+        newItalic: italic ?? clip.textItalic,
+        newUnderline: underline ?? clip.textUnderline,
+        newStrokeWidth: strokeWidth ?? clip.textStrokeWidth,
+        newStrokeColorValue: strokeColorValue ?? clip.textStrokeColorValue,
+        newShadow: shadow ?? clip.textShadow,
+        newBgColorValue: bgColorValue ?? clip.textBackgroundColorValue,
+        newAlignment: alignment ?? clip.textAlignment,
+        newGradient: gradient ?? clip.textGradient,
+      ),
+      project,
+    );
+    notifyListeners();
+  }
+
+  // v1.0.0: Clip grouping (Ctrl+G / Ctrl+Shift+G). The Clip model already
+  // carries a groupId field; these methods give it real behavior — grouped
+  // clips share an id so the UI can move/delete them together.
+  /// Group the currently selected clips (requires 2+).
+  void groupSelectedClips() {
+    if (_disposed) return;
+    final selected = project.selectedClips;
+    if (selected.length < 2) {
+      _statusMessage = 'Select 2+ clips to group';
+      notifyListeners();
+      return;
+    }
+    final gid = 'group_${DateTime.now().millisecondsSinceEpoch}';
+    for (final clip in selected) {
+      clip.groupId = gid;
+    }
+    _statusMessage = 'Grouped ${selected.length} clips';
+    notifyListeners();
+  }
+
+  /// Ungroup every group touched by the current selection.
+  void ungroupSelectedClips() {
+    if (_disposed) return;
+    final selected = project.selectedClips;
+    final groupIds =
+        selected.where((c) => c.groupId != null).map((c) => c.groupId!).toSet();
+    if (groupIds.isEmpty) {
+      _statusMessage = 'No grouped clips selected';
+      notifyListeners();
+      return;
+    }
+    var count = 0;
+    for (final clip in project.allClips) {
+      if (clip.groupId != null && groupIds.contains(clip.groupId)) {
+        clip.groupId = null;
+        count++;
+      }
+    }
+    _statusMessage = 'Ungrouped $count clips';
     notifyListeners();
   }
 
@@ -748,7 +873,8 @@ class EditorController extends ChangeNotifier {
   void setClipFilter(String clipId, int filterType, double intensity) {
     if (_disposed) return;
     // v0.8.0: Range extended to 0-20 (was 0-10).
-    final safeType = filterType.clamp(0, 20);
+    // v1.0.2: Extended to 0-22 (Skin Retouch 21, Chroma Key 22).
+    final safeType = filterType.clamp(0, 22);
     final safeIntensity = intensity.clamp(0.0, 1.0);
     commandHistory.execute(
       ChangeFilterCommand(
@@ -765,16 +891,22 @@ class EditorController extends ChangeNotifier {
 
   void undo() {
     if (_disposed) return;
+    // v1.0.1: Capture the description BEFORE undoing — after undo the
+    // stack top changes and lastUndoDescription would report the wrong item.
+    final undoneDesc = commandHistory.lastUndoDescription;
     if (commandHistory.undo(project)) {
-      _statusMessage = 'Undo: ${commandHistory.lastUndoDescription ?? ""}';
+      _statusMessage = 'Undo: ${undoneDesc ?? ""}';
       notifyListeners();
     }
   }
 
   void redo() {
     if (_disposed) return;
+    // v1.0.1: Capture the description BEFORE redoing — after redo the
+    // stack top changes and lastRedoDescription would report the wrong item.
+    final redoneDesc = commandHistory.lastRedoDescription;
     if (commandHistory.redo(project)) {
-      _statusMessage = 'Redo: ${commandHistory.lastRedoDescription ?? ""}';
+      _statusMessage = 'Redo: ${redoneDesc ?? ""}';
       notifyListeners();
     }
   }
@@ -918,6 +1050,16 @@ class EditorController extends ChangeNotifier {
       return true;
     }
 
+    // Ctrl+G = Group selected clips — v1.0.0: advertised but never handled.
+    if (ctrl && key == LogicalKeyboardKey.keyG) {
+      if (HardwareKeyboard.instance.isShiftPressed) {
+        ungroupSelectedClips();
+      } else {
+        groupSelectedClips();
+      }
+      return true;
+    }
+
     // Ctrl+V = Paste
     if (ctrl && key == LogicalKeyboardKey.keyV) {
       pasteClip();
@@ -1019,16 +1161,25 @@ class EditorController extends ChangeNotifier {
 
   void _startAutoSave() {
     _autoSaveTimer?.cancel();
+    // v1.0.1: Track in-flight state so a slow auto-save (>60s) doesn't
+    // overlap with the next tick — two concurrent saves could race on
+    // _cleanOldAutoSaves and produce more than the 5-file cap.
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
-      if (!_disposed && project.allClips.isNotEmpty) {
-        final dir = await _autoSaveBaseDir();
-        if (!_disposed) {
-          try {
-            await projectService.autoSave(project, dir);
-          } catch (e) {
-            debugPrint('[EditorController] Auto-save failed: $e');
+      if (_autoSaveInProgress) return; // Skip this tick, previous still running
+      _autoSaveInProgress = true;
+      try {
+        if (!_disposed && project.allClips.isNotEmpty) {
+          final dir = await _autoSaveBaseDir();
+          if (!_disposed) {
+            try {
+              await projectService.autoSave(project, dir);
+            } catch (e) {
+              debugPrint('[EditorController] Auto-save failed: $e');
+            }
           }
         }
+      } finally {
+        _autoSaveInProgress = false;
       }
     });
   }
@@ -1052,8 +1203,10 @@ class EditorController extends ChangeNotifier {
     _engine.removeListener(_onEngineTick);
     commandHistory.removeListener(_onCommandHistoryChanged);
     commandHistory.dispose();
-    super.dispose();
+    // v1.0.1: Dispose the engine BEFORE calling super.dispose() so any
+    // final notifications from the engine are still delivered to listeners.
     _engine.dispose();
+    super.dispose();
   }
 }
 

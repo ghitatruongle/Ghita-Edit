@@ -140,11 +140,13 @@ class Project {
 
   /// Select a range of clips between two clip IDs (Shift+click range select).
   void selectRange(String fromClipId, String toClipId) {
-    deselectAll();
+    // v1.0.1: Validate IDs BEFORE deselecting — previously a bad ID
+    // silently cleared the existing selection and left nothing selected.
     final allClips = _allClipsSortedByTime;
     final fromIdx = allClips.indexWhere((c) => c.id == fromClipId);
     final toIdx = allClips.indexWhere((c) => c.id == toClipId);
     if (fromIdx == -1 || toIdx == -1) return;
+    deselectAll();
     final start = fromIdx < toIdx ? fromIdx : toIdx;
     final end = fromIdx < toIdx ? toIdx : fromIdx;
     for (int i = start; i <= end; i++) {
@@ -197,6 +199,9 @@ class Project {
     final index = tracks.indexWhere((t) => t.id == trackId);
     if (index != -1) {
       tracks.removeAt(index);
+      // v1.0.1: Prune selection IDs of clips that were on the removed track
+      // — otherwise stale IDs linger and selection state becomes inconsistent.
+      pruneSelection();
       markModified();
       return true;
     }
@@ -213,6 +218,10 @@ class Project {
         deleted.add(clip);
       }
     }
+    // v1.0.1: Prune stale selection IDs — after deletion the IDs still
+    // linger in _selectedClipIds, making hasClipboard/multi-select state
+    // inconsistent (count returns 0 but set is non-empty).
+    pruneSelection();
     return deleted;
   }
 
@@ -235,12 +244,17 @@ class Project {
 
   factory Project.fromJson(Map<String, dynamic> json) => Project(
         name: json['name'] as String? ?? 'Untitled',
-        version: json['version'] as String? ?? '0.3.0',
-        createdAt: json['createdAt'] != null
-            ? DateTime.parse(json['createdAt'] as String)
+        // v1.0.0: legacy project files without a version field used to be
+        // stamped '0.3.0' (stale). Stamp the current app version instead so
+        // the project's version reflects when it was loaded, not 0.3.0.
+        version: json['version'] as String? ?? flutterVersion,
+        // v1.0.1: Defensive parsing — a corrupt date string would throw
+        // TypeError here and fail the whole load. Fall back to null.
+        createdAt: json['createdAt'] is String
+            ? DateTime.tryParse(json['createdAt'] as String)
             : null,
-        modifiedAt: json['modifiedAt'] != null
-            ? DateTime.parse(json['modifiedAt'] as String)
+        modifiedAt: json['modifiedAt'] is String
+            ? DateTime.tryParse(json['modifiedAt'] as String)
             : null,
         tracks: json['tracks'] != null
             ? (json['tracks'] as List)

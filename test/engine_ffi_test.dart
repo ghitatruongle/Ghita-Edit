@@ -85,13 +85,14 @@ void main() {
     });
 
     // v0.8.0: Filter range extended to 0-20 (was 0-10).
-    test('invalid filter type > 20 is clamped', () {
+    // v1.0.2: Extended to 0-22 (Skin Retouch 21, Chroma Key 22).
+    test('invalid filter type > 22 is clamped', () {
       controller.setFilter(99, 0.5);
-      expect(controller.activeFilterType, equals(20));
+      expect(controller.activeFilterType, equals(22));
     });
 
-    test('valid types 0-20 are accepted', () {
-      for (final t in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 17, 20]) {
+    test('valid types 0-22 are accepted', () {
+      for (final t in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 17, 20, 21, 22]) {
         controller.setFilter(t, 0.5);
         expect(controller.activeFilterType, equals(t), reason: 'type $t');
       }
@@ -379,6 +380,63 @@ void main() {
       expect(clip.splitAt(0), isNull);
       expect(clip.splitAt(10000), isNull);
       expect(clip.splitAt(15000), isNull);
+    });
+
+    test('splitAt at speed partitions the source range exactly', () {
+      // v1.0.1: with speed != 1.0 the halves must cover speed * duration of
+      // source material, and the two halves must partition the original
+      // source range exactly (no ±1ms drift on repeated splits).
+      final clip = Clip(
+        id: 'test',
+        sourceFilePath: '/path/test.mp4',
+        displayName: 'test.mp4',
+        timelineStartMs: 0,
+        durationMs: 1000,
+        sourceInMs: 100,
+        sourceOutMs: 1600, // 1000ms timeline at 1.5x → 1500ms of source
+        speed: 1.5,
+      );
+
+      final parts = clip.splitAt(333);
+      expect(parts, isNotNull);
+      final left = parts![0];
+      final right = parts[1];
+
+      // Halves are contiguous — left source-out == right source-in.
+      expect(left.sourceOutMs, equals(right.sourceInMs));
+      // The right half never extends past the total source span.
+      expect(right.sourceOutMs, equals(clip.sourceOutMs));
+      // Left half covers round(333 * 1.5) = 500ms of source.
+      expect(left.sourceOutMs - left.sourceInMs, equals(500));
+
+      // Repeated splits never drift past the media end.
+      final again = right.splitAt(400);
+      expect(again, isNotNull);
+      expect(again![1].sourceOutMs, lessThanOrEqualTo(clip.sourceOutMs));
+    });
+
+    test('splitAt at 2x speed covers twice the source per timeline ms', () {
+      final clip = Clip(
+        id: 'test',
+        sourceFilePath: '/path/test.mp4',
+        displayName: 'test.mp4',
+        timelineStartMs: 0,
+        durationMs: 5000,
+        sourceInMs: 0,
+        sourceOutMs: 10000, // 2x speed → 10s of source in 5s of timeline
+        speed: 2.0,
+      );
+
+      final parts = clip.splitAt(2500);
+      expect(parts, isNotNull);
+      // Mid-point split: each half covers 5000ms of source.
+      expect(parts![0].sourceOutMs, equals(5000));
+      expect(parts[1].sourceInMs, equals(5000));
+      expect(parts[1].sourceOutMs, equals(10000));
+      // Timeline halves stay at the split position.
+      expect(parts[0].durationMs, equals(2500));
+      expect(parts[1].durationMs, equals(2500));
+      expect(parts[1].timelineStartMs, equals(2500));
     });
 
     test('toJson/fromJson round-trips correctly', () {
@@ -919,6 +977,82 @@ void main() {
       // Redo → overlap resolution again
       controller.redo();
       expect(first.timelineStartMs, equals(8000));
+    });
+
+    test('v1.0.1: addClipAt between two adjacent clips never stacks them', () {
+      // Inserting a clip into the middle of two adjacent clips used to move
+      // BOTH clips to exactly newClip.timelineEndMs, leaving them overlapping
+      // each other at the same position. The cascade must place them
+      // sequentially so the timeline stays non-overlapping.
+      final track = Track(id: 't', name: 't', type: TrackType.video);
+      final a = Clip(
+        id: 'a', sourceFilePath: '/a.mp4', displayName: 'a',
+        timelineStartMs: 0, durationMs: 100,
+      );
+      final b = Clip(
+        id: 'b', sourceFilePath: '/b.mp4', displayName: 'b',
+        timelineStartMs: 100, durationMs: 100,
+      );
+      final inserted = Clip(
+        id: 'c', sourceFilePath: '/c.mp4', displayName: 'c',
+        timelineStartMs: 50, durationMs: 100,
+      );
+      track.clips.addAll([a, b]);
+
+      track.addClipAt(inserted, 50);
+
+      // Inserted clip keeps its requested position.
+      expect(inserted.timelineStartMs, equals(50));
+      // The adjacent clips are pushed past the new clip, in order.
+      expect(a.timelineStartMs, equals(150));
+      expect(b.timelineStartMs, equals(250));
+      // No pair of clips overlaps.
+      for (final clip in track.clips) {
+        for (final other in track.clips) {
+          if (identical(clip, other)) continue;
+          final overlaps = clip.timelineStartMs < other.timelineEndMs &&
+              clip.timelineEndMs > other.timelineStartMs;
+          expect(overlaps, isFalse,
+              reason: '${clip.id} overlaps ${other.id}');
+        }
+      }
+    });
+
+    test('v1.0.1: shifted clip never collides with a clip that starts at '
+        'the insertion end', () {
+      // A@0-100 overlaps the new clip; B@150-250 starts EXACTLY at
+      // newClip.timelineEndMs (touching, so it is NOT overlapping and must
+      // not move). The shifted A must land past B, not on top of it.
+      final track = Track(id: 't', name: 't', type: TrackType.video);
+      final a = Clip(
+        id: 'a', sourceFilePath: '/a.mp4', displayName: 'a',
+        timelineStartMs: 0, durationMs: 100,
+      );
+      final b = Clip(
+        id: 'b', sourceFilePath: '/b.mp4', displayName: 'b',
+        timelineStartMs: 150, durationMs: 100,
+      );
+      final inserted = Clip(
+        id: 'c', sourceFilePath: '/c.mp4', displayName: 'c',
+        timelineStartMs: 50, durationMs: 100,
+      );
+      track.clips.addAll([a, b]);
+
+      track.addClipAt(inserted, 50);
+
+      // The touching clip keeps its position; the shifted clip jumps past it.
+      expect(b.timelineStartMs, equals(150));
+      expect(a.timelineStartMs, equals(250));
+      // No pair of clips overlaps.
+      for (final clip in track.clips) {
+        for (final other in track.clips) {
+          if (identical(clip, other)) continue;
+          final overlaps = clip.timelineStartMs < other.timelineEndMs &&
+              clip.timelineEndMs > other.timelineStartMs;
+          expect(overlaps, isFalse,
+              reason: '${clip.id} overlaps ${other.id}');
+        }
+      }
     });
   });
 

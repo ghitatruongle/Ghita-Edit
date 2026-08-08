@@ -195,6 +195,10 @@ GHITA_API int ghita_engine_has_clip(GhitaEngineContext* ctx, int clip_id);
 /** @brief Enables/disables audio preview during playback (1/0). */
 GHITA_API void ghita_engine_set_audio_preview_enabled(GhitaEngineContext* ctx, int enabled);
 
+/** @brief v1.0.3: Enables/disables noise suppression (DC blocker) in the
+ *  preview audio mix ("làm rõ âm thanh"). 1/0. */
+GHITA_API void ghita_engine_set_noise_suppress(GhitaEngineContext* ctx, int enabled);
+
 // ========== v1.0.0 New & Extended API ==========
 
 /** @brief Applies global color correction parameters. */
@@ -218,6 +222,14 @@ GHITA_API void ghita_engine_set_filter_preset(GhitaEngineContext* ctx, int clip_
 
 /** @brief Extracts audio waveform peak amplitudes. */
 GHITA_API bool ghita_engine_get_audio_waveform_peaks(GhitaEngineContext* ctx, float* out_samples, int sample_count);
+
+/** @brief Mixes decoded audio from timeline clips over [start_ms, end_ms)
+ *  into out_samples (interleaved stereo float @ 44100 Hz, clipped [-1,1]).
+ *  Returns true when at least one clip contributed real decoded audio.
+ *  This is the same mixer the audio preview loop plays through — unlike
+ *  get_audio_waveform it reads the TIMELINE clip decoders, not the legacy
+ *  single loadMedia() decoder, so it cannot report a synthetic fallback. */
+GHITA_API bool ghita_engine_mix_audio_window(GhitaEngineContext* ctx, int64_t start_ms, int64_t end_ms, float* out_samples, int sample_count);
 
 #ifdef __cplusplus
 }

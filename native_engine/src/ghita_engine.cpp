@@ -340,12 +340,15 @@ void applySharpen(uint8_t* buf, int width, int height, float intensity) {
     for (int y = 1; y < height - 1; ++y) {
         for (int x = 1; x < width - 1; ++x) {
             int idx = (y * width + x) * 4;
+            // v1.0.0: explicit float casts — MSVC C4244 warned about implicit
+            // int→float promotion when assigning the uint8_t sample value.
             for (int c = 0; c < 3; ++c) {
-                const float center = copy[idx + c];
-                const float sum = copy[((y - 1) * width + x) * 4 + c] +
-                                  copy[((y + 1) * width + x) * 4 + c] +
-                                  copy[(y * width + x - 1) * 4 + c] +
-                                  copy[(y * width + x + 1) * 4 + c];
+                const float center  = static_cast<float>(copy[idx + c]);
+                const float top     = static_cast<float>(copy[((y - 1) * width + x) * 4 + c]);
+                const float bottom  = static_cast<float>(copy[((y + 1) * width + x) * 4 + c]);
+                const float left    = static_cast<float>(copy[(y * width + x - 1) * 4 + c]);
+                const float right   = static_cast<float>(copy[(y * width + x + 1) * 4 + c]);
+                const float sum = top + bottom + left + right;
                 const float sharpened = center + amount * (center - sum * 0.25f);
                 buf[idx + c] = static_cast<uint8_t>(std::clamp(sharpened, 0.0f, 255.0f));
             }
@@ -590,6 +593,14 @@ RealFFmpegMediaDecoder::RealFFmpegMediaDecoder()
 #if LIBAVFORMAT_VERSION_INT < AV_VERSION_INT(58, 9, 100)
     av_register_all();
 #endif
+    // v1.0.1: Only surface real errors from FFmpeg. The mp3 decoder warns
+    // 'Could not update timestamps for skipped samples' on every seek+
+    // flush+decode cycle (the mixer re-decodes a 100ms window per chunk and
+    // the waveform path re-seeks from the start on every fetch), and
+    // swscaler warns about the deprecated pixel format on every converted
+    // frame — both are benign AV_LOG_WARNING noise that spammed the console
+    // thousands of times per minute during preview. Errors are still shown.
+    av_log_set_level(AV_LOG_ERROR);
 #endif
 }
 
@@ -642,7 +653,12 @@ bool RealFFmpegMediaDecoder::extractPcmAudioSamples(float* outSamples, int sampl
     if (!outSamples || sampleCount <= 0) return false;
 
 #ifdef GHITA_HAS_FFMPEG
+    // v1.0.2d: Serve from the pre-decoded PCM cache when available (whole-file
+    // decode at open) — fast, seek-free, and immune to the EOF-cut WAV issue.
     if (m_hasFFmpeg && m_audioCodecCtx) {
+        if (m_pcmCached) {
+            return readPcmFromCache(0, outSamples, sampleCount, volume);
+        }
         return decodeAudioSamples(outSamples, sampleCount, volume);
     }
 #endif
@@ -779,12 +795,20 @@ bool RealFFmpegMediaDecoder::initFFmpegContexts() {
             &m_audioCodecCtx->ch_layout, AV_SAMPLE_FMT_FLT, m_audioCodecCtx->sample_rate,
             &m_audioCodecCtx->ch_layout, m_audioCodecCtx->sample_fmt, m_audioCodecCtx->sample_rate,
             0, nullptr);
-        if (swrRet >= 0 && m_swrCtx) {
-            swr_init(m_swrCtx);
+        // v1.0.2: A failed swr_init leaves a half-initialized context that
+        // decodeAudioSamples would keep calling swr_convert on (UB) — free
+        // and null it so the guards `if (m_swrCtx)` stay honest.
+        if (swrRet < 0 || (m_swrCtx && swr_init(m_swrCtx) < 0)) {
+            swr_free(&m_swrCtx);
         }
     }
 
     // Build media info
+    // v1.0.2: Reset stale metadata from a previous open — otherwise opening
+    // an audio-only file (or one whose init fails) after a video file left
+    // the OLD file's duration/width/height/fps/bitrate behind (MP3 as the
+    // loaded media reported the previous file's duration).
+    m_mediaInfo = MediaInfo{};
     m_mediaInfo.filePath = m_filePath;
     m_mediaInfo.hasVideo = (m_videoStreamIdx >= 0);
     m_mediaInfo.hasAudio = (m_audioStreamIdx >= 0);
@@ -822,19 +846,228 @@ bool RealFFmpegMediaDecoder::initFFmpegContexts() {
         m_mediaInfo.durationMs = 60000;
     }
 
+    // v1.0.2d: Pre-decode PCM/WAV streams into a flat interleaved FLT @ 44100
+    // stereo cache so every later window is served by sample offset — bypassing
+    // the per-window seek that lands the WAV demuxer at EOF (~50%) and returns
+    // silent audio ("rè / lộn xộn"). Non-PCM streams (MP3/AAC) fall through.
+    if (GHITA_HAS_FFMPEG && m_audioCodecCtx &&
+        (m_audioCodecCtx->codec_id == AV_CODEC_ID_PCM_S16LE ||
+         m_audioCodecCtx->codec_id == AV_CODEC_ID_PCM_F32LE)) {
+        pcmCacheAudio();
+    }
+
     return true;
 }
 
 void RealFFmpegMediaDecoder::destroyFFmpegContexts() {
     if (m_swsCtx) { sws_freeContext(m_swsCtx); m_swsCtx = nullptr; }
     if (m_swrCtx) { swr_free(&m_swrCtx); }
+    // v1.0.2: m_mixSwrCtx was never freed — every decoder (re)open leaked one
+    // SwrContext (the LRU clip-decoder cache reopens decoders constantly, so
+    // this accumulated across a session).
+    if (m_mixSwrCtx) { swr_free(&m_mixSwrCtx); }
     if (m_rgbBuffer) { av_free(m_rgbBuffer); m_rgbBuffer = nullptr; }
     if (m_rgbFrame) { av_frame_free(&m_rgbFrame); }
     if (m_frame) { av_frame_free(&m_frame); }
     if (m_packet) { av_packet_free(&m_packet); }
     if (m_videoCodecCtx) { avcodec_free_context(&m_videoCodecCtx); }
     if (m_audioCodecCtx) { avcodec_free_context(&m_audioCodecCtx); }
-    if (m_formatCtx) { avformat_close_input(&m_formatCtx); }
+    // v1.0.2d: drop the PCM direct-reader state with the rest of the resources.
+    m_pcmPath.clear();
+    m_pcmDataOffset = 0;
+    m_pcmDataBytes = 0;
+    m_pcmSrcCh = 0;
+    m_pcmSrcRate = 0;
+    m_pcmSrcBits = 0;
+    m_pcmSrcFloat = false;
+    m_pcmCached = false;
+    // v1.0.3: drop the still-image cache too.
+    m_stillCache.clear();
+    m_stillCacheW = 0;
+    m_stillCacheH = 0;
+}
+
+// ====================================================================
+// PCM CACHE (v1.0.2d → v1.0.3: direct-file reader) — see header comment.
+// ====================================================================
+
+bool RealFFmpegMediaDecoder::pcmCacheAudio() {
+    if (!m_formatCtx || m_audioStreamIdx < 0 || !m_audioCodecCtx) return false;
+    const AVCodecParameters* par = m_formatCtx->streams[m_audioStreamIdx]->codecpar;
+    if (par->format != AV_SAMPLE_FMT_S16 && par->format != AV_SAMPLE_FMT_S16P &&
+        par->format != AV_SAMPLE_FMT_FLT && par->format != AV_SAMPLE_FMT_FLTP) {
+        return false; // only integer/float PCM is byte-addressable
+    }
+
+    // Parse the RIFF container directly: 'fmt ' chunk → format tag / channels /
+    // rate; 'data' chunk → sample byte range. Then every mix window reads the
+    // exact byte range straight from the file — no FFmpeg seek, no RAM cache,
+    // no ~50% EOF cut, no memory cap.
+    std::ifstream f(m_filePath, std::ios::binary);
+    if (!f.is_open()) return false;
+
+    auto read32 = [&f](int64_t at) -> uint32_t {
+        uint8_t b[4];
+        f.clear();
+        f.seekg(at, std::ios::beg);
+        f.read(reinterpret_cast<char*>(b), 4);
+        if (f.gcount() != 4) return 0;
+        return static_cast<uint32_t>(b[0]) | (static_cast<uint32_t>(b[1]) << 8) |
+               (static_cast<uint32_t>(b[2]) << 16) | (static_cast<uint32_t>(b[3]) << 24);
+    };
+    auto read16At = [&](int64_t at) -> uint16_t {
+        uint8_t b[2];
+        f.clear();
+        f.seekg(at, std::ios::beg);
+        f.read(reinterpret_cast<char*>(b), 2);
+        if (f.gcount() != 2) return 0;
+        return static_cast<uint16_t>(b[0]) | (static_cast<uint16_t>(b[1]) << 8);
+    };
+    auto readTag = [&](int64_t at, char* out4) -> bool {
+        f.clear();
+        f.seekg(at, std::ios::beg);
+        f.read(out4, 4);
+        return f.gcount() == 4;
+    };
+    // "RIFF" + size + "WAVE"
+    char riff[4];
+    if (!readTag(0, riff) || std::memcmp(riff, "RIFF", 4) != 0) return false;
+    char wave[4];
+    if (!readTag(8, wave) || std::memcmp(wave, "WAVE", 4) != 0) return false;
+
+    // Walk chunks looking for fmt / data / fact.
+    int64_t pos = 12;
+    const int64_t fileLen = [&]() {
+        f.clear();
+        f.seekg(0, std::ios::end);
+        return static_cast<int64_t>(f.tellg());
+    }();
+
+    int fmtTag = -1;
+    int fmtCh = 0;
+    int fmtRate = 0;
+    int fmtBits = 0;
+    int64_t dataOff = -1;
+    int64_t dataLen = 0;
+
+    while (pos + 8 <= fileLen) {
+        char cid[4];
+        if (!readTag(pos, cid)) break;
+        const uint32_t csize = read32(pos + 4);
+        if (std::memcmp(cid, "fmt ", 4) == 0) {
+            fmtTag = static_cast<int>(read16At(pos + 8));
+            fmtCh = static_cast<int>(read16At(pos + 10));
+            fmtRate = static_cast<int>(read32(pos + 12));
+            fmtBits = static_cast<int>(read16At(pos + 22));
+        } else if (std::memcmp(cid, "data", 4) == 0) {
+            dataOff = pos + 8;
+            dataLen = static_cast<int64_t>(csize);
+        }
+        pos += 8 + csize;
+    }
+    f.close();
+
+    const bool fmtOk = fmtTag == 1 || fmtTag == 3;
+    if (!fmtOk || fmtCh < 1 || fmtCh > 2 || fmtRate <= 0 || dataOff < 0 || dataLen <= 0) {
+        return false;
+    }
+    // For simplicity both tags map to a linear sample grid:
+    //  tag 1 = int16 (PCM), tag 3 = float32 (IEEE FLOAT)
+    const bool isFloat = (fmtTag == 3);
+    const int bytesPerSample = isFloat ? 4 : 2;
+    dataLen = (dataLen / (bytesPerSample * fmtCh)) * bytesPerSample * fmtCh; // frame-align
+
+    m_pcmPath = m_filePath;
+    m_pcmDataOffset = dataOff;
+    m_pcmDataBytes = dataLen;
+    m_pcmSrcCh = fmtCh;
+    m_pcmSrcRate = fmtRate;
+    m_pcmSrcBits = isFloat ? 32 : 16;
+    m_pcmSrcFloat = isFloat;
+    m_pcmCached = true;
+    return true;
+}
+
+bool RealFFmpegMediaDecoder::readPcmFromCache(int64_t startMs, float* outSamples,
+                                               int sampleCount, float volume) {
+    if (!m_pcmCached || !outSamples || sampleCount <= 0) return false;
+    const int dstCh = 2;         // interleaved FLT stereo @ 44100 (mix format)
+    const int framesNeeded = sampleCount / dstCh;
+    std::fill(outSamples, outSamples + sampleCount, 0.0f);
+    if (framesNeeded <= 0) return true;
+
+    // Map timeline ms → source sample index → byte offset in the data chunk.
+    const double srcRate = static_cast<double>(m_pcmSrcRate);
+    const int64_t startFrame = static_cast<int64_t>(startMs / 1000.0 * srcRate);
+    const int64_t bytesPerFrame = static_cast<int64_t>(m_pcmSrcCh) * (m_pcmSrcFloat ? 4 : 2);
+    const int64_t totalFrames = m_pcmDataBytes / bytesPerFrame;
+    if (startFrame < 0 || startFrame >= totalFrames || totalFrames <= 0) {
+        return true; // silence, but valid (window past EOF)
+    }
+
+    // Read the needed source frames (resample to 44100 linearly afterward).
+    const int64_t endFrame = std::min<int64_t>(
+        totalFrames,
+        startFrame + static_cast<int64_t>(std::ceil(
+            static_cast<double>(framesNeeded) * srcRate / 44100.0)) + 1);
+    const int64_t needFrames = endFrame - startFrame;
+    const int64_t byteOff = m_pcmDataOffset + startFrame * bytesPerFrame;
+    const int64_t byteLen = needFrames * bytesPerFrame;
+
+    std::vector<int16_t> i16buf;
+    std::vector<float> f32buf;
+    const void* raw = nullptr;
+    std::ifstream f;
+    if (m_pcmSrcFloat) {
+        f32buf.resize(static_cast<size_t>(byteLen / 4));
+        f.open(m_pcmPath, std::ios::binary);
+        if (!f.is_open()) return false;
+        f.seekg(byteOff, std::ios::beg);
+        f.read(reinterpret_cast<char*>(f32buf.data()), byteLen);
+        if (static_cast<int64_t>(f.gcount()) != byteLen) return true; // short read → silence
+        raw = f32buf.data();
+    } else {
+        i16buf.resize(static_cast<size_t>(byteLen / 2));
+        f.open(m_pcmPath, std::ios::binary);
+        if (!f.is_open()) return false;
+        f.seekg(byteOff, std::ios::beg);
+        f.read(reinterpret_cast<char*>(i16buf.data()), byteLen);
+        if (static_cast<int64_t>(f.gcount()) != byteLen) return true;
+        raw = i16buf.data();
+    }
+
+    const double step = srcRate / 44100.0; // source frames per output frame
+    const float g = volume;
+    for (int i = 0; i < framesNeeded; ++i) {
+        double srcPos = static_cast<double>(i) * step;
+        int64_t sf = static_cast<int64_t>(srcPos);
+        if (sf >= needFrames - 1) sf = needFrames - 1;
+        float frameL = 0.0f, frameR = 0.0f;
+        const auto getSample = [&](int64_t frameIdx, int ch) -> float {
+            if (frameIdx < 0 || frameIdx >= needFrames) return 0.0f;
+            const int64_t sIdx = frameIdx * m_pcmSrcCh + ch;
+            if (m_pcmSrcFloat) {
+                return f32buf[static_cast<size_t>(sIdx)]; // clang-format off
+            } else {
+                return static_cast<float>(i16buf[static_cast<size_t>(sIdx)] / 32768.0f);
+            }
+        };
+        if (m_pcmSrcCh == 1) {
+            const float l0 = getSample(sf, 0), l1 = getSample(sf + 1, 0);
+            const float interp = l0 + static_cast<float>(srcPos - sf) * (l1 - l0);
+            frameL = interp;
+            frameR = interp; // mono duplicate
+        } else {
+            const float l0 = getSample(sf, 0), l1 = getSample(sf + 1, 0);
+            const float r0 = getSample(sf, 1), r1 = getSample(sf + 1, 1);
+            const float t = static_cast<float>(srcPos - sf);
+            frameL = l0 + t * (l1 - l0);
+            frameR = r0 + t * (r1 - r0);
+        }
+        outSamples[i * 2]     = frameL * g;
+        outSamples[i * 2 + 1] = frameR * g;
+    }
+    return true;
 }
 
 bool RealFFmpegMediaDecoder::decodeVideoFrameAt(int64_t timeMs, uint8_t* outBuffer,
@@ -852,35 +1085,90 @@ bool RealFFmpegMediaDecoder::decodeVideoFrameAt(int64_t timeMs, uint8_t* outBuff
     int64_t targetPts = static_cast<int64_t>(targetSec / timeBase);
     if (targetPts < 0) targetPts = 0;
 
-    // Seek to target
-    if (av_seek_frame(m_formatCtx, m_videoStreamIdx, targetPts, AVSEEK_FLAG_BACKWARD) < 0) {
-        return false;
+    // v1.0.3: Detect single-frame streams (images). image2/*pipe demuxers set
+    // nb_frames=0/-1 with a ONE-FRAME stream duration; real videos have many
+    // frames. Anything ≤ 1 frame (or ≤ 40ms) is a still.
+    const int64_t nbFrames = stream->nb_frames;
+    const double streamMs = stream->duration > 0
+        ? stream->duration * av_q2d(stream->time_base) * 1000.0
+        : 0.0;
+    const bool likelyStill = (nbFrames == 1) ||
+                             (stream->duration <= 0 && nbFrames <= 0) ||
+                             (streamMs > 0.0 && streamMs < 100.0) ||
+                             (stream->duration == 1);
+    // v1.0.3: Serve a cached still when the same output size is requested —
+    // image decoders decode once and every later frame request reuses it,
+    // instead of re-seeking the (non-seekable) image demuxer per preview tick.
+    if (likelyStill && !m_stillCache.empty() &&
+        m_stillCacheW == outWidth && m_stillCacheH == outHeight) {
+        std::memcpy(outBuffer, m_stillCache.data(), static_cast<size_t>(outWidth) * outHeight * 4);
+        // Re-apply the filter (cache is stored post-filter for its size match).
+        applyFilterToBuffer(outBuffer, outWidth, outHeight, filterType, filterIntensity);
+        return true;
+    }
+    // Seek to target. Image pipes (mjpeg/png/jpeg pipes) and other
+    // non-seekable demuxers report nb_frames INVALID/DURATION as 1 frame — the
+    // seek fails, and the OLD code turned that into "decode failed" → every
+    // imported image rendered BLACK. On any seek failure rewind to the start;
+    // the pts-gated read loop below still lands on the (single) frame.
+    const int seekRet = av_seek_frame(m_formatCtx, m_videoStreamIdx, targetPts, AVSEEK_FLAG_BACKWARD);
+    if (seekRet < 0) {
+        av_seek_frame(m_formatCtx, m_videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
+        // likelyStill only controls the still-caching path below, NOT whether
+        // decoding proceeds — the last-frame fallback handles stills whose
+        // single frame's pts sits below any targetPts > 0.
     }
     avcodec_flush_buffers(m_videoCodecCtx);
 
-    // Decode until we reach the target frame
-    bool frameDecoded = false;
-    while (av_read_frame(m_formatCtx, m_packet) >= 0) {
-        if (m_packet->stream_index == m_videoStreamIdx) {
-            if (avcodec_send_packet(m_videoCodecCtx, m_packet) == 0) {
-                int ret = avcodec_receive_frame(m_videoCodecCtx, m_frame);
-                if (ret == 0) {
-                    // Check if this frame is close enough to target
-                    int64_t framePts = m_frame->pts;
-                    if (framePts >= targetPts) {
-                        frameDecoded = true;
-                        av_packet_unref(m_packet);
-                        break;
+    // The read+decode loop, used twice below: once after the seek, and once
+    // more after a FRESH DEMUXER OPEN for image2-style stills (see below).
+    const auto readLoop = [&]() -> bool {
+        while (av_read_frame(m_formatCtx, m_packet) >= 0) {
+            if (m_packet->stream_index == m_videoStreamIdx) {
+                if (avcodec_send_packet(m_videoCodecCtx, m_packet) == 0) {
+                    int ret = avcodec_receive_frame(m_videoCodecCtx, m_frame);
+                    if (ret == 0) {
+                        // Check if this frame is close enough to target
+                        int64_t framePts = m_frame->pts;
+                        if (framePts == AV_NOPTS_VALUE) framePts = 0;
+                        if (framePts >= targetPts) {
+                            av_packet_unref(m_packet);
+                            return true;
+                        }
+                        // v1.0.3: Stills have exactly one frame at pts 0 — the
+                        // pts check above can never pass for timeMs > 0, so
+                        // accept the first decoded frame for still streams.
+                        if (likelyStill) {
+                            av_packet_unref(m_packet);
+                            return true;
+                        }
                     }
                 }
             }
+            av_packet_unref(m_packet);
         }
-        av_packet_unref(m_packet);
-    }
+        // Last decoded frame even if not a perfect pts match.
+        return m_frame->data[0] != nullptr;
+    };
 
-    if (!frameDecoded && m_frame) {
-        // Use last decoded frame even if not perfect match
-        frameDecoded = (m_frame->data[0] != nullptr);
+    bool frameDecoded = readLoop();
+    // v1.0.3: image2 / *pipe demuxers CONSUME their single packet during
+    // avformat_find_stream_info, and av_seek_frame "succeeds" without actually
+    // rewinding — the first av_read_frame then returns EOF immediately and the
+    // image renders BLACK. The only reliable fix is a FRESH demuxer open
+    // (verified: fresh open + find_stream_info delivers the packet). The
+    // still-cache above makes this one-time per image.
+    if (!frameDecoded) {
+        AVFormatContext* fresh = nullptr;
+        if (avformat_open_input(&fresh, m_filePath.c_str(), nullptr, nullptr) == 0 &&
+            avformat_find_stream_info(fresh, nullptr) >= 0) {
+            avformat_close_input(&m_formatCtx);
+            m_formatCtx = fresh;
+            avcodec_flush_buffers(m_videoCodecCtx);
+            frameDecoded = readLoop();
+        } else if (fresh) {
+            avformat_close_input(&fresh);
+        }
     }
 
     if (!frameDecoded) return false;
@@ -915,6 +1203,14 @@ bool RealFFmpegMediaDecoder::decodeVideoFrameAt(int64_t timeMs, uint8_t* outBuff
 
     // Apply filter
     applyFilterToBuffer(outBuffer, outWidth, outHeight, filterType, filterIntensity);
+
+    // v1.0.3: Cache the still frame (RGBA at the requested output size) so
+    // subsequent positions render without touching the non-seekable demuxer.
+    if (likelyStill) {
+        m_stillCache.assign(outBuffer, outBuffer + static_cast<size_t>(outWidth) * outHeight * 4);
+        m_stillCacheW = outWidth;
+        m_stillCacheH = outHeight;
+    }
     return true;
 }
 
@@ -927,7 +1223,11 @@ bool RealFFmpegMediaDecoder::decodeAudioSamples(float* outSamples, int sampleCou
     // Allocate conversion buffer for swr_convert output
     std::vector<float> convBuffer(static_cast<size_t>(sampleCount));
 
-    av_seek_frame(m_formatCtx, m_audioStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
+    // v1.0.2: A failed seek would decode from the wrong position, producing
+    // an incorrect waveform — fail instead.
+    if (av_seek_frame(m_formatCtx, m_audioStreamIdx, 0, AVSEEK_FLAG_BACKWARD) < 0) {
+        return false;
+    }
     avcodec_flush_buffers(m_audioCodecCtx);
 
     while (av_read_frame(m_formatCtx, m_packet) >= 0 && samplesCollected < sampleCount) {
@@ -967,9 +1267,11 @@ bool RealFFmpegMediaDecoder::decodeAudioSamples(float* outSamples, int sampleCou
 
     if (samplesCollected == 0) return false;
 
-    // Copy to output (rectified for waveform display)
+    // Copy to output (rectified for waveform display).
+    // v1.0.2: Volume was applied TWICE — once per sample during accumulation
+    // (above) and again here, scaling the waveform by volume².
     for (int i = 0; i < sampleCount; ++i) {
-        outSamples[i] = std::abs(accum[i]) * volume;
+        outSamples[i] = std::abs(accum[i]);
     }
     return true;
 }
@@ -980,6 +1282,12 @@ bool RealFFmpegMediaDecoder::decodeAudioSegment(int64_t startMs, float* outSampl
                                                 int sampleCount, float volume) {
     if (!outSamples || sampleCount <= 0) return false;
 #ifdef GHITA_HAS_FFMPEG
+    // v1.0.2d: Serve from the pre-decoded PCM cache when available. This is the
+    // whole-file decode done once at open time — no per-window seek, no EOF
+    // cut ("rè"). Non-PCM streams (MP3/AAC) fall through to seek+decode.
+    if (m_pcmCached) {
+        return readPcmFromCache(startMs, outSamples, sampleCount, volume);
+    }
     if (!m_formatCtx || m_audioStreamIdx < 0 || !m_audioCodecCtx || !m_packet || !m_frame) return false;
 
     // Dedicated resampler: source layout → interleaved FLT stereo @ 44100.
@@ -989,33 +1297,108 @@ bool RealFFmpegMediaDecoder::decodeAudioSegment(int64_t startMs, float* outSampl
             &m_mixSwrCtx, &stereo, AV_SAMPLE_FMT_FLT, 44100,
             &m_audioCodecCtx->ch_layout, m_audioCodecCtx->sample_fmt,
             m_audioCodecCtx->sample_rate, 0, nullptr);
+        // v1.0.2: On failure free the (possibly half-initialized) context so
+        // the `if (!m_mixSwrCtx)` guard above re-creates it next call instead
+        // of reusing a broken swr context (UB).
         if (ret < 0 || !m_mixSwrCtx) return false;
-        if (swr_init(m_mixSwrCtx) < 0) return false;
+        if (swr_init(m_mixSwrCtx) < 0) {
+            swr_free(&m_mixSwrCtx);
+            return false;
+        }
     }
 
     AVStream* stream = m_formatCtx->streams[m_audioStreamIdx];
     const double timeBase = av_q2d(stream->time_base);
     const int64_t targetPts = static_cast<int64_t>((startMs / 1000.0) / timeBase);
+    // v1.0.2: Sample-count based skip. The BACKWARD seek lands before the
+    // target; the old pts-based skip relies on frame pts (frequently
+    // AV_NOPTS_VALUE in practice), so frames before the target leaked into
+    // the output — every 100ms preview chunk started a few ms late → audible
+    // clicks/distortion while playing. Count decoded SOURTE samples instead.
+    // v1.0.2c: ALWAYS seek. PCM formats (WAV, etc.) pack the whole stream into
+    // ONE packet, so the "fast-continuation" path (skip the seek) exhausts the
+    // single packet on the first window and every later window hits EOF → empty
+    // audio ("rè"). ALWAYS seeking (PCM has no B-frames, so the seek is exact
+    // and cheap) restores audio to every window.
+    const bool contiguous = false;
+    const int64_t targetSamples = (m_audioCodecCtx->sample_rate > 0)
+        ? static_cast<int64_t>((startMs / 1000.0) * m_audioCodecCtx->sample_rate)
+        : 0;
 
-    av_seek_frame(m_formatCtx, m_audioStreamIdx, targetPts, AVSEEK_FLAG_BACKWARD);
+// v1.0.2: A failed seek means decoding continues from the wrong position —
+    // misaligned mix segments. Fail the call instead of returning wrong audio.
+    // v1.0.2d: Use avformat_seek_file with an explicit timestamp range. The
+    // plain av_seek_frame returns success on PCM/WAV streams but leaves the
+    // demuxer at EOF (readRet = AVERROR_EOF on the very next read), so every
+    // window after the first hit silence ("rè"). Seeking against the stream's
+    // own time base via avformat_seek_file lands on the correct byte range.
+    const int64_t seekWindowSamples = sampleCount / 2;
+    const int64_t seekMax = targetPts + static_cast<int64_t>(
+        static_cast<double>(seekWindowSamples) /
+        static_cast<double>(std::max(1, m_audioCodecCtx->sample_rate)) *
+        av_q2d(stream->time_base) * 1000.0 + 1000.0);
+    if (avformat_seek_file(m_formatCtx, m_audioStreamIdx,
+        INT64_MIN, targetPts, seekMax, 0) < 0) {
+        return false;
+    }
+    // v1.0.2c: Flush the decoder on every seek. The fast-continuation path was
+    // dropped (see above: PCM streams pack the whole stream into ONE packet,
+    // so continuing to decode the same packet gives nothing → empty audio /
+    // "rè"), so we always seek now. Seeking leaves stale buffered frames in
+    // the decoder; flushing drops them so the next send_packet+receive_frame
+    // lands exactly at the target window.
     avcodec_flush_buffers(m_audioCodecCtx);
 
-    std::vector<float> convBuf(static_cast<size_t>(8192) * 2, 0.0f);
+    std::vector<float> convBuf(static_cast<size_t>(16384) * 2, 0.0f);
     int collected = 0;
-    while (av_read_frame(m_formatCtx, m_packet) >= 0 && collected < sampleCount) {
+    int64_t decodedSamples = 0; // cumulative source samples decoded since seek
+    const bool srcPlanar = av_sample_fmt_is_planar(m_audioCodecCtx->sample_fmt);
+    const int srcFmtBytes = av_get_bytes_per_sample(m_audioCodecCtx->sample_fmt);
+    const int nCh = std::max(1, m_audioCodecCtx->ch_layout.nb_channels);
+    while (true) {
+        const int readRet = av_read_frame(m_formatCtx, m_packet);
+        if (readRet < 0) {
+            fprintf(stderr,"[WAV] startMs=%lld readRet=%d filebytes=%lld/%lld\n",(long long)startMs,readRet,
+              m_formatCtx->pb?(long long)avio_tell(m_formatCtx->pb):-1,
+              (long long)m_formatCtx->pb->pos);
+            break;
+        }
+        if (readRet == 0 && collected >= sampleCount) break;
         if (m_packet->stream_index == m_audioStreamIdx) {
             if (avcodec_send_packet(m_audioCodecCtx, m_packet) == 0) {
                 const int ret = avcodec_receive_frame(m_audioCodecCtx, m_frame);
                 if (ret == 0 && m_frame->data[0] && m_frame->nb_samples > 0) {
-                    // Skip frames decoded before the seek target (seek is BACKWARD).
-                    if (m_frame->pts >= 0 && m_frame->pts < targetPts) {
+                    const int nb = m_frame->nb_samples;
+                    int skip = 0;
+                    if (!contiguous && decodedSamples + nb <= targetSamples) {
+                        // Whole frame lies before the target — drop it entirely.
+                        decodedSamples += nb;
                         av_packet_unref(m_packet);
                         continue;
+                    }
+                    if (!contiguous && decodedSamples < targetSamples) {
+                        // Frame straddles the target — keep only its tail.
+                        skip = static_cast<int>(targetSamples - decodedSamples);
+                    }
+                    decodedSamples += nb;
+
+                    // Feed the [skip, nb) slice to the resampler. For planar
+                    // input each channel offsets its own plane; interleaved
+                    // input offsets plane 0 by skip*samples*channels.
+                    uint8_t* inPlanes[8];
+                    for (int ch = 0; ch < nCh && ch < 8; ++ch) {
+                        const uint8_t* base = (m_frame->extended_data && m_frame->extended_data[ch])
+                            ? m_frame->extended_data[ch] : m_frame->data[0];
+                        if (srcPlanar) {
+                            inPlanes[ch] = const_cast<uint8_t*>(base) + skip * srcFmtBytes;
+                        } else {
+                            inPlanes[ch] = const_cast<uint8_t*>(base) + skip * srcFmtBytes * nCh;
+                        }
                     }
                     uint8_t* outPlane = reinterpret_cast<uint8_t*>(convBuf.data());
                     const int outFrames = swr_convert(
                         m_mixSwrCtx, &outPlane, static_cast<int>(convBuf.size() / 2),
-                        const_cast<const uint8_t**>(m_frame->data), m_frame->nb_samples);
+                        const_cast<const uint8_t**>(inPlanes), nb - skip);
                     if (outFrames > 0) {
                         const int toCopy = std::min(outFrames * 2, sampleCount - collected);
                         for (int i = 0; i < toCopy; ++i) {
@@ -1027,6 +1410,32 @@ bool RealFFmpegMediaDecoder::decodeAudioSegment(int64_t startMs, float* outSampl
             }
         }
         av_packet_unref(m_packet);
+    }
+    // v1.0.2b: Drain the resampler's internal buffer. swr_convert accumulates
+    // output and only emits it once its internal window fills — without a
+    // drain it returns 0 once the buffer is full (the "empty audio after ~5.4s"
+    // symptom), leaving real decoded samples stranded. Flushing with a nullptr
+    // input releases them so every requested window actually delivers audio.
+    if (collected < sampleCount) {
+        int drain = 0;
+        do {
+            uint8_t* outPlane = reinterpret_cast<uint8_t*>(convBuf.data());
+            drain = swr_convert(m_mixSwrCtx, &outPlane, static_cast<int>(convBuf.size() / 2),
+                               nullptr, 0);
+            if (drain > 0) {
+                const int toCopy = std::min(drain * 2, sampleCount - collected);
+                for (int i = 0; i < toCopy; ++i) outSamples[collected + i] = convBuf[i] * volume;
+                collected += toCopy;
+            }
+        } while (drain > 0 && collected < sampleCount);
+    }
+    // v1.0.2b: Record where this call ended (timeline ms) so the next
+    // contiguous chunk can continue decoding without a seek. Only data that
+    // was actually delivered counts — a short read resets the chain.
+    if (collected > 0) {
+        m_segContinuityMs = startMs + (sampleCount / 2) * 1000 / 44100;
+    } else {
+        m_segContinuityMs = -1;
     }
     return collected > 0;
 #else
@@ -1071,7 +1480,11 @@ MediaInfo FFmpegMediaDecoderStub::getMediaInfo() const {
 // ====================================================================
 
 GhitaEngine::GhitaEngine() {
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
+    {
+        // v1.0.0: same lock used by every other write/read of m_lastTickTime.
+        std::lock_guard<std::mutex> ttLock(m_tickTimeMutex);
+        m_lastTickTime = std::chrono::high_resolution_clock::now();
+    }
     m_ready = false;
     m_decoder = std::make_unique<RealFFmpegMediaDecoder>();
 }
@@ -1103,7 +1516,10 @@ bool GhitaEngine::initialize() {
     m_filterIntensity.store(1.0f);
     m_snappingFps.store(30);
     m_activeFilterType = 0;
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
+    {
+        std::lock_guard<std::mutex> ttLock(m_tickTimeMutex);
+        m_lastTickTime = std::chrono::high_resolution_clock::now();
+    }
     m_ready = true;
     return true;
 }
@@ -1131,7 +1547,10 @@ bool GhitaEngine::loadMedia(const std::string& filePath) {
         m_durationMs.store(m_decoder->getDurationMs());
     }
     m_currentPosMs.store(0);
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
+    {
+        std::lock_guard<std::mutex> ttLock(m_tickTimeMutex);
+        m_lastTickTime = std::chrono::high_resolution_clock::now();
+    }
     return fileExists;
 }
 
@@ -1139,7 +1558,10 @@ void GhitaEngine::play() {
     {
         std::unique_lock<std::shared_mutex> lock(m_engineMutex);
         if (!m_ready.load()) return;
-        m_lastTickTime = std::chrono::high_resolution_clock::now();
+        {
+            std::lock_guard<std::mutex> ttLock(m_tickTimeMutex);
+            m_lastTickTime = std::chrono::high_resolution_clock::now();
+        }
         m_isPlaying.store(true);
     }
     // v0.8.0: Audio preview follows playback. Started OUTSIDE the engine lock
@@ -1167,7 +1589,10 @@ void GhitaEngine::seek(int64_t positionMs) {
     int64_t duration = m_durationMs.load();
     positionMs = std::clamp(positionMs, int64_t(0), duration);
     m_currentPosMs.store(positionMs);
-    m_lastTickTime = std::chrono::high_resolution_clock::now();
+    {
+        std::lock_guard<std::mutex> ttLock(m_tickTimeMutex);
+        m_lastTickTime = std::chrono::high_resolution_clock::now();
+    }
 }
 
 int64_t GhitaEngine::getPositionMs() const {
@@ -1191,7 +1616,7 @@ void GhitaEngine::setPlaybackRate(float rate) {
 
 void GhitaEngine::applyFilter(int filterType, float intensity) {
     std::unique_lock<std::shared_mutex> lock(m_engineMutex);
-    m_activeFilterType = std::clamp(filterType, 0, 20);
+    m_activeFilterType = std::clamp(filterType, 0, 22); // v1.0.2: 21=Skin Retouch, 22=Chroma Key
     m_filterIntensity.store(std::clamp(intensity, 0.0f, 1.0f));
 }
 
@@ -1212,10 +1637,17 @@ bool GhitaEngine::renderFrameRGBA(uint8_t* outBuffer, int width, int height) {
     int64_t duration = m_durationMs.load();
 
     if (m_isPlaying.load()) {
+        // v1.0.0: Lock around the read+update of m_lastTickTime — a concurrent
+        // play()/seek()/load() also writes this field, and the previous shared
+        // lock here allowed the chrono time_point to be corrupted.
+        std::lock_guard<std::mutex> ttLock(m_tickTimeMutex);
         auto now = std::chrono::high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastTickTime).count();
         m_lastTickTime = now;
-        pos += elapsed;
+        // v1.0.3: Apply the playback rate — the old code advanced by real
+        // elapsed ms only, so the speed dropdown (0.25x-4x) had NO effect on
+        // the playhead. Scaling elapsed fixes "tốc độ không hoạt động".
+        pos += static_cast<int64_t>(static_cast<double>(elapsed) * m_playbackRate.load());
         if (duration > 0 && pos >= duration) {
             pos = 0;
         }
@@ -1324,7 +1756,6 @@ std::shared_ptr<IMediaDecoder> GhitaEngine::getClipDecoder(int clipId, const std
         const int victim = m_decoderLruOrder.back();
         m_decoderLruOrder.pop_back();
         m_clipDecoders.erase(victim);
-        m_decoderLastPos.erase(victim);
     }
     auto decoder = std::make_shared<RealFFmpegMediaDecoder>();
     // open() transparently falls back to the synthetic decoder for files
@@ -1333,7 +1764,6 @@ std::shared_ptr<IMediaDecoder> GhitaEngine::getClipDecoder(int clipId, const std
     decoder->open(filePath);
     m_clipDecoders.emplace(clipId, decoder);
     m_decoderLruOrder.push_front(clipId);
-    m_decoderLastPos[clipId] = -1;
     return decoder;
 }
 
@@ -1349,7 +1779,6 @@ bool GhitaEngine::decodeClipFrame(int clipId, uint8_t* outBuffer, int width, int
     if (filePath.empty()) return false;
     std::shared_ptr<IMediaDecoder> decoder = getClipDecoder(clipId, filePath);
     if (!decoder) return false;
-    m_decoderLastPos[clipId] = sourcePosMs;
     return decoder->decodeFrame(outBuffer, width, height, sourcePosMs, filterType, filterIntensity);
 }
 
@@ -1431,8 +1860,17 @@ bool GhitaEngine::renderTimelineFrame(uint8_t* outBuffer, int width, int height,
         if (crossfadeActive && prevClip) {
             const double pOffset = static_cast<double>(posMs - prevClip->startMs) * prevClip->speed;
             int64_t pSrc = prevClip->sourceInMs + static_cast<int64_t>(pOffset);
-            const int64_t pSrcOut = prevClip->sourceInMs +
+            // v1.0.2: Clamp to the actual source media duration — the
+            // timeline-derived bound can exceed EOF under speed > 1, making
+            // the tail render black instead of holding the last frame.
+            int64_t pSrcOut = prevClip->sourceInMs +
                 static_cast<int64_t>(prevClip->durationMs * prevClip->speed);
+            if (auto prevDec = getClipDecoder(prevClip->id, prevClip->filePath)) {
+                const int64_t mediaDur = prevDec->getDurationMs();
+                if (mediaDur > 0) {
+                    pSrcOut = std::min<int64_t>(pSrcOut, prevClip->sourceInMs + mediaDur);
+                }
+            }
             pSrc = std::clamp<int64_t>(pSrc, prevClip->sourceInMs, std::max(prevClip->sourceInMs, pSrcOut - 1));
             if (decodeClipFrame(prevClip->id, m_renderScratch.data(), width, height, pSrc,
                                 prevClip->filterType, prevClip->filterIntensity)) {
@@ -1451,8 +1889,19 @@ bool GhitaEngine::renderTimelineFrame(uint8_t* outBuffer, int width, int height,
         } else {
             const double offset = static_cast<double>(posMs - clip->startMs) * clip->speed;
             int64_t src = clip->sourceInMs + static_cast<int64_t>(offset);
-            const int64_t srcOut = clip->sourceInMs +
+            // v1.0.2: Clamp to the ACTUAL source media duration, not the
+            // timeline-derived end — with speed > 1 (or a clip dragged longer
+            // than its source) the old bound exceeded EOF, the decode returned
+            // false and the clip tail rendered BLACK instead of holding the
+            // last frame.
+            int64_t srcOut = clip->sourceInMs +
                 static_cast<int64_t>(clip->durationMs * clip->speed);
+            if (auto dec = getClipDecoder(clip->id, clip->filePath)) {
+                const int64_t mediaDur = dec->getDurationMs();
+                if (mediaDur > 0) {
+                    srcOut = std::min<int64_t>(srcOut, clip->sourceInMs + mediaDur);
+                }
+            }
             src = std::clamp<int64_t>(src, clip->sourceInMs, std::max(clip->sourceInMs, srcOut - 1));
             if (decodeClipFrame(clip->id, m_renderScratch.data(), width, height, src,
                                 clip->filterType, clip->filterIntensity)) {
@@ -1657,7 +2106,12 @@ std::string GhitaEngine::getAvailableFiltersJson() const {
         {"id":17, "name":"Sharpen", "category":"adjust"},
         {"id":18, "name":"Posterize", "category":"artistic"},
         {"id":19, "name":"Duotone", "category":"color"},
-        {"id":20, "name":"Background Blur", "category":"blur"}
+        {"id":19, "name":"Duotone", "category":"color"},
+        {"id":20, "name":"Background Blur", "category":"blur"},
+        // v1.0.2: Filters 21-22 listed so the Dart UI can show them (the
+        // dispatch cases existed but the clamp kept them unreachable).
+        {"id":21, "name":"Skin Retouch", "category":"beauty"},
+        {"id":22, "name":"Chroma Key", "category":"keying"}
     ])";
 }
 
@@ -1715,7 +2169,7 @@ bool GhitaEngine::setClipFilter(int clipId, int filterType, float intensity) {
     std::unique_lock<std::shared_mutex> lock(m_engineMutex);
     for (auto& clip : m_clips) {
         if (clip.id == clipId) {
-            clip.filterType = std::clamp(filterType, 0, 20);
+            clip.filterType = std::clamp(filterType, 0, 22); // v1.0.2: 21=Skin Retouch, 22=Chroma Key
             clip.filterIntensity = std::clamp(intensity, 0.0f, 1.0f);
             return true;
         }
@@ -1760,7 +2214,6 @@ int GhitaEngine::upsertClip(int clipId, const std::string& filePath, int64_t sta
                 {
                     std::lock_guard<std::mutex> rlock(m_renderMutex);
                     m_clipDecoders.erase(clipId);
-                    m_decoderLastPos.erase(clipId);
                 }
                 m_decoderLruOrder.remove(clipId);
             }
@@ -1794,7 +2247,6 @@ void GhitaEngine::clearClips() {
         std::lock_guard<std::mutex> rlock(m_renderMutex);
         m_clipDecoders.clear();
         m_decoderLruOrder.clear();
-        m_decoderLastPos.clear();
     }
     recalculateDuration();
 }
@@ -1936,6 +2388,10 @@ void GhitaEngine::recalculateDuration() {
 
 void GhitaEngine::updateClock() {
     if (!m_isPlaying.load()) return;
+    // v1.0.0: dead-but-defined helper, but it would race m_lastTickTime
+    // against renderFrameRGBA / play() / seek() if anyone ever wired it into
+    // FFI. Lock it preemptively so it's safe to expose.
+    std::lock_guard<std::mutex> ttLock(m_tickTimeMutex);
     auto now = std::chrono::high_resolution_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastTickTime).count();
     m_lastTickTime = now;
@@ -1952,6 +2408,11 @@ void GhitaEngine::updateClock() {
 bool GhitaEngine::getAudioWaveform(float* outSamples, int sampleCount) {
     if (!outSamples || sampleCount <= 0) return false;
     std::shared_lock<std::shared_mutex> lock(m_engineMutex);
+    // v1.0.2: The decoder is NOT thread-safe — extractPcmAudioSamples seeks
+    // and decodes through the shared FFmpeg context. Every other decoder
+    // accessor takes m_renderMutex; this one was the only site missing it,
+    // racing the preview render thread (corrupted frames / crashes).
+    std::lock_guard<std::mutex> rlock(m_renderMutex);
 
     if (auto realDec = dynamic_cast<RealFFmpegMediaDecoder*>(m_decoder.get())) {
         return realDec->extractPcmAudioSamples(outSamples, sampleCount, m_volume.load());
@@ -2003,11 +2464,18 @@ bool GhitaEngine::mixAudioWindow(int64_t startMs, int64_t endMs, float* outSampl
         if (ovEnd <= ovStart) continue;
         const int64_t srcStart = clip.sourceInMs +
             static_cast<int64_t>(static_cast<double>(ovStart - clip.startMs) * clip.speed);
-        const int ovSamples = static_cast<int>(std::ceil(
+        // v1.0.3: THE "rè" FIX — the mixing format is interleaved FLOAT STEREO
+        // (2 floats per frame), but ovSamples below counts FRAMES. The old code
+        // used the frame count as the float count, so decodeAudioSegment only
+        // filled the first HALF of every 100ms window and the second half
+        // stayed ZERO → every chunk was 50ms audio + 50ms silence = a harsh
+        // 10Hz crackle ("rè / tua nhanh bị vỡ"). Multiply by 2 everywhere.
+        const int ovFrames = static_cast<int>(std::ceil(
             static_cast<double>(ovEnd - ovStart) / 1000.0 * kSampleRate));
-        const int outOffset = static_cast<int>(
+        const int ovFloats = ovFrames * 2;
+        const int outOffsetFrames = static_cast<int>(
             static_cast<double>(ovStart - startMs) / 1000.0 * kSampleRate);
-        const int maxCopy = std::min(ovSamples, sampleCount - outOffset);
+        const int maxCopy = std::min(ovFloats, sampleCount - outOffsetFrames * 2);
         if (maxCopy <= 0) continue;
 
         // Clip kinds without media (text/sticker) contribute no audio.
@@ -2019,9 +2487,26 @@ bool GhitaEngine::mixAudioWindow(int64_t startMs, int64_t endMs, float* outSampl
         std::vector<float> seg(static_cast<size_t>(maxCopy), 0.0f);
         if (realDecoder->decodeAudioSegment(srcStart, seg.data(), maxCopy, gain)) {
             for (int i = 0; i < maxCopy; ++i) {
-                outSamples[outOffset + i] += seg[i];
+                outSamples[outOffsetFrames * 2 + i] += seg[i];
             }
             anyAudio = true;
+        }
+    }
+
+    // v1.0.3: Noise suppression ("làm rõ âm thanh") — one-pole low-cut (DC
+    // blocker, ≈85 Hz) applied per channel to the mixed preview. Removes hum
+    // & rumble without touching the source files. Preview-only; export is
+    // unaffected (export mixes without this flag set).
+    if (m_noiseSuppress.load()) {
+        constexpr double kR = 0.98;
+        double lpL = 0.0, lpR = 0.0;
+        for (int i = 0; i < sampleCount; i += 2) {
+            double inL = outSamples[i];
+            double inR = outSamples[i + 1];
+            lpL = kR * lpL + (1.0 - kR) * inL;
+            lpR = kR * lpR + (1.0 - kR) * inR;
+            outSamples[i] = static_cast<float>(inL - lpL);
+            outSamples[i + 1] = static_cast<float>(inR - lpR);
         }
     }
 
@@ -2132,7 +2617,12 @@ void GhitaEngine::audioPreviewLoop() {
         if (waveOutPrepareHeader(hWaveOut, &hdrs[fillIdx], sizeof(WAVEHDR)) == MMSYSERR_NOERROR &&
             waveOutWrite(hWaveOut, &hdrs[fillIdx], sizeof(WAVEHDR)) == MMSYSERR_NOERROR) {
             activeBuffers++;
-            nextPosMs += kChunkMs;
+            // v1.0.3: Advance by the playback rate so the audio thread keeps
+            // pace with the (rate-scaled) engine playhead — previously it
+            // always advanced 100ms per chunk, so at 2x the audio lagged the
+            // video and the ±250ms resync fired constantly (audible "rè").
+            nextPosMs += static_cast<int64_t>(
+                static_cast<double>(kChunkMs) * m_playbackRate.load());
             fillIdx = (fillIdx + 1) % kNumBuffers;
         } else {
             waveOutUnprepareHeader(hWaveOut, &hdrs[fillIdx], sizeof(WAVEHDR));
@@ -2152,6 +2642,10 @@ void GhitaEngine::audioPreviewLoop() {
 }
 
 void GhitaEngine::startAudioPreviewThread() {
+    // v1.0.2: Serialize with stopAudioPreviewThread — a concurrent pause()
+    // could otherwise join() the thread while this assigns it (data race on
+    // the std::thread handle).
+    std::lock_guard<std::mutex> lock(m_audioThreadMutex);
     if (m_audioThreadRunning.load() || !m_audioPreviewEnabled.load()) return;
     m_audioStopFlag.store(false);
     m_audioThreadRunning.store(true);
@@ -2163,6 +2657,8 @@ void GhitaEngine::startAudioPreviewThread() {
 }
 
 void GhitaEngine::stopAudioPreviewThread() {
+    // v1.0.2: Same serialization as startAudioPreviewThread (see above).
+    std::lock_guard<std::mutex> lock(m_audioThreadMutex);
     if (!m_audioThreadRunning.load()) {
         // v0.8.0: The thread may have exited on its own (empty timeline, no
         // audio device) — the handle must still be joined, otherwise the
@@ -2192,7 +2688,15 @@ bool GhitaEngine::startExportEx(const std::string& outputPath, int width, int he
     if (outputPath.empty() || width <= 0 || height <= 0 || fps <= 0) return false;
 
     if (m_exportThread.joinable()) {
-        m_exportThread.join();
+        // v1.0.2: Serialize with cancelExport()/~GhitaEngine() — a racing
+        // cancelExport could otherwise reach a SECOND join() on the same
+        // std::thread (std::system_error, and std::terminate if it happens
+        // inside the destructor). The join mutex already guards the other
+        // two join sites; this one was missing it.
+        std::lock_guard<std::mutex> joinLock(m_exportJoinMutex);
+        if (m_exportThread.joinable() && std::this_thread::get_id() != m_exportThread.get_id()) {
+            m_exportThread.join();
+        }
     }
 
     // v0.7.8: Snapshot the media path under the engine lock — the export
@@ -2227,13 +2731,23 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
                                    std::string codec, int64_t bitrate, bool includeAudio) {
     m_exportError.store(false);
     const int totalFrames = static_cast<int>((m_durationMs.load() / 1000.0f) * fps);
-    if (totalFrames <= 0) {
+    // v1.0.0: Audio-only (MP3) exports use a duration check, not totalFrames
+    // — the dialog passes width=0, height=0, fps=0 for the MP3 preset, so
+    // totalFrames would be 0 and we'd bail out before any encoding happens.
+    if (codec == "mp3") {
+        if (m_durationMs.load() <= 0) {
+            m_isExporting.store(false);
+            m_exportError.store(true);
+            return;
+        }
+    } else if (totalFrames <= 0) {
         m_isExporting.store(false);
         m_exportError.store(true);
         return;
     }
 
-    std::vector<uint8_t> frameBuffer(static_cast<size_t>(width * height * 4));
+    std::vector<uint8_t> frameBuffer(static_cast<size_t>(std::max(width, 1)) *
+                                      static_cast<size_t>(std::max(height, 1)) * 4);
     RealFFmpegMediaDecoder decoder;
 
     // v0.7.9: Deep-review fix — open() failure used to be ignored: the export
@@ -2274,14 +2788,36 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
         for (const char* n : names) {
             const AVCodec* c = avcodec_find_encoder_by_name(n);
             if (!c) continue;
-            const enum AVPixelFormat* fmts = c->pix_fmts;
+            // v1.0.0: AVCodec::pix_fmts is deprecated in FFmpeg 7+ — use the
+            // config-based API to enumerate the supported pixel formats.
+            // v1.0.0b (CI fix): avcodec_get_supported_config /
+            // AV_CODEC_CONFIG_PIX_FORMAT only exist in FFmpeg ≥ 7.0
+            // (libavcodec ≥ 61.3); older distros (e.g. Ubuntu 24.04, FFmpeg
+            // 6.1) keep the legacy pix_fmts member. Guard by version so CI
+            // builds on both.
+            bool yuv420 = false;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 3, 100) // FFmpeg 7.0+/libavcodec 61.3+
+            const AVPixelFormat* fmts = nullptr;
+            int nFmts = 0;
+            if (avcodec_get_supported_config(nullptr, c, AV_CODEC_CONFIG_PIX_FORMAT,
+                                             0, reinterpret_cast<const void**>(&fmts),
+                                             &nFmts) < 0 || !fmts) {
+                continue;
+            }
+            for (int i = 0; i < nFmts; ++i) {
+                if (fmts[i] == AV_PIX_FMT_YUV420P) { yuv420 = true; break; }
+            }
+#else
+            const AVPixelFormat* fmts = c->pix_fmts;
             if (fmts) {
-                bool yuv420 = false;
                 for (int i = 0; fmts[i] != AV_PIX_FMT_NONE; ++i) {
                     if (fmts[i] == AV_PIX_FMT_YUV420P) { yuv420 = true; break; }
                 }
-                if (!yuv420) continue;
+            } else {
+                yuv420 = true; // unknown list — let the open attempt decide
             }
+#endif
+            if (!yuv420) continue;
             return c;
         }
         return nullptr;
@@ -2290,10 +2826,19 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
         encoder = pickEncoder({"libx265", "hevc"});
     } else if (codec == "vp9") {
         encoder = pickEncoder({"libvpx-vp9", "vp9"});
+    } else if (codec == "gif") {
+        // v1.0.0: GIF — dedicated encoder (BGRA pix_fmt, no YUV420P pipeline).
+        // The pickEncoder helper above skips any encoder whose pix_fmts list
+        // doesn't include YUV420P, which rules out gif — use a direct lookup.
+        encoder = avcodec_find_encoder(AV_CODEC_ID_GIF);
+    } else if (codec == "mp3") {
+        // v1.0.0: MP3 — audio-only export, no video stream at all. The
+        // encoder stays null and the video stream creation below is skipped.
+        encoder = nullptr;
     } else {
         encoder = pickEncoder({"libx264", "libopenh264", "h264", "mpeg4"});
     }
-    if (!encoder) {
+    if (!encoder && codec != "mp3") {
         // Absolute last resort: any H.264/MPEG-4 encoder the build provides.
         encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
         if (!encoder) encoder = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
@@ -2301,19 +2846,61 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
 
     // Open output format
     avformat_alloc_output_context2(&fmtCtx, nullptr, nullptr, outputPath.c_str());
-    if (fmtCtx && encoder) {
-            // v0.8.0: The audio stream MUST exist before avformat_write_header
-            // or the muxer never registers the track.
+    // v1.0.0: audio-only MP3 exports have no video encoder; the condition
+    // gates on "have a muxer AND (have a video encoder OR this is audio-only)".
+    if (fmtCtx && (encoder || codec == "mp3")) {
+        // v0.8.0: The audio stream MUST exist before avformat_write_header
+        // or the muxer never registers the track.
+        // v1.0.2: Moved OUT of the video chain — MP3 exports keep encoder
+        // null, and the old nesting made the whole MP3 path dead code.
+        const AVCodec* audioCodec = nullptr;
+        if (codec == "mp3") {
+            audioCodec = avcodec_find_encoder(AV_CODEC_ID_MP3);
+        } else if (includeAudio) {
+            audioCodec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+        }
+        if (audioCodec) {
+            audioEncCtx = avcodec_alloc_context3(audioCodec);
+            if (audioEncCtx) {
+                audioEncCtx->sample_rate = 44100;
+                audioEncCtx->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
+                audioEncCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+                // v1.0.0: Audio bitrate was hardcoded to 128k for every
+                // codec — MP3 users picking 192/256/320 kbps in the dialog
+                // got a 128k file anyway. Honor the bitrate parameter for
+                // audio-only exports (128000–320000 sensible range).
+                if (codec == "mp3" && bitrate >= 32000 && bitrate <= 320000) {
+                    audioEncCtx->bit_rate = bitrate;
+                } else {
+                    audioEncCtx->bit_rate = 128000;
+                }
+                if (fmtCtx->oformat->flags & AVFMT_GLOBALHEADER) {
+                    audioEncCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+                }
+                if (avcodec_open2(audioEncCtx, audioCodec, nullptr) >= 0) {
+                    audioStream = avformat_new_stream(fmtCtx, audioCodec);
+                    if (audioStream) {
+                        avcodec_parameters_from_context(audioStream->codecpar, audioEncCtx);
+                        audioStream->time_base = AVRational{1, 44100};
+                    }
+                }
+            }
+        }
+
+        // v1.0.2: Video chain — only for video exports (MP3 keeps encoder null).
+        if (encoder) {
             encCtx = avcodec_alloc_context3(encoder);
             if (encCtx) {
                 encCtx->width = width;
                 encCtx->height = height;
                 encCtx->time_base = {1, fps};
                 encCtx->framerate = {fps, 1};
-                encCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+                encCtx->pix_fmt = (codec == "gif")
+                    ? AV_PIX_FMT_BGRA  // v1.0.0: GIF encoder is BGRA, not YUV420P
+                    : AV_PIX_FMT_YUV420P;
                 encCtx->bit_rate = bitrate;
-                encCtx->gop_size = fps * 2;
-                encCtx->max_b_frames = 2;
+                encCtx->gop_size = (codec == "gif") ? 0 : fps * 2; // GIF is intra-only
+                encCtx->max_b_frames = (codec == "gif") ? 0 : 2;
 
                 if (fmtCtx->oformat->flags & AVFMT_GLOBALHEADER) {
                     encCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
@@ -2323,201 +2910,264 @@ void GhitaEngine::runExportLoopEx(std::string outputPath, int width, int height,
                     videoStream = avformat_new_stream(fmtCtx, encoder);
                     if (videoStream) {
                         avcodec_parameters_from_context(videoStream->codecpar, encCtx);
-
-                        // v0.8.0: AAC audio stream — created before the header
-                        // (see comment above: a late avformat_new_stream left the
-                        // muxer's track uninitialized → SIGFPE on first write).
-                        const AVCodec* audioCodec =
-                            includeAudio ? avcodec_find_encoder(AV_CODEC_ID_AAC) : nullptr;
-                        if (audioCodec) {
-                            audioEncCtx = avcodec_alloc_context3(audioCodec);
-                            if (audioEncCtx) {
-                                audioEncCtx->sample_rate = 44100;
-                                audioEncCtx->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
-                                audioEncCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-                                audioEncCtx->bit_rate = 128000;
-                                if (fmtCtx->oformat->flags & AVFMT_GLOBALHEADER) {
-                                    audioEncCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-                                }
-                                if (avcodec_open2(audioEncCtx, audioCodec, nullptr) >= 0) {
-                                    audioStream = avformat_new_stream(fmtCtx, audioCodec);
-                                    if (audioStream) {
-                                        avcodec_parameters_from_context(audioStream->codecpar, audioEncCtx);
-                                        audioStream->time_base = AVRational{1, 44100};
-                                    }
-                                }
-                            }
-                        }
-
-                        // Open output file
-                        if (!(fmtCtx->oformat->flags & AVFMT_NOFILE)) {
-                            // v0.7.8: Bail out cleanly when the output path is
-                            // unwritable — previously the failure was ignored
-                            // and avformat_write_header crashed on a null pb.
-                            if (avio_open(&fmtCtx->pb, outputPath.c_str(), AVIO_FLAG_WRITE) < 0) {
-                                m_exportError.store(true);
-                                goto export_cleanup;
-                            }
-                        }
-
-                        if (avformat_write_header(fmtCtx, nullptr) >= 0) {
-                            encFrame = av_frame_alloc();
-                            encFrame->width = width;
-                            encFrame->height = height;
-                            encFrame->format = AV_PIX_FMT_YUV420P;
-                            av_frame_get_buffer(encFrame, 0);
-
-                            encPkt = av_packet_alloc();
-
-                            // SWS context for RGB → YUV conversion
-                            swsCtx = sws_getContext(
-                                width, height, AV_PIX_FMT_RGBA,
-                                width, height, AV_PIX_FMT_YUV420P,
-                                SWS_BILINEAR, nullptr, nullptr, nullptr);
-
-                            // v0.8.0: Audio encode resources (after the header —
-                            // needs audioEncCtx->frame_size).
-                            if (audioEncCtx && audioStream) {
-                                AVChannelLayout fltStereo = AV_CHANNEL_LAYOUT_STEREO;
-                                AVChannelLayout fltpStereo = AV_CHANNEL_LAYOUT_STEREO;
-                                if (swr_alloc_set_opts2(&audioSwr, &fltpStereo, AV_SAMPLE_FMT_FLTP, 44100,
-                                                        &fltStereo, AV_SAMPLE_FMT_FLT, 44100, 0, nullptr) >= 0) {
-                                    swr_init(audioSwr);
-                                }
-                                audioFrame = av_frame_alloc();
-                                audioFrame->format = AV_SAMPLE_FMT_FLTP;
-                                av_channel_layout_copy(&audioFrame->ch_layout, &fltpStereo);
-                                audioFrame->sample_rate = 44100;
-                                audioFrame->nb_samples =
-                                    audioEncCtx->frame_size > 0 ? audioEncCtx->frame_size : 1024;
-                                av_frame_get_buffer(audioFrame, 0);
-                                audioPkt = av_packet_alloc();
-                            }
-                            const int frameSamples =
-                                std::max(1, static_cast<int>(44100.0 / static_cast<double>(fps)));
-                            std::vector<float> mixBuf(static_cast<size_t>(frameSamples) * 2, 0.0f);
-                            int64_t audioPtsAccum = 0;
-                            // v0.8.0: AAC priming delay — packet pts = frame pts − delay;
-                            // offsetting keeps the stream's pts non-negative (some builds
-                            // expose delay, others don't — fall back to the 1024 spec value).
-                            const int audioDelay = audioEncCtx
-                                ? (audioEncCtx->delay > 0 ? audioEncCtx->delay : 1024)
-                                : 0;
-
-                            // Encode loop
-                            for (int frame = 0; frame < totalFrames; ++frame) {
-                                if (m_cancelExportFlag.load()) break;
-
-                                int64_t frameTimeMs = static_cast<int64_t>(
-                                    (static_cast<float>(frame) / fps) * 1000.0f);
-
-                                // v0.8.0: Render the ACTUAL timeline (multi-clip
-                                // composition) instead of the single loaded media.
-                                {
-                                    std::shared_lock<std::shared_mutex> elock(m_engineMutex);
-                                    std::lock_guard<std::mutex> rlock(m_renderMutex);
-                                    if (!m_clips.empty()) {
-                                        renderTimelineFrame(frameBuffer.data(), width, height, frameTimeMs);
-                                    } else {
-                                        // v0.7.9: Deep-review — a decode failure mid
-                                        // export used to produce a truncated/corrupt
-                                        // file that still reported success. Fail loudly.
-                                        if (!decoder.decodeFrame(frameBuffer.data(), width, height, frameTimeMs,
-                                                                  m_activeFilterType, m_filterIntensity.load())) {
-                                            m_exportError.store(true);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Convert RGBA → YUV420P
-                                if (swsCtx) {
-                                    uint8_t* srcSlice[1] = {frameBuffer.data()};
-                                    int srcStride[1] = {width * 4};
-                                    sws_scale(swsCtx, srcSlice, srcStride, 0, height,
-                                              encFrame->data, encFrame->linesize);
-                                }
-
-                                // v0.8.0: Mix + encode the audio for this frame's window.
-                                if (audioEncCtx && audioSwr && audioFrame && audioPkt) {
-                                    mixAudioWindow(frameTimeMs, frameTimeMs + (1000 / fps),
-                                                   mixBuf.data(), frameSamples * 2, true);
-                                    int consumed = 0;
-                                    while (consumed < frameSamples) {
-                                        const int n = std::min(audioFrame->nb_samples, frameSamples - consumed);
-                                        float* src = mixBuf.data() + consumed * 2;
-                                        uint8_t* inPlane = reinterpret_cast<uint8_t*>(src);
-                                        uint8_t* outPlanes[2] = {audioFrame->data[0], audioFrame->data[1]};
-                                        const int got = swr_convert(audioSwr, outPlanes, n, &inPlane, n);
-                                        if (got > 0) {
-                                            // v0.8.0: Offset by the encoder priming delay (AAC = 1024 samples) —
-                                            // otherwise the first packets carry NEGATIVE pts and the mov
-                                            // muxer crashes (SIGFPE) computing durations.
-                                            audioFrame->pts = audioPtsAccum + audioDelay;
-                                            audioPtsAccum += got;
-                                            avcodec_send_frame(audioEncCtx, audioFrame);
-                                            while (avcodec_receive_packet(audioEncCtx, audioPkt) == 0) {
-                                                av_packet_rescale_ts(audioPkt, audioEncCtx->time_base, audioStream->time_base);
-                                                audioPkt->stream_index = audioStream->index;
-                                                av_interleaved_write_frame(fmtCtx, audioPkt);
-                                                av_packet_unref(audioPkt);
-                                            }
-                                        }
-                                        consumed += n;
-                                    }
-                                }
-
-                                encFrame->pts = frame;
-                                int ret = avcodec_send_frame(encCtx, encFrame);
-                                while (ret >= 0) {
-                                    ret = avcodec_receive_packet(encCtx, encPkt);
-                                    if (ret == 0) {
-                                        av_packet_rescale_ts(encPkt, encCtx->time_base, videoStream->time_base);
-                                        encPkt->stream_index = videoStream->index;
-                                        av_interleaved_write_frame(fmtCtx, encPkt);
-                                        av_packet_unref(encPkt);
-                                    } else {
-                                        break;
-                                    }
-                                }
-
-                                float progress = static_cast<float>(frame + 1) / static_cast<float>(totalFrames);
-                                m_exportProgress.store(progress);
-                            }
-
-                            // Flush encoder
-                            avcodec_send_frame(encCtx, nullptr);
-                            while (avcodec_receive_packet(encCtx, encPkt) == 0) {
-                                av_packet_rescale_ts(encPkt, encCtx->time_base, videoStream->time_base);
-                                encPkt->stream_index = videoStream->index;
-                                av_interleaved_write_frame(fmtCtx, encPkt);
-                                av_packet_unref(encPkt);
-                            }
-
-                            // v0.8.0: Flush the audio encoder.
-                            if (audioEncCtx) {
-                                avcodec_send_frame(audioEncCtx, nullptr);
-                                while (audioPkt && avcodec_receive_packet(audioEncCtx, audioPkt) == 0) {
-                                    av_packet_rescale_ts(audioPkt, audioEncCtx->time_base, audioStream->time_base);
-                                    audioPkt->stream_index = audioStream->index;
-                                    av_interleaved_write_frame(fmtCtx, audioPkt);
-                                    av_packet_unref(audioPkt);
-                                }
-                            }
-
-                            // Write trailer
-                            av_write_trailer(fmtCtx);
-                            writeCompleted = true;
-
-                            // Get file size
-                            if (fmtCtx->pb) {
-                                m_exportFileSize.store(avio_size(fmtCtx->pb));
-                            }
-                        }
                     }
                 }
             }
         }
+
+        // Open output file
+        if (!(fmtCtx->oformat->flags & AVFMT_NOFILE)) {
+            // v0.7.8: Bail out cleanly when the output path is
+            // unwritable — previously the failure was ignored
+            // and avformat_write_header crashed on a null pb.
+            if (avio_open(&fmtCtx->pb, outputPath.c_str(), AVIO_FLAG_WRITE) < 0) {
+                m_exportError.store(true);
+                goto export_cleanup;
+            }
+        }
+
+        if (avformat_write_header(fmtCtx, nullptr) >= 0) {
+            // v1.0.2: Video encode resources — only for video exports.
+            if (encoder) {
+                encFrame = av_frame_alloc();
+                encFrame->width = width;
+                encFrame->height = height;
+                encFrame->format = (codec == "gif")
+                    ? AV_PIX_FMT_BGRA
+                    : AV_PIX_FMT_YUV420P;
+                av_frame_get_buffer(encFrame, 0);
+
+                encPkt = av_packet_alloc();
+
+                // SWS context for RGB → pixel format conversion.
+                // v1.0.0: GIF needs RGBA → BGRA; other video codecs
+                // keep RGBA → YUV420P.
+                const AVPixelFormat swsDstFmt = (codec == "gif")
+                    ? AV_PIX_FMT_BGRA
+                    : AV_PIX_FMT_YUV420P;
+                swsCtx = sws_getContext(
+                    width, height, AV_PIX_FMT_RGBA,
+                    width, height, swsDstFmt,
+                    SWS_BILINEAR, nullptr, nullptr, nullptr);
+            }
+
+            // v0.8.0: Audio encode resources (after the header — needs
+            // audioEncCtx->frame_size).
+            // v1.0.2: Shared by the video-with-audio path AND the audio-only
+            // (MP3) path, so it lives outside the if(encoder) block.
+            if (audioEncCtx && audioStream) {
+                AVChannelLayout fltStereo = AV_CHANNEL_LAYOUT_STEREO;
+                AVChannelLayout fltpStereo = AV_CHANNEL_LAYOUT_STEREO;
+                if (swr_alloc_set_opts2(&audioSwr, &fltpStereo, AV_SAMPLE_FMT_FLTP, 44100,
+                                        &fltStereo, AV_SAMPLE_FMT_FLT, 44100, 0, nullptr) >= 0) {
+                    swr_init(audioSwr);
+                }
+                audioFrame = av_frame_alloc();
+                audioFrame->format = AV_SAMPLE_FMT_FLTP;
+                av_channel_layout_copy(&audioFrame->ch_layout, &fltpStereo);
+                audioFrame->sample_rate = 44100;
+                audioFrame->nb_samples =
+                    audioEncCtx->frame_size > 0 ? audioEncCtx->frame_size : 1024;
+                av_frame_get_buffer(audioFrame, 0);
+                audioPkt = av_packet_alloc();
+            }
+            const int frameSamples =
+                std::max(1, static_cast<int>(std::round(44100.0 / static_cast<double>(fps))));
+            // v1.0.2: The audio window must cover frameSamples samples — the
+            // old `1000 / fps` integer division (16 ms at 60 fps) under-filled
+            // the mix buffer by ~29 samples per frame, encoding periodic
+            // silence. Derive the window from the sample count instead.
+            const int64_t audioWindowMs = std::max<int64_t>(1,
+                static_cast<int64_t>(std::ceil(frameSamples * 1000.0 / 44100.0)));
+            std::vector<float> mixBuf(static_cast<size_t>(frameSamples) * 2, 0.0f);
+            int64_t audioPtsAccum = 0;
+            // v0.8.0: AAC priming delay — packet pts = frame pts − delay;
+            // offsetting keeps the stream's pts non-negative (some builds
+            // expose delay, others don't — fall back to the 1024 spec value).
+            const int audioDelay = audioEncCtx
+                ? (audioEncCtx->delay > 0 ? audioEncCtx->delay : 1024)
+                : 0;
+
+            // v1.0.2: Video encode loop — guarded so audio-only (MP3) exports
+            // skip video rendering entirely.
+            if (encoder) {
+                for (int frame = 0; frame < totalFrames; ++frame) {
+                    if (m_cancelExportFlag.load()) break;
+
+                    int64_t frameTimeMs = static_cast<int64_t>(
+                        (static_cast<float>(frame) / fps) * 1000.0f);
+
+                    // v0.8.0: Render the ACTUAL timeline (multi-clip
+                    // composition) instead of the single loaded media.
+                    {
+                        std::shared_lock<std::shared_mutex> elock(m_engineMutex);
+                        std::lock_guard<std::mutex> rlock(m_renderMutex);
+                        if (!m_clips.empty()) {
+                            renderTimelineFrame(frameBuffer.data(), width, height, frameTimeMs);
+                        } else {
+                            // v0.7.9: Deep-review — a decode failure mid
+                            // export used to produce a truncated/corrupt
+                            // file that still reported success. Fail loudly.
+                            if (!decoder.decodeFrame(frameBuffer.data(), width, height, frameTimeMs,
+                                                      m_activeFilterType, m_filterIntensity.load())) {
+                                m_exportError.store(true);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Convert RGBA → YUV420P
+                    if (swsCtx) {
+                        uint8_t* srcSlice[1] = {frameBuffer.data()};
+                        int srcStride[1] = {width * 4};
+                        sws_scale(swsCtx, srcSlice, srcStride, 0, height,
+                                  encFrame->data, encFrame->linesize);
+                    }
+
+                    // v0.8.0: Mix + encode the audio for this frame's window.
+                    if (audioEncCtx && audioSwr && audioFrame && audioPkt) {
+                        mixAudioWindow(frameTimeMs, frameTimeMs + audioWindowMs,
+                                       mixBuf.data(), frameSamples * 2, true);
+                        int consumed = 0;
+                        while (consumed < frameSamples) {
+                            const int n = std::min(audioFrame->nb_samples, frameSamples - consumed);
+                            float* src = mixBuf.data() + consumed * 2;
+                            // v1.0.0b (CI fix): swr_convert takes
+                            // `const uint8_t**` input planes — GCC/Clang reject
+                            // a plain uint8_t** here (MSVC silently accepted).
+                            const uint8_t* inPlane = reinterpret_cast<const uint8_t*>(src);
+                            const uint8_t* inPlanes[2] = {inPlane, inPlane};
+                            uint8_t* outPlanes[2] = {audioFrame->data[0], audioFrame->data[1]};
+                            const int got = swr_convert(audioSwr, outPlanes, n, inPlanes, n);
+                            if (got > 0) {
+                                // v0.8.0: Offset by the encoder priming delay (AAC = 1024 samples) —
+                                // otherwise the first packets carry NEGATIVE pts and the mov
+                                // muxer crashes (SIGFPE) computing durations.
+                                audioFrame->pts = audioPtsAccum + audioDelay;
+                                audioPtsAccum += got;
+                                avcodec_send_frame(audioEncCtx, audioFrame);
+                                while (avcodec_receive_packet(audioEncCtx, audioPkt) == 0) {
+                                    av_packet_rescale_ts(audioPkt, audioEncCtx->time_base, audioStream->time_base);
+                                    audioPkt->stream_index = audioStream->index;
+                                    // v1.0.2: A failed write means the output is
+                                    // corrupt — stop early instead of reporting
+                                    // success for a truncated file.
+                                    if (av_interleaved_write_frame(fmtCtx, audioPkt) < 0) {
+                                        m_exportError.store(true);
+                                        goto export_cleanup;
+                                    }
+                                    av_packet_unref(audioPkt);
+                                }
+                            }
+                            consumed += n;
+                        }
+                    }
+
+                    encFrame->pts = frame;
+                    int ret = avcodec_send_frame(encCtx, encFrame);
+                    while (ret >= 0) {
+                        ret = avcodec_receive_packet(encCtx, encPkt);
+                        if (ret == 0) {
+                            av_packet_rescale_ts(encPkt, encCtx->time_base, videoStream->time_base);
+                            encPkt->stream_index = videoStream->index;
+                            if (av_interleaved_write_frame(fmtCtx, encPkt) < 0) {
+                                m_exportError.store(true);
+                                goto export_cleanup;
+                            }
+                            av_packet_unref(encPkt);
+                        } else {
+                            break;
+                        }
+                    }
+
+                    float progress = static_cast<float>(frame + 1) / static_cast<float>(totalFrames);
+                    m_exportProgress.store(progress);
+                }
+
+                // Flush video encoder
+                avcodec_send_frame(encCtx, nullptr);
+                while (avcodec_receive_packet(encCtx, encPkt) == 0) {
+                    av_packet_rescale_ts(encPkt, encCtx->time_base, videoStream->time_base);
+                    encPkt->stream_index = videoStream->index;
+                    if (av_interleaved_write_frame(fmtCtx, encPkt) < 0) {
+                        m_exportError.store(true);
+                        goto export_cleanup;
+                    }
+                    av_packet_unref(encPkt);
+                }
+            } // end video encode loop + flush
+
+            // v1.0.0: Audio-only (MP3) encode loop — walks the full timeline
+            // duration in mp3-frame-sized chunks, no video rendering involved.
+            // v1.0.2: Now reachable — it used to sit inside if(encoder) (which
+            // is false for MP3 by construction), so no MP3 file was ever made.
+            if (!encoder && audioEncCtx && audioSwr && audioFrame && audioPkt && audioStream) {
+                const int64_t totalMs = std::max<int64_t>(1, m_durationMs.load());
+                const int chunkSamples = audioFrame->nb_samples > 0
+                    ? audioFrame->nb_samples : 1152; // mp3 frame size
+                const int64_t chunkMs = std::max<int64_t>(1,
+                    static_cast<int64_t>(static_cast<double>(chunkSamples) * 1000.0 / 44100.0));
+                int64_t audioPtsAccum = 0;
+                int64_t posMs = 0;
+                std::vector<float> mixBuf(static_cast<size_t>(chunkSamples) * 2, 0.0f);
+                const int audioDelay = audioEncCtx->delay > 0 ? audioEncCtx->delay : 0;
+                while (posMs < totalMs && !m_cancelExportFlag.load()) {
+                    if (!mixAudioWindow(posMs, std::min<int64_t>(posMs + chunkMs, totalMs),
+                                        mixBuf.data(), chunkSamples * 2, true)) {
+                        // No contributing clips in this window — zero
+                        // buffer still produces a valid mp3 silent frame.
+                    }
+                    uint8_t* outPlanes[2] = {audioFrame->data[0], audioFrame->data[1]};
+                    const uint8_t* inPlane = reinterpret_cast<const uint8_t*>(mixBuf.data());
+                    const uint8_t* inPlanes[2] = {inPlane, inPlane};
+                    const int got = swr_convert(audioSwr, outPlanes, chunkSamples, inPlanes, chunkSamples);
+                    if (got > 0) {
+                        audioFrame->pts = audioPtsAccum + audioDelay;
+                        audioPtsAccum += got;
+                        avcodec_send_frame(audioEncCtx, audioFrame);
+                        while (avcodec_receive_packet(audioEncCtx, audioPkt) == 0) {
+                            av_packet_rescale_ts(audioPkt, audioEncCtx->time_base, audioStream->time_base);
+                            audioPkt->stream_index = audioStream->index;
+                            if (av_interleaved_write_frame(fmtCtx, audioPkt) < 0) {
+                                m_exportError.store(true);
+                                goto export_cleanup;
+                            }
+                            av_packet_unref(audioPkt);
+                        }
+                    }
+                    posMs += chunkMs;
+                    m_exportProgress.store(static_cast<float>(posMs) / static_cast<float>(totalMs));
+                }
+            } // end audio-only loop
+
+            // v0.8.0: Flush the audio encoder.
+            if (audioEncCtx) {
+                avcodec_send_frame(audioEncCtx, nullptr);
+                while (audioPkt && avcodec_receive_packet(audioEncCtx, audioPkt) == 0) {
+                    av_packet_rescale_ts(audioPkt, audioEncCtx->time_base, audioStream->time_base);
+                    audioPkt->stream_index = audioStream->index;
+                    if (av_interleaved_write_frame(fmtCtx, audioPkt) < 0) {
+                        m_exportError.store(true);
+                        goto export_cleanup;
+                    }
+                    av_packet_unref(audioPkt);
+                }
+            }
+
+            // Write trailer — v1.0.2: only a successful trailer counts as a
+            // completed write (a failed trailer means a truncated file).
+            if (av_write_trailer(fmtCtx) >= 0) {
+                writeCompleted = true;
+            } else {
+                m_exportError.store(true);
+            }
+
+            // Get file size
+            if (fmtCtx->pb) {
+                m_exportFileSize.store(avio_size(fmtCtx->pb));
+            }
+        }
+    } // end outer if (fmtCtx && ...)
 
     // v0.7.8: avio_open failure jumps here (skips encode, still cleans up)
 export_cleanup:

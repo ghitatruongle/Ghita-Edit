@@ -19,7 +19,11 @@ dependencies:
   path: ^1.9.0
   path_provider: ^2.1.4
   shared_preferences: ^2.3.2
-  record: ^7.1.1
+  # v1.0.0b (CI fix): keep record on the 6.x line — record 7.x requires
+  # Dart >= 3.12, which breaks pub resolution on the CI Flutter 3.27 toolchain
+  # (Dart 3.6). The voiceover API used (AudioRecorder/RecordConfig/start/stop)
+  # is identical in 6.x.
+  record: ^6.1.1
 
 dev_dependencies:
   flutter_test:

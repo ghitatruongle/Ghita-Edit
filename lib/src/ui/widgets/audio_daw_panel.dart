@@ -34,13 +34,15 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
   ];
 
   Future<void> _pickAudioFile() async {
+    final messenger = ScaffoldMessenger.of(context);
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'mp4'],
     );
     if (result != null && result.files.single.path != null && mounted) {
       await widget.controller.importAudioToDaw(result.files.single.path!);
-      ScaffoldMessenger.of(context).showSnackBar(
+      if (!mounted) return;
+      messenger.showSnackBar(
         SnackBar(content: Text('Imported Audio: ${result.files.single.name}')),
       );
     }
@@ -85,7 +87,11 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
                     border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
                   ),
                   child: const Text(
-                    'Sample-Accurate 44.1kHz PCM',
+                    // v1.0.0: Be honest — this panel does preview/editing only,
+                    // no actual DSP/effects yet (EQ/noise reduction are local
+                    // params in this build). Real sample-accurate processing
+                    // is on the Phase 3 roadmap.
+                    'Audio Editor Preview',
                     style: TextStyle(color: AppTheme.primaryLight, fontSize: 10, fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -169,9 +175,16 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
                       const SizedBox(height: 12),
 
                       // Spectral Noise Reduction Switch
+                      // v1.0.3: Now WIRED to the native mixer — previously a
+                      // UI-only toggle that did nothing ("làm rõ âm thanh ko
+                      // hoạt động"). The engine applies a DC blocker/low-cut
+                      // to the preview mix when enabled.
                       SwitchListTile(
                         value: _noiseReduction,
-                        onChanged: (val) => setState(() => _noiseReduction = val),
+                        onChanged: (val) {
+                          setState(() => _noiseReduction = val);
+                          widget.controller.setNoiseSuppress(val);
+                        },
                         activeThumbColor: AppTheme.primary,
                         title: const Text('Spectral Noise Reduction', style: TextStyle(color: AppTheme.textMain, fontSize: 12, fontWeight: FontWeight.bold)),
                         subtitle: const Text('Suppress mic hum & ambient noise', style: TextStyle(color: AppTheme.textMuted, fontSize: 10)),

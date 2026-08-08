@@ -97,7 +97,11 @@ class Track {
 
   /// Trim clip start (adjust in-point).
   void trimClipStart(String clipId, int newStartMs) {
-    final clip = clips.firstWhere((c) => c.id == clipId);
+    // v1.0.1: Defensive — firstWhere throws StateError if the clip was
+    // removed between the UI gesture and the model mutation (race with
+    // undo/redo, split, delete). Return silently instead of crashing.
+    final clip = clips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
     final delta = newStartMs - clip.timelineStartMs;
     if (delta >= clip.durationMs) return; // Can't trim past end
 
@@ -117,7 +121,9 @@ class Track {
 
   /// Trim clip end (adjust out-point).
   void trimClipEnd(String clipId, int newEndMs) {
-    final clip = clips.firstWhere((c) => c.id == clipId);
+    // v1.0.1: Same defensive guard as trimClipStart — the clip may be gone.
+    final clip = clips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
     final newDuration = newEndMs - clip.timelineStartMs;
     if (newDuration <= 0) return;
 
@@ -130,17 +136,42 @@ class Track {
   }
 
   void _resolveOverlaps(Clip newClip) {
-    for (final existing in clips) {
-      // v0.7.8: Shift ANY clip whose span overlaps the new clip — including
-      // one that starts before the insertion point but extends into it.
-      // Previously only clips starting inside the span were moved, leaving
-      // real overlaps (stacked rendering, wrong clipAtPosition results).
-      final overlaps = existing.timelineStartMs < newClip.timelineEndMs &&
-          existing.timelineEndMs > newClip.timelineStartMs;
-      if (overlaps) {
-        // Shift this clip to after the new clip
-        existing.timelineStartMs = newClip.timelineEndMs;
+    // v1.0.1: Resolve cascading overlaps properly. Naively moving every
+    // overlapping clip to newClip.timelineEndMs stacks clips that were
+    // adjacent before the insert (both land at the same position and overlap
+    // EACH OTHER — clipAtPosition/durationMs/rendering all assume a
+    // non-overlapping timeline). Instead, shift each overlapping clip in
+    // timeline order to just after the previous shifted clip, so no new
+    // overlaps are created and their relative order is preserved.
+    // Only clips that OVERLAP the new clip move (matching the set captured
+    // by AddClipCommand for undo), so undo stays consistent.
+    // Note: newClip is not in `clips` yet when addClipAt() calls this.
+    final overlapping = clips
+        .where((c) =>
+            c.timelineStartMs < newClip.timelineEndMs &&
+            c.timelineEndMs > newClip.timelineStartMs)
+        .toList()
+      ..sort((a, b) => a.timelineStartMs.compareTo(b.timelineStartMs));
+
+    // Clips that do NOT overlap the new clip stay put. A shifted clip must
+    // not collide with them either, so jump the cursor past any such clip
+    // that occupies the next placement slot (e.g. a clip starting exactly at
+    // newClip.timelineEndMs).
+    final blockers = clips
+        .where((c) => !overlapping.contains(c))
+        .toList()
+      ..sort((a, b) => a.timelineStartMs.compareTo(b.timelineStartMs));
+
+    var cursor = newClip.timelineEndMs;
+    for (final clip in overlapping) {
+      for (final b in blockers) {
+        if (b.timelineStartMs >= cursor &&
+            b.timelineStartMs < cursor + clip.durationMs) {
+          cursor = b.timelineEndMs;
+        }
       }
+      clip.timelineStartMs = cursor;
+      cursor = clip.timelineEndMs;
     }
   }
 

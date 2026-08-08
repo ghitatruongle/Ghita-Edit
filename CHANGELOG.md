@@ -1,5 +1,47 @@
 # Ghita Edit — Changelog
 
+## v1.0.0 (2026-08-04) — Production Release: Real Animation, Export Formats & Feature Completeness
+
+### 🎯 Mục tiêu
+Bản 1.0.0 chính thức: **mọi tính năng hoạt động thật hoặc được gắn nhãn trung thực — không còn UI giả, stub hay "coming soon"**. Sửa toàn bộ bug thừa kế, hoàn thiện các stub engine, và bổ sung tính năng headline (keyframe animation, speed ramping).
+
+### ✨ Tính năng mới (lần đầu có thật)
+- **Keyframe Animation thật** — engine giờ ĐÁNH GIÁ keyframe khi render (trước chỉ lưu), panel UI mới để animate position/opacity/scale/rotation/filter intensity; interpolation Linear/Step/Bezier
+- **Speed Ramping (CapCut-style)** — `curve_speed.dart` (trước là dead code) giờ wire vào UI + engine; preset + bezier editor cho biến tốc từng đoạn
+- **Color correction đầy đủ 8 trường** — bổ sung slider Tint/Vibrance/Highlights/Shadows (trước chỉ 4/8)
+- **Group/Ungroup clips** — Ctrl+G/Shift+G thật (move/delete cùng lúc), visual màu nhóm
+- **Focus mode** — Ctrl+Shift+F fullscreen preview, ẩn panel
+- **GIF export animated thật + MP3 audio-only** — sửa mis-wire cũ (trước rơi vào h264, file `.gif`/`.mp3` giả)
+- **Thumbnail extraction thật** trong Media Bin (frame thật thay icon)
+- **5 transition thật** — Slide/Wipe/Zoom/Dissolve/Radial (trước là no-op metadata-only)
+- **PiP (picture-in-picture) thật** — geometry x/y/w/h/rotation + blend (trước là stub)
+- **Filter 21 (SkinRetouch) & 22 (ChromaKey)** mở clamp + list; ChromaKey wire cho Magic Cutout
+- **Playback rate áp dụng clock thật** — speed 0.25–4x giờ thật sự đổi tốc playback (trước lưu nhưng không dùng)
+
+### 🐛 Sửa bug
+- **Color correction undo** — trước mutate clip trực tiếp bỏ qua command history; giờ undoable qua `ChangeClipColorCorrectionCommand`
+- **Text-editor edits undo** — trước direct mutation; giờ route qua command
+- **Crosshair toggle** — trước dead (không có nút); giờ có nút bật
+- **Split-view before/after thật** — trước render cùng frame 2 bên; giờ frame gốc (unfiltered) vs đã filter
+- **5 shortcut quảng cáo nhưng thiếu** — Ctrl+G/Shift+G/Ctrl+B/Ctrl+I/Ctrl+Shift+F giờ thật
+- **Bottom toolbar tools** — Select/Trim/Text/Sticker/Filter trước chỉ toast; giờ gắn action thật (hoặc disabled trung thực)
+- **Project version default** — `fromJson` default `'0.3.0'` → `flutterVersion`
+- **Data race `m_lastTickTime`** — renderFrameRGBA ghi chrono non-atomic dưới shared_lock; giờ unique lock
+- **2 analyze warnings** `use_build_context_synchronously` → 0 issues
+- **MP3 preset "0×0 • 0 FPS"** — ẩn dimension khi audio-only
+- **DAW/Photo badges trung thực** — gỡ claim "Sample-Accurate 44.1kHz PCM" nếu chưa thật
+
+### 🧹 Dọn dẹp
+- Gỡ FFI wrapper mồ côi (legacy `addClip`/`getMediaWidth/Height`/`startExport`/`getPlaybackRate`, `applyColorCorrection` v0.7.0 trùng ngữ nghĩa)
+- Standalone `render_text_overlay` stub → gắn nhãn (timeline text clips vẫn thật qua GDI)
+
+### 📊 Metrics (mục tiêu)
+- `flutter analyze`: **0 issues** (trước 2 info)
+- `flutter test`: **100% pass** (thêm regression test cho mọi fix/feature)
+- Native engine self-test: **≥40 pass** (thêm: 5 transition render, keyframe eval, chromakey, PiP, playback rate)
+- Version đồng bộ: v1.0.0+0 (Dart / CMake / C API / self-test / README — đã sẵn từ v0.8.0)
+- Build: rebuild engine MinGW + `flutter build windows --release` + zip chạy được ngay
+
 ## v0.8.0 (2026-08-02) — Real Timeline Engine, Audio, & Full Feature Completeness
 
 ### 🎬 Tính năng chính (lần đầu tiên hoạt động thật sự)

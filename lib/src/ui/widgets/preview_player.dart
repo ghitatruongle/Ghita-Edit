@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'dart:math';
@@ -64,32 +65,67 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
     _startMiniControlsTimer();
   }
 
-  void _onControllerUpdate() {
-    final bytes = widget.controller.frameBytes;
-    if (bytes != null && bytes.isNotEmpty) {
-      ui.decodeImageFromPixels(
-        bytes,
-        EngineService.renderWidth,
-        EngineService.renderHeight,
-        ui.PixelFormat.rgba8888,
-        (ui.Image image) {
-          if (mounted) {
-            setState(() {
-              _currentFrameImage?.dispose();
-              _currentFrameImage = image;
-            });
-          } else {
-            image.dispose();
-          }
-        },
-      );
-    }
+  // v1.0.2: Decode guards — the engine notifies ~30 fps during playback but
+  // the frame content only changes when a NEW frame renders (see
+  // EngineService.frameGeneration). Previously every notification spawned a
+  // ui.decodeImageFromPixels (full RGBA allocation) with no in-flight guard,
+  // so an older decode could complete after a newer one and overwrite it.
+  int _lastDecodedGeneration = -1;
+  bool _decodeInFlight = false;
 
-    // Only update mini-controls visibility state — don't reset timer here
-    // (timer reset only happens on user interaction via _resetMiniControlsTimer)
-    if (mounted && _showMiniControls && widget.controller.isPlaying) {
-      // Keep timer running; don't touch it here
-    }
+  void _onControllerUpdate() {
+    final gen = widget.controller.engineService.frameGeneration;
+    // Skip redundant decodes: same frame generation, or one already decoding.
+    if (_decodeInFlight || gen == _lastDecodedGeneration) return;
+
+    final bytes = widget.controller.frameBytes;
+    if (bytes == null || bytes.isEmpty) return;
+
+    _decodeInFlight = true;
+    final targetGen = gen;
+    // v1.0.2: Decode a STABLE COPY. frameBytes is the engine's scratch buffer
+    // that gets overwritten every 33ms tick — decoding it directly raced the
+    // async texture upload, so a torn/mixed frame (160x90 regions of two
+    // different pictures) was shown as visible noise ("nhiễu").
+    final snapshot = Uint8List.fromList(bytes);
+    // v1.0.2: Safety net — if the texture-upload callback never fires (rare
+    // driver hiccups), _decodeInFlight would stay true forever and every
+    // further frame would be skipped (blank preview). Force a retry.
+    final watchdog = Timer(const Duration(milliseconds: 600), () {
+      _decodeInFlight = false;
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _onControllerUpdate();
+      });
+    });
+    ui.decodeImageFromPixels(
+      snapshot,
+      EngineService.renderWidth,
+      EngineService.renderHeight,
+      ui.PixelFormat.rgba8888,
+      (ui.Image image) {
+        watchdog.cancel();
+        _decodeInFlight = false;
+        if (!mounted) {
+          image.dispose();
+          return;
+        }
+        // A newer frame started rendering while this one decoded — drop this
+        // stale image and re-run on the next frame instead of showing it.
+        if (targetGen != widget.controller.engineService.frameGeneration) {
+          image.dispose();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _onControllerUpdate();
+          });
+          return;
+        }
+        setState(() {
+          _currentFrameImage?.dispose();
+          _currentFrameImage = image;
+          _lastDecodedGeneration = targetGen;
+        });
+      },
+    );
   }
 
   double _playbackSpeed = 1.0;
@@ -113,6 +149,14 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
             child: LayoutBuilder(
               builder: (context, canvasConstraints) {
                 final canvasWidth = canvasConstraints.maxWidth;
+                final canvasHeight = canvasConstraints.maxHeight;
+                // v1.0.2: The video is letterboxed inside a 16:9 AspectRatio
+                // with a 10px margin — the split divider must track the ACTUAL
+                // video area, not the full panel width.
+                final availW = canvasWidth - 20;
+                final availH = canvasHeight - 20;
+                final videoW = min(availW, availH * 16 / 9);
+                final videoLeft = (canvasWidth - videoW) / 2;
                 return Stack(
                   alignment: Alignment.center,
                   children: [
@@ -177,15 +221,24 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                                       if (_showCrosshair) _buildCrosshairOverlay(),
 
                                       // v0.7.0: Split view divider handle
+                                      // v1.0.2: Positioned within the video
+                                      // area and dragged via globalPosition —
+                                      // the old code used the handle's own
+                                      // localPosition (0-4px) so the divider
+                                      // jumped to the left edge on first tick.
                                       if (_splitView)
                                         Positioned(
-                                          left: _splitPosition * canvasWidth - 2,
+                                          left: videoLeft + _splitPosition * videoW - 2,
                                           top: 0,
                                           bottom: 0,
                                           child: GestureDetector(
                                             onHorizontalDragUpdate: (details) {
+                                              final box = context.findRenderObject() as RenderBox?;
+                                              if (box == null) return;
+                                              final originDx = box.localToGlobal(Offset.zero).dx;
+                                              final dx = details.globalPosition.dx - originDx - videoLeft;
                                               setState(() {
-                                                _splitPosition = (details.localPosition.dx / canvasWidth).clamp(0.05, 0.95);
+                                                _splitPosition = (dx / videoW).clamp(0.05, 0.95);
                                               });
                                             },
                                             child: Container(
@@ -435,6 +488,11 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                 }),
                 _iconBtn(_showGrid ? Icons.grid_on_rounded : Icons.grid_off_rounded, 'Rule of Thirds Grid', _showGrid ? AppTheme.primaryLight : AppTheme.textMuted, () {
                   setState(() => _showGrid = !_showGrid);
+                }),
+                // v1.0.0: Crosshair toggle — previously the overlay existed but
+                // no button could turn it on (dead feature). Now it toggles.
+                _iconBtn(_showCrosshair ? Icons.center_focus_strong_rounded : Icons.gps_fixed_rounded, 'Center Crosshair', _showCrosshair ? AppTheme.primaryLight : AppTheme.textMuted, () {
+                  setState(() => _showCrosshair = !_showCrosshair);
                 }),
                 _iconBtn(Icons.fit_screen_rounded, 'Fit to Screen', AppTheme.textMuted, () {
                   setState(() {

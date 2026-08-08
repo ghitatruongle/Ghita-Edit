@@ -234,6 +234,30 @@ private:
     SwrContext* m_swrCtx{nullptr};
     // v0.8.0: Dedicated resampler to interleaved FLT stereo @ 44100 (mix format).
     SwrContext* m_mixSwrCtx{nullptr};
+    // v1.0.2: When decodeAudioSegment requests a position that continues the
+    // PREVIOUS call (the audio preview thread walks forward in fixed chunks),
+    // skip the seek entirely and keep decoding — the per-chunk seek was the
+    // source of audible ticks/stutter ("rè / lộn xộn"). -1 = no contiguous
+    // position to continue from.
+    int64_t m_segContinuityMs{-1};
+
+    // v1.0.2d: PCM/WAV direct-file reader. PCM streams pack the whole file into a
+    // handful of packets with no seekable index, so per-window FFmpeg
+    // seek+flush lands the demuxer at EOF partway through (~50%) and the later
+    // windows come back silent ("rè / lộn xộn"). v1.0.3: instead of decoding
+    // the whole file into RAM (the old FLT cache peaked at ~350 KB/s of audio),
+    // locate the WAV 'data' chunk once and read sample bytes directly from the
+    // FILE per window — O(1) memory, no demuxer seek, works for any length.
+    std::string m_pcmPath;        // file path of the PCM/WAV source
+    int64_t m_pcmDataOffset{0};   // byte offset of the first sample
+    int64_t m_pcmDataBytes{0};    // total bytes of sample data
+    int m_pcmSrcCh{0};            // 1 or 2
+    int m_pcmSrcRate{0};          // source sample rate (Hz)
+    int m_pcmSrcBits{0};          // 16 (PCM int) or 32 (IEEE float)
+    bool m_pcmSrcFloat{false};    // format tag 3 = float32 samples
+    bool m_pcmCached{false};
+    bool pcmCacheAudio();
+    bool readPcmFromCache(int64_t startMs, float* outSamples, int sampleCount, float volume);
 
     int m_videoStreamIdx{-1};
     int m_audioStreamIdx{-1};
@@ -242,6 +266,12 @@ private:
     AVFrame* m_rgbFrame{nullptr};
     uint8_t* m_rgbBuffer{nullptr};
     int m_rgbBufferSize{0};
+    // v1.0.3: Cached decoded RGBA for still images (PNG/JPEG single-frame
+    // streams). Image demuxers are non-seekable — the first decode caches the
+    // scaled frame and all later positions reuse it instead of re-seeking.
+    std::vector<uint8_t> m_stillCache;
+    int m_stillCacheW{0};
+    int m_stillCacheH{0};
 
     bool initFFmpegContexts();
     void destroyFFmpegContexts();
@@ -412,6 +442,11 @@ public:
     void setAudioPreviewEnabled(bool enabled) { m_audioPreviewEnabled.store(enabled); }
     bool isAudioPreviewEnabled() const { return m_audioPreviewEnabled.load(); }
 
+    // v1.0.3: Noise suppression toggle ("làm rõ âm thanh"). Applied to the
+    // mixed preview audio only (one-pole low-cut); export is unaffected.
+    void setNoiseSuppress(bool enabled) { m_noiseSuppress.store(enabled); }
+    bool isNoiseSuppressEnabled() const { return m_noiseSuppress.load(); }
+
     /**
      * @brief v0.8.0: Mixs PCM (interleaved float stereo @ 44100) for the
      * window [startMs, endMs) from all clips that overlap it, applying clip
@@ -558,6 +593,10 @@ private:
     // thread-safe (shared packets/frames), so concurrent render calls were a
     // data race before this mutex. The audio preview thread also takes it.
     mutable std::mutex m_renderMutex;
+    // v1.0.0: Dedicated mutex for m_lastTickTime — previously the render path
+    // read+updated this time_point under a shared engine lock, racing with
+    // play()/seek() writes done under their own short-lived locks.
+    mutable std::mutex m_tickTimeMutex;
 
     // v0.8.0: Per-clip decoder cache (LRU, capped) so each timeline clip keeps
     // its own FFmpeg context instead of re-opening the file every frame.
@@ -566,9 +605,6 @@ private:
     static constexpr size_t kMaxClipDecoders = 8;
     // v0.8.0: Scratch buffer for compositing (one full frame).
     std::vector<uint8_t> m_renderScratch;
-    // v0.8.0: Pre-cached "close enough" position per decoder to skip redundant
-    // seeks when the timeline walks forward (keyed by clip id).
-    std::unordered_map<int, int64_t> m_decoderLastPos;
 
     // Export state & async worker
     std::atomic<bool> m_isExporting{false};
@@ -592,6 +628,15 @@ private:
     std::atomic<bool> m_audioThreadRunning{false};
     std::atomic<bool> m_audioStopFlag{false};
     std::thread m_audioThread;
+    // v1.0.3: Noise suppression ("làm rõ âm thanh") — a DC blocker / low-cut
+    // applied to the mixed preview audio when the DAW toggle is on. Simple
+    // one-pole high-pass (≈85Hz) that removes hum & rumble without touching
+    // the original file data (export is unaffected).
+    std::atomic<bool> m_noiseSuppress{false};
+    // v1.0.2: Serializes startAudioPreviewThread/stopAudioPreviewThread —
+    // play() and pause() can run on different Dart threads, and a concurrent
+    // assignment/join on the same std::thread object is UB.
+    std::mutex m_audioThreadMutex;
 
     void startAudioPreviewThread();
     void stopAudioPreviewThread();

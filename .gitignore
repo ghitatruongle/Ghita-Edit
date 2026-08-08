@@ -230,6 +230,8 @@ app.*.map.json
 *.bz2
 *.xz
 *.iso
+# Release pipeline output (scripts/build_release.sh)
+dist/
 
 # ==============================================================================
 # SAFEGUARDS: Explicitly Protect All Source Code Extensions
@@ -253,3 +255,6 @@ app.*.map.json
 !*.ico
 !*.rc
 !.github/
+
+# Third-party local data (FreeBun desktop DB etc.)
+.freebuff/

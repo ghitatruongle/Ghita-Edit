@@ -21,6 +21,15 @@ class UndoHistoryPanel extends StatefulWidget {
 }
 
 class _UndoHistoryPanelState extends State<UndoHistoryPanel> {
+  // v1.0.2: Track the last-seen history state — the controller notifies at
+  // 30 fps during playback and on every selection change, but the stacks
+  // only change when a command runs. Skipping the rebuild keeps the panel
+  // cheap and avoids copying both stacks per frame.
+  int _lastUndoCount = -1;
+  int _lastRedoCount = -1;
+  String? _lastUndoDesc;
+  String? _lastRedoDesc;
+
   @override
   void initState() {
     super.initState();
@@ -28,6 +37,21 @@ class _UndoHistoryPanelState extends State<UndoHistoryPanel> {
   }
 
   void _onControllerChanged() {
+    final history = widget.controller.commandHistory;
+    final uCount = history.undoCount;
+    final rCount = history.redoCount;
+    final uDesc = history.lastUndoDescription;
+    final rDesc = history.lastRedoDescription;
+    if (uCount == _lastUndoCount &&
+        rCount == _lastRedoCount &&
+        uDesc == _lastUndoDesc &&
+        rDesc == _lastRedoDesc) {
+      return;
+    }
+    _lastUndoCount = uCount;
+    _lastRedoCount = rCount;
+    _lastUndoDesc = uDesc;
+    _lastRedoDesc = rDesc;
     if (mounted) setState(() {});
   }
 

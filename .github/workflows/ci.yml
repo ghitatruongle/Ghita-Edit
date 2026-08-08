@@ -57,7 +57,10 @@ jobs:
       - name: Set up Flutter SDK
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.x'
+          # v1.0.0c: align with the development SDK (local: 3.44.2). The
+          # pinned 3.27.x lacked SwitchListTile.activeThumbColor /
+          # Color.toARGB32, so the analyzer failed on every CI run.
+          flutter-version: '3.44.x'
           channel: 'stable'
 
       - name: Install Dependencies
@@ -89,6 +92,36 @@ jobs:
       - name: Build C++ Shared Library
         run: cmake --build native_engine/build --config Release
 
+  engine-smoke-test-windows:
+    name: Engine Smoke Test (Windows Release)
+    # v1.0.1: Builds the full Windows Release app and runs the real-engine
+    # smoke test (scripts/run_engine_smoke_test.sh) — verifies the engine DLL
+    # loads/initializes, the FFmpeg runtime DLLs are bundled when the engine
+    # needs them (the silent Demo-Mode regression), and the log is clean.
+    # Note: windows-latest has no FFmpeg dev install, so the engine builds
+    # synthetic-only there and the MP3 import/playback portion is skipped;
+    # run the script locally (or on a runner with FFmpeg) for the full path.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          # v1.0.0c: align with the development SDK (see analyze job).
+          flutter-version: '3.44.x'
+          channel: 'stable'
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Windows Release
+        run: flutter build windows --release
+
+      - name: Run Engine Smoke Test
+        shell: bash
+        run: bash scripts/run_engine_smoke_test.sh
+
   build-native-engine-linux:
     name: Build C++ Native Engine (Linux GCC)
     runs-on: ubuntu-latest
@@ -111,7 +144,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install FFmpeg (Homebrew)
-        run: brew install ffmpeg pkg-config
+        # v1.0.0d (CI fix): the macOS runner ships an untrusted 'aws/tap',
+        # so `brew install ffmpeg` fails with "taps are not trusted".
+        run: |
+          brew untap aws/tap 2>/dev/null || true
+          brew install ffmpeg pkg-config
 
       - name: Configure CMake
         run: cmake -B native_engine/build -S native_engine -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0

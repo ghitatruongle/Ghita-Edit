@@ -85,6 +85,11 @@ install(TARGETS ${BINARY_NAME} ghita_engine RUNTIME DESTINATION "${CMAKE_INSTALL
 # v0.8.0: Bundle the FFmpeg runtime DLLs (avcodec/avformat/avutil/swscale/
 # swresample) next to the executable — the engine links them dynamically and
 # without them the app silently falls back to Demo Mode / synthetic content.
+# v1.0.2: ALSO bundle the MSVC runtime DLLs the engine + FFmpeg DLLs depend
+# on (the Release build is compiled with MSVC — objdump shows imports of
+# MSVCP140/VCRUNTIME140/VCRUNTIME140_1). On machines without the VC++
+# Redistributable the engine DLL fails to load and the app silently drops
+# into Demo Mode (frozen playhead, blank preview, no decode/audio).
 if(DEFINED GHITA_FFMPEG_BIN_DIR AND EXISTS "${GHITA_FFMPEG_BIN_DIR}")
   file(GLOB FFMPEG_RUNTIME_DLLS
     "${GHITA_FFMPEG_BIN_DIR}/av*.dll"
@@ -94,6 +99,18 @@ if(DEFINED GHITA_FFMPEG_BIN_DIR AND EXISTS "${GHITA_FFMPEG_BIN_DIR}")
       DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
       COMPONENT Runtime)
   endif()
+endif()
+
+# v1.0.2: Bundle the MSVC runtime (VCRUNTIME* / MSVCP*) from the system so
+# the installer works on machines without the VC++ Redistributable. These
+# come from C:\Windows\System32 (present wherever MSVC built the app).
+if(EXISTS "C:/Windows/System32/VCRUNTIME140.dll")
+  install(FILES
+    "C:/Windows/System32/MSVCP140.dll"
+    "C:/Windows/System32/VCRUNTIME140.dll"
+    "C:/Windows/System32/VCRUNTIME140_1.dll"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
 endif()
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

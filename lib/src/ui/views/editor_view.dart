@@ -46,12 +46,23 @@ class _EditorViewState extends State<EditorView> {
   bool _mediaBinVisible = true;
   bool _inspectorVisible = true;
 
+  // v1.0.0: Focus mode (Ctrl+Shift+F) — fullscreen preview, panels hidden.
+  bool _focusMode = false;
+
+  // v1.0.0: Controlled Media Bin tab so the bottom toolbar tools (Text /
+  // Sticker / Filter / Audio) actually switch the bin to the relevant tab
+  // instead of showing a dead-end toast. 0=Media 1=Audio 2=Stickers
+  // 3=Effects 4=Text.
+  int _mediaBinTab = 0;
+
   // v0.7.0: Active bottom tool
   String _activeTool = 'select';
 
   // v0.7.0: Toast overlay
   OverlayEntry? _toastOverlay;
   final List<_ToastItem> _toastQueue = [];
+  // v1.0.1: Track pending toast timers so dispose() can cancel them.
+  final List<Timer> _pendingToastTimers = [];
 
   // v0.7.0: Bottom toolbar tool definitions
   static const _bottomTools = [
@@ -155,7 +166,25 @@ class _EditorViewState extends State<EditorView> {
   void dispose() {
     _sessionRecoveryTimer?.cancel();
     _focusNode.dispose();
-    _toastOverlay?.remove();
+    // v1.0.1: Cancel pending toast timers — otherwise they fire after
+    // dispose and call remove() on stale OverlayEntries.
+    for (final timer in _pendingToastTimers) {
+      timer.cancel();
+    }
+    _pendingToastTimers.clear();
+    // v1.0.1: Guard against a stale reference — the current toast may already
+    // have been removed by its timer (double-removing an OverlayEntry crashes).
+    try {
+      _toastOverlay?.remove();
+    } catch (_) {}
+    _toastOverlay = null;
+    // Remove any queued toast entries that haven't been shown yet.
+    for (final item in _toastQueue) {
+      try {
+        item.entry.remove();
+      } catch (_) {}
+    }
+    _toastQueue.clear();
     _controller.dispose();
     super.dispose();
   }
@@ -181,17 +210,34 @@ class _EditorViewState extends State<EditorView> {
     overlay ??= Overlay.of(context);
     if (_toastQueue.isEmpty) return;
     final item = _toastQueue.removeAt(0);
-    _toastOverlay?.remove();
+    // v1.0.1: The previous entry may already have been removed by its timer
+    // (guard in case the reference is stale) — double-removing crashes.
+    try {
+      _toastOverlay?.remove();
+    } catch (_) {}
     _toastOverlay = item.entry;
     overlay.insert(item.entry);
 
-    Future.delayed(item.duration, () {
+    // v1.0.1: Track the timer so dispose() can cancel it.
+    late final Timer timer;
+    timer = Timer(item.duration, () {
+      _pendingToastTimers.remove(timer);
       if (!mounted) return;
-      item.entry.remove();
+      try {
+        item.entry.remove();
+      } catch (_) {}
+      // v1.0.1: Clear the reference when the toast expires — otherwise
+      // OverlayEntry.remove() is called AGAIN on this detached entry by
+      // _showNextToast()/dispose() and crashes ('should be removed only
+      // once': assert in debug, null-check TypeError in release).
+      if (_toastOverlay == item.entry) {
+        _toastOverlay = null;
+      }
       if (_toastQueue.isNotEmpty) {
         Future.microtask(() => _showNextToast(overlay));
       }
     });
+    _pendingToastTimers.add(timer);
   }
 
   // ============================================================
@@ -210,7 +256,11 @@ class _EditorViewState extends State<EditorView> {
       child: AnimatedBuilder(
         animation: _controller,
         builder: (context, child) {
-          if (!_controller.isEngineReady) {
+          // v1.0.1: Show the loading shell only while init() is running.
+          // Once init completes (engine ready OR demo mode), show the full
+          // editor layout — previously the app was stuck on the loading
+          // shell forever when no native DLL was present.
+          if (!_controller.isInitComplete) {
             return _loadingShell();
           }
 
@@ -235,15 +285,49 @@ class _EditorViewState extends State<EditorView> {
                       }
 
                       // Default: Video Studio (CapCut & WinK Pro)
+                      // v1.0.0: Focus mode (Ctrl+Shift+F) — preview only,
+                      // panels hidden, for a fullscreen editing view.
+                      if (_focusMode) {
+                        return Stack(
+                          children: [
+                            PreviewPlayer(controller: _controller),
+                            Positioned(
+                              top: 12,
+                              right: 12,
+                              child: Tooltip(
+                                message: 'Exit Focus Mode (Ctrl+Shift+F)',
+                                child: ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppTheme.card,
+                                    foregroundColor: AppTheme.textMain,
+                                    elevation: 4,
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
+                                  ),
+                                  icon: const Icon(Icons.fullscreen_exit_rounded, size: 16),
+                                  label: const Text('Exit Focus', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                  onPressed: () => setState(() => _focusMode = false),
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+
                       return Row(
                         children: [
                           // Media Bin (collapsible)
                           if (_mediaBinVisible) ...[
-                            AnimatedContainer(
-                              duration: AppTheme.durationNormal,
-                              curve: AppTheme.curveStandard,
-                              width: 280,
-                              child: MediaBin(controller: _controller),
+                            // v1.0.2: RepaintBoundary — the parent rebuilds at
+                            // ~30 fps during playback; isolate each panel's
+                            // paint so a dirty frame in one doesn't repaint all.
+                            RepaintBoundary(
+                              child: AnimatedContainer(
+                                duration: AppTheme.durationNormal,
+                                curve: AppTheme.curveStandard,
+                                width: 280,
+                                child: MediaBin(controller: _controller, initialTab: _mediaBinTab),
+                              ),
                             ),
                             _buildPanelDivider(
                               onTap: () => setState(() => _mediaBinVisible = !_mediaBinVisible),
@@ -257,7 +341,9 @@ class _EditorViewState extends State<EditorView> {
                                 // Preview Player
                                 Expanded(
                                   flex: 5,
-                                  child: PreviewPlayer(controller: _controller),
+                                  child: RepaintBoundary(
+                                    child: PreviewPlayer(controller: _controller),
+                                  ),
                                 ),
 
                                 const Divider(height: 1, color: AppTheme.divider),
@@ -265,7 +351,9 @@ class _EditorViewState extends State<EditorView> {
                                 // Timeline Panel
                                 Expanded(
                                   flex: 4,
-                                  child: TimelinePanel(controller: _controller),
+                                  child: RepaintBoundary(
+                                    child: TimelinePanel(controller: _controller),
+                                  ),
                                 ),
                               ],
                             ),
@@ -276,11 +364,13 @@ class _EditorViewState extends State<EditorView> {
                             _buildPanelDivider(
                               onTap: () => setState(() => _inspectorVisible = !_inspectorVisible),
                             ),
-                            AnimatedContainer(
-                              duration: AppTheme.durationNormal,
-                              curve: AppTheme.curveStandard,
-                              width: 320,
-                              child: InspectorPanel(controller: _controller),
+                            RepaintBoundary(
+                              child: AnimatedContainer(
+                                duration: AppTheme.durationNormal,
+                                curve: AppTheme.curveStandard,
+                                width: 320,
+                                child: InspectorPanel(controller: _controller),
+                              ),
                             ),
                           ],
                         ],
@@ -333,7 +423,6 @@ class _EditorViewState extends State<EditorView> {
                                       style: const TextStyle(color: AppTheme.textMain, fontSize: 10, fontFamily: 'monospace'),
                                     ),
                                   ),
-                                  const SizedBox(width: 10),
                                   const SizedBox(width: 10),
                                   _buildEngineStatusBadge(),
                                 ],
@@ -667,6 +756,15 @@ class _EditorViewState extends State<EditorView> {
   void _onToolSelected(String toolId) {
     switch (toolId) {
       case 'trim':
+        // v1.0.0: Select the clip under the playhead so trim handles are
+        // immediately actionable, instead of a dead-end toast.
+        for (final track in _controller.tracks) {
+          final clip = track.clipAtPosition(_controller.positionMs);
+          if (clip != null) {
+            _controller.selectClip(clip.id);
+            break;
+          }
+        }
         _showToast('Trim mode: drag clip edges to trim');
         break;
       case 'split':
@@ -674,13 +772,14 @@ class _EditorViewState extends State<EditorView> {
         _showToast('Split at playhead');
         break;
       case 'text':
-        _showToast('Select a text preset from Media Bin → Text tab');
+        // v1.0.0: actually switch the Media Bin to the Text tab.
+        _switchMediaBinTab(4);
         break;
       case 'sticker':
-        _showToast('Select a sticker from Media Bin → Stickers tab');
+        _switchMediaBinTab(2);
         break;
       case 'filter':
-        _showToast('Select a filter from Media Bin → Effects tab');
+        _switchMediaBinTab(3);
         break;
       case 'audio':
         // v0.8.0: The Audio tool opens the voiceover recorder (record
@@ -695,14 +794,47 @@ class _EditorViewState extends State<EditorView> {
     }
   }
 
+  /// v1.0.0: Switch the Media Bin to [tab] (0=Media 1=Audio 2=Stickers
+  /// 3=Effects 4=Text), showing it first if hidden. The toolbar's Text /
+  /// Sticker / Filter tools now navigate to the right tab instead of
+  /// showing a toast.
+  void _switchMediaBinTab(int tab) {
+    setState(() {
+      if (!_mediaBinVisible) _mediaBinVisible = true;
+      _mediaBinTab = tab;
+    });
+  }
+
   // v0.7.9: UX-04 — view-level key handling: Ctrl+T toggles the theme;
   // every other key falls through to the editor controller.
+  // v1.0.0: Ctrl+B / Ctrl+I toggle the Media Bin / Inspector panels;
+  // Ctrl+Shift+F toggles Focus mode (fullscreen preview) — these were
+  // advertised in the shortcuts dialog but never handled.
   bool _handleKeyEvent(KeyEvent event) {
-    if (event is KeyDownEvent &&
-        HardwareKeyboard.instance.isControlPressed &&
-        event.logicalKey == LogicalKeyboardKey.keyT) {
-      _toggleTheme();
-      return true;
+    if (event is! KeyDownEvent) return false;
+    final ctrl = HardwareKeyboard.instance.isControlPressed;
+    final shift = HardwareKeyboard.instance.isShiftPressed;
+    if (ctrl) {
+      final key = event.logicalKey;
+      if (key == LogicalKeyboardKey.keyT) {
+        _toggleTheme();
+        return true;
+      }
+      if (key == LogicalKeyboardKey.keyB) {
+        setState(() => _mediaBinVisible = !_mediaBinVisible);
+        _showToast(_mediaBinVisible ? 'Media Bin shown' : 'Media Bin hidden');
+        return true;
+      }
+      if (key == LogicalKeyboardKey.keyI) {
+        setState(() => _inspectorVisible = !_inspectorVisible);
+        _showToast(_inspectorVisible ? 'Inspector shown' : 'Inspector hidden');
+        return true;
+      }
+      if (shift && key == LogicalKeyboardKey.keyF) {
+        setState(() => _focusMode = !_focusMode);
+        _showToast(_focusMode ? 'Focus mode on' : 'Focus mode off');
+        return true;
+      }
     }
     return _controller.handleKeyEvent(event);
   }
@@ -998,6 +1130,9 @@ class _EditorViewState extends State<EditorView> {
   // ============================================================
 
   Widget _loadingShell() {
+    // v1.0.1: While initializing, show a spinner. The full editor layout
+    // appears once init() completes (handled by isInitComplete in build()).
+    final initializing = !_controller.isInitComplete;
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: Center(
@@ -1015,8 +1150,10 @@ class _EditorViewState extends State<EditorView> {
               child: Icon(Icons.movie_edit, color: Colors.white, size: 32),
             ),
             const SizedBox(height: 24),
-            const CircularProgressIndicator(color: AppTheme.primaryLight, strokeWidth: 2),
-            const SizedBox(height: 24),
+            if (initializing) ...[
+              const CircularProgressIndicator(color: AppTheme.primaryLight, strokeWidth: 2),
+              const SizedBox(height: 24),
+            ],
             Text(
               _controller.statusMessage,
               style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14, height: 1.5),
@@ -1048,7 +1185,13 @@ class _EditorViewState extends State<EditorView> {
         allowedExtensions: ['mp4', 'mov', 'avi', 'mkv', 'mp3', 'wav', 'flac', 'png', 'jpg', 'jpeg', 'webm', 'gif'],
       );
       if (result != null && mounted) {
-        _controller.importMedia(result.files.single.path!);
+        // v1.0.1: Null-safe — path can be null on some platforms (web).
+        final path = result.files.single.path;
+        if (path == null || path.isEmpty) {
+          _showToast('Import cancelled — no file selected');
+          return;
+        }
+        _controller.importMedia(path);
         _showToast('Imported: ${result.files.single.name}');
       }
     } catch (e) {
@@ -1382,6 +1525,10 @@ class _ToastOverlay extends StatefulWidget {
 
 class _ToastOverlayState extends State<_ToastOverlay> {
   late double _opacity;
+  // v1.0.2: A cancellable Timer instead of Future.delayed — the fade-out
+  // callback can now be cancelled in dispose(), so an early-dismissed toast
+  // (new toast replacing it) can never fire setState after disposal.
+  Timer? _dismissTimer;
 
   @override
   void initState() {
@@ -1394,11 +1541,17 @@ class _ToastOverlayState extends State<_ToastOverlay> {
     // entry itself is removed by _showNextToast; v0.7.8 removed the
     // Navigator.maybePop() here, which used to close whatever dialog was on
     // top (Export, Shortcuts, ...) when the toast expired.
-    Future.delayed(widget.duration, () {
+    _dismissTimer = Timer(widget.duration, () {
       if (mounted) {
         setState(() => _opacity = 0);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _dismissTimer?.cancel();
+    super.dispose();
   }
 
   @override

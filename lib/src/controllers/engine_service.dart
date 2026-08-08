@@ -22,6 +22,7 @@ class EngineService extends ChangeNotifier {
 
   Timer? _renderTimer;
   bool _isRunning = false;
+  bool _initializing = false;
 
   bool get isReady => _ctx != null && _ctx != nullptr;
   bool get isRunning => _isRunning;
@@ -80,6 +81,13 @@ class EngineService extends ChangeNotifier {
 
   Uint8List? get frameBytes => _frameBytes;
 
+  // v1.0.2: Monotonic frame generation — incremented every time a NEW frame
+  // is rendered into _frameBytes (cache hits keep the previous frame and do
+  // NOT bump it). Consumers (PreviewPlayer) use it to skip redundant
+  // ui.decodeImageFromPixels calls when the frame content did not change.
+  int _frameGeneration = 0;
+  int get frameGeneration => _frameGeneration;
+
   EngineService({GhitaNativeBindings? bindings, bool skipNativeInit = false})
       : _bindings = bindings ?? (skipNativeInit ? null : _tryLoadBindings());
 
@@ -104,6 +112,19 @@ class EngineService extends ChangeNotifier {
   Future<void> initialize() async {
     _checkDisposed();
     if (isReady) return;
+    // v1.0.1: Guard against concurrent initialize() calls — if two callers
+    // pass the `isReady` check before _ctx is set, both would create engine
+    // contexts and the first would leak.
+    if (_initializing) return;
+    _initializing = true;
+    try {
+      await _doInitialize();
+    } finally {
+      _initializing = false;
+    }
+  }
+
+  Future<void> _doInitialize() async {
     final bindings = _bindings;
     if (bindings == null) {
       debugPrint('[EngineService] No FFI bindings available — cannot initialize');
@@ -157,7 +178,14 @@ class EngineService extends ChangeNotifier {
       _nativeLibraryLoaded = true;
 
       // Allocate native buffer for preview frames
+      // v1.0.1: calloc can return nullptr on OOM — don't start the tick
+      // loop with a null buffer, the preview would silently die.
       _framePointer = calloc<Uint8>(renderWidth * renderHeight * 4);
+      if (_framePointer == nullptr) {
+        debugPrint('[EngineService] Failed to allocate frame buffer — preview disabled');
+        // Engine is "ready" but preview won't run. This is a degraded mode.
+        return;
+      }
       _frameBytes = Uint8List(renderWidth * renderHeight * 4);
 
       _startTickLoop();
@@ -231,6 +259,15 @@ class EngineService extends ChangeNotifier {
     _checkDisposed();
     final bindings = _bindings;
     if (!isReady || bindings == null) return;
+    // v1.0.3: Self-heal the preview tick loop. If a previous tick threw once,
+    // the old code called stopPreview() and the loop was DEAD FOREVER — the
+    // engine kept "playing" but the position only advanced inside
+    // renderFrameRGBA, so nothing moved until the user manually seeked
+    // (complaint: "bấm Play không chạy, kéo timeline mới chạy").
+    if (!_isRunning) {
+      debugPrint('[EngineService] play(): restarting preview tick loop');
+      startPreview();
+    }
     _isPlaying = true;
     bindings.play(_ctx!);
   }
@@ -247,6 +284,11 @@ class EngineService extends ChangeNotifier {
     _checkDisposed();
     final bindings = _bindings;
     if (!isReady || bindings == null) return;
+    // v1.0.3: Same self-heal as play() — one transient tick failure must not
+    // leave the preview unresponsive until a resurrecting call.
+    if (!_isRunning) {
+      startPreview();
+    }
     bindings.seek(_ctx!, positionMs);
     _positionMs = positionMs;
   }
@@ -261,11 +303,27 @@ class EngineService extends ChangeNotifier {
     }
   }
 
+  // v1.0.3: Noise suppression ("làm rõ âm thanh") — mirrors the DAW toggle to
+  // the native mixer (DC blocker / low-cut on the preview mix). No-op on
+  // engines that don't export the symbol.
+  void setNoiseSuppress(bool enabled) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.setNoiseSuppress;
+    if (!isReady || fn == null) return;
+    try {
+      fn(_ctx!, enabled ? 1 : 0);
+    } catch (e) {
+      debugPrint('[EngineService] setNoiseSuppress failed: $e');
+    }
+  }
+
   // v0.4.5: Extended filter range (0-10 instead of 0-4)
   // v0.8.0: Range extended to 0-20 (VHS/Glitch/Vignette/Grain/...).
+  // v1.0.2: Range extended to 0-22 (Skin Retouch 21, Chroma Key 22).
   void applyFilter(int filterType, double intensity) {
     _checkDisposed();
-    if (filterType < 0 || filterType > 20) return;
+    if (filterType < 0 || filterType > 22) return;
     if (intensity < 0.0) intensity = 0.0;
     if (intensity > 1.0) intensity = 1.0;
     _activeFilterType = filterType;
@@ -294,10 +352,11 @@ class EngineService extends ChangeNotifier {
   }) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null || clipId <= 0) return false;
+    final fn = bindings?.upsertClip;
+    if (!isReady || fn == null || clipId <= 0) return false;
     final pathPtr = filePath.toNativeUtf8();
     try {
-      return bindings.upsertClip(
+      return fn(
         _ctx!,
         clipId,
         pathPtr,
@@ -322,9 +381,10 @@ class EngineService extends ChangeNotifier {
   void clearClips() {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null) return;
+    final fn = bindings?.clearClips;
+    if (!isReady || fn == null) return;
     try {
-      bindings.clearClips(_ctx!);
+      fn(_ctx!);
     } catch (e) {
       debugPrint('[EngineService] clearClips failed: $e');
     }
@@ -347,9 +407,10 @@ class EngineService extends ChangeNotifier {
   bool setTrackState(int trackIndex, {required bool muted, required bool visible, double volume = 1.0}) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null || trackIndex < 0) return false;
+    final fn = bindings?.setTrackState;
+    if (!isReady || fn == null || trackIndex < 0) return false;
     try {
-      return bindings.setTrackState(
+      return fn(
             _ctx!,
             trackIndex,
             muted ? 1 : 0,
@@ -376,9 +437,10 @@ class EngineService extends ChangeNotifier {
   }) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null || clipId <= 0) return false;
+    final fn = bindings?.setClipColorCorrection;
+    if (!isReady || fn == null || clipId <= 0) return false;
     try {
-      return bindings.setClipColorCorrection(
+      return fn(
             _ctx!,
             clipId,
             exposure,
@@ -400,10 +462,11 @@ class EngineService extends ChangeNotifier {
   bool setClipText({required int clipId, required String text, double fontSize = 48.0, int colorArgb = 0xFFFFFFFF}) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null || clipId <= 0) return false;
+    final fn = bindings?.setClipText;
+    if (!isReady || fn == null || clipId <= 0) return false;
     final textPtr = text.toNativeUtf8();
     try {
-      return bindings.setClipText(_ctx!, clipId, textPtr, fontSize, colorArgb) != 0;
+      return fn(_ctx!, clipId, textPtr, fontSize, colorArgb) != 0;
     } catch (e) {
       debugPrint('[EngineService] setClipText failed: $e');
       return false;
@@ -416,9 +479,10 @@ class EngineService extends ChangeNotifier {
   bool hasClip(int clipId) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null) return false;
+    final fn = bindings?.hasClip;
+    if (!isReady || fn == null) return false;
     try {
-      return bindings.hasClip(_ctx!, clipId) != 0;
+      return fn(_ctx!, clipId) != 0;
     } catch (_) {
       return false;
     }
@@ -441,9 +505,12 @@ class EngineService extends ChangeNotifier {
   bool setClipTransition(int clipId, int transitionType, int durationMs) {
     _checkDisposed();
     final bindings = _bindings;
-    if (!isReady || bindings == null || clipId <= 0) return false;
+    // v1.0.1: Defensive — setClipTransition is a v0.4.0 binding (not v0.8.0)
+    // so it's always present if the engine loaded, but be safe anyway.
+    final fn = bindings?.setClipTransition;
+    if (!isReady || fn == null || clipId <= 0) return false;
     try {
-      return bindings.setClipTransition(_ctx!, clipId, transitionType, durationMs);
+      return fn(_ctx!, clipId, transitionType, durationMs);
     } catch (e) {
       debugPrint('[EngineService] setClipTransition failed: $e');
       return false;
@@ -475,10 +542,26 @@ class EngineService extends ChangeNotifier {
     final pathPtr = path.toNativeUtf8();
     try {
       bindings.loadMedia(_ctx!, pathPtr);
-    } finally {
+    } catch (e) {
+      debugPrint('[EngineService] loadMedia failed for $path: $e');
       calloc.free(pathPtr);
+      return;
     }
-    _durationMs = bindings.getDurationMs(_ctx!);
+    calloc.free(pathPtr);
+
+    // v1.0.2: Validate the probe result — a failed/open-but-empty media could
+    // report 0 (or the FFI call could throw). Fall back to the current
+    // duration instead of silently treating the media as zero-length.
+    try {
+      final duration = bindings.getDurationMs(_ctx!);
+      if (duration > 0) {
+        _durationMs = duration;
+      } else {
+        debugPrint('[EngineService] Warning: getDurationMs returned $duration for $path');
+      }
+    } catch (e) {
+      debugPrint('[EngineService] getDurationMs failed: $e');
+    }
     _positionMs = 0;
 
     // v0.7.8: Invalidate the waveform cache when the media changes.
@@ -493,7 +576,10 @@ class EngineService extends ChangeNotifier {
   // every frame. Invalidate on loadMedia instead.
   // v0.7.9: Multi-level cache — one native fetch per sample count, then
   // cheap interpolation serves every other zoom level.
+  // v1.0.2: Bounded — an unbounded map grew forever when many zoom levels
+  // requested distinct sample counts over a long session.
   final Map<int, Float32List> _waveformCacheByCount = {};
+  static const int _maxWaveformCacheEntries = 12;
 
   /// Retrieve audio waveform samples from the native engine (v0.3.0).
   Float32List getAudioWaveform(int count, {int? downsamplingFactor}) {
@@ -521,6 +607,12 @@ class EngineService extends ChangeNotifier {
       final ok = bindings.getAudioWaveform(_ctx!, ptr, effectiveCount);
       if (ok) {
         var result = Float32List.fromList(ptr.asTypedList(effectiveCount));
+        // v1.0.2: Bound the cache — evict the oldest entry (insertion order)
+        // once it exceeds the cap so long sessions cannot grow it forever.
+        if (_waveformCacheByCount.length >= _maxWaveformCacheEntries &&
+            !_waveformCacheByCount.containsKey(effectiveCount)) {
+          _waveformCacheByCount.remove(_waveformCacheByCount.keys.first);
+        }
         _waveformCacheByCount[effectiveCount] = result;
         // If downsampling was requested, upsample by interpolating
         if (downsamplingFactor != null && effectiveCount < count) {
@@ -813,6 +905,10 @@ class EngineService extends ChangeNotifier {
       if (success) {
         final nativeList = _framePointer!.asTypedList(renderWidth * renderHeight * 4);
         _frameBytes!.setAll(0, nativeList);
+        // v1.0.2: Bump the generation ONLY for genuinely new frames — a
+        // cache hit below reuses the same bytes and must not trigger a
+        // redundant decode on the UI side.
+        _frameGeneration++;
         // v0.7.8: Cache a COPY — storing the shared mutable buffer meant every
         // cache entry aliased the same bytes (later frames overwrote earlier
         // ones and scrubbing back showed the wrong frame).
@@ -823,8 +919,11 @@ class EngineService extends ChangeNotifier {
       return success;
     } catch (e, st) {
       debugPrint('[EngineService] _tickFrame failed: $e\n$st');
-      stopPreview();
-      return false;
+      // v1.0.3: Do NOT stop the loop permanently on a transient failure —
+      // that killed playback ("play không chạy") after the first hiccup.
+      // Skip this tick and keep going; a permanently broken engine still
+      // surfaces via isReady/position staying frozen.
+      return true;
     }
   }
 
@@ -832,9 +931,7 @@ class EngineService extends ChangeNotifier {
     stopPreview();
     _isRunning = true;
     _renderTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
-      if (!_tickFrame()) {
-        stopPreview();
-      }
+      _tickFrame();
     });
   }
 

@@ -81,13 +81,13 @@ class Clip {
 
   // v0.7.0: Color getter/setter helpers (convert from int ARGB)
   Color get textColor => Color(textColorValue);
-  set textColor(Color c) => textColorValue = c.toARGB32();
+  set textColor(Color c) => textColorValue = _clipColorArgb(c);
 
   Color get textStrokeColor => Color(textStrokeColorValue);
-  set textStrokeColor(Color c) => textStrokeColorValue = c.toARGB32();
+  set textStrokeColor(Color c) => textStrokeColorValue = _clipColorArgb(c);
 
   Color get textBackgroundColor => Color(textBackgroundColorValue);
-  set textBackgroundColor(Color c) => textBackgroundColorValue = c.toARGB32();
+  set textBackgroundColor(Color c) => textBackgroundColorValue = _clipColorArgb(c);
 
   Clip({
     required this.id,
@@ -132,7 +132,7 @@ class Clip {
     this.isLocked = false,
     this.transitionType = 0,
     this.transitionDurationMs = 500,
-  })  : sourceOutMs = sourceOutMs ?? durationMs,
+  })  : sourceOutMs = sourceOutMs ?? (sourceInMs + durationMs),
         textBold = textBold ?? false,
         textItalic = textItalic ?? false,
         textUnderline = textUnderline ?? false;
@@ -214,14 +214,14 @@ class Clip {
       textContent: textContent ?? this.textContent,
       textFont: textFont ?? this.textFont,
       textFontSize: textFontSize ?? this.textFontSize,
-      textColorValue: textColor?.toARGB32() ?? textColorValue,
+      textColorValue: _clipColorArgb(textColor ?? const Color(0x00000000)),
       textBold: textBold ?? this.textBold,
       textItalic: textItalic ?? this.textItalic,
       textUnderline: textUnderline ?? this.textUnderline,
       textStrokeWidth: textStrokeWidth ?? this.textStrokeWidth,
-      textStrokeColorValue: textStrokeColor?.toARGB32() ?? textStrokeColorValue,
+      textStrokeColorValue: _clipColorArgb(textStrokeColor ?? const Color(0x00000000)),
       textShadow: textShadow ?? this.textShadow,
-      textBackgroundColorValue: textBackgroundColor?.toARGB32() ?? textBackgroundColorValue,
+      textBackgroundColorValue: _clipColorArgb(textBackgroundColor ?? const Color(0x00000000)),
       textAlignment: textAlignment ?? this.textAlignment,
       textGradient: textGradient ?? this.textGradient,
       stickerScale: stickerScale ?? this.stickerScale,
@@ -259,17 +259,37 @@ class Clip {
       return null;
     }
 
+    // v1.0.1: Account for playback speed when mapping timeline positions
+    // to source positions. With speed != 1.0, the source range covered by
+    // a timeline segment is speed * duration (e.g., 2x speed covers 2x the
+    // source material in the same timeline duration) — matches the engine's
+    // own mapping (offset = (pos - start) * speed, window = duration * speed).
+    // The right half keeps the parent's source OUT-POINT so the two halves
+    // always partition the parent's source window exactly — independently
+    // recomputing each half's span from duration * speed drifts by ±1ms per
+    // split (round(333*1.5) + round(667*1.5) = 500 + 1001 ≠ 1500) and the
+    // halves can extend past the media end on repeated splits.
+    final safeSpeed = speed <= 0 ? 1.0 : speed;
+    final availableSource = sourceOutMs - sourceInMs;
+    // Clamp to the available source so a degenerate parent model (stale
+    // sourceOutMs vs speed) never produces a right half that starts past
+    // the parent's source end.
+    final leftSourceSpan = (leftDuration * safeSpeed)
+        .round()
+        .clamp(0, availableSource < 0 ? 0 : availableSource);
+
     final left = copyWith(
       id: '${id}_L',
       durationMs: leftDuration,
-      sourceOutMs: sourceInMs + leftDuration,
+      sourceOutMs: sourceInMs + leftSourceSpan,
     );
 
     final right = copyWith(
       id: '${id}_R',
       timelineStartMs: positionMs,
       durationMs: rightDuration,
-      sourceInMs: sourceInMs + leftDuration,
+      sourceInMs: sourceInMs + leftSourceSpan,
+      sourceOutMs: sourceOutMs,
     );
 
     return [left, right];
@@ -293,14 +313,14 @@ class Clip {
         'textContent': textContent,
         'textFont': textFont,
         'textFontSize': textFontSize,
-        'textColorValue': textColor.toARGB32(),
+        'textColorValue': _clipColorArgb(textColor),
         'textBold': textBold,
         'textItalic': textItalic,
         'textUnderline': textUnderline,
         'textStrokeWidth': textStrokeWidth,
-        'textStrokeColorValue': textStrokeColor.toARGB32(),
+        'textStrokeColorValue': _clipColorArgb(textStrokeColor),
         'textShadow': textShadow,
-        'textBackgroundColorValue': textBackgroundColor.toARGB32(),
+        'textBackgroundColorValue': _clipColorArgb(textBackgroundColor),
         'textAlignment': textAlignment,
         'textGradient': textGradient,
         'stickerScale': stickerScale,
@@ -380,5 +400,15 @@ class Clip {
   String toString() => 'Clip($displayName, track=$trackIndex, '
       '${timelineStartMs}ms-${timelineEndMs}ms)';
 }
+
+/// v1.0.0b (CI fix): Color.toARGB32() only exists on Flutter ≥ 3.29 — the CI
+/// toolchain (Flutter 3.27, Dart 3.6) lacks it and `.value` is deprecated on
+/// newer SDKs. Convert via the 0-1 channel components so this compiles and
+/// analyzes cleanly on BOTH the CI and the local (3.44) toolchain.
+int _clipColorArgb(Color c) =>
+    (((c.a * 255).round() & 0xFF) << 24) |
+    (((c.r * 255).round() & 0xFF) << 16) |
+    (((c.g * 255).round() & 0xFF) << 8) |
+    ((c.b * 255).round() & 0xFF);
 
 enum ClipType { video, audio, image, text, overlay, sticker }

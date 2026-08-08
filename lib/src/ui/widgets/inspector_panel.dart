@@ -148,6 +148,40 @@ class InspectorPanel extends StatelessWidget {
       {'icon': Icons.format_align_right_rounded, 'value': 2},
     ];
 
+    // v1.0.0: Route all text-editor edits through setClipText so the
+    // typing/styling session collapses into a single undo entry. Previously
+    // each field mutated clip.text* directly (not undoable).
+    void editText({
+      String? content,
+      String? font,
+      double? fontSize,
+      int? colorValue,
+      bool? bold,
+      bool? italic,
+      bool? underline,
+      double? strokeWidth,
+      int? strokeColorValue,
+      bool? shadow,
+      int? bgColorValue,
+      int? alignment,
+    }) {
+      controller.setClipText(
+        clip.id,
+        content: content,
+        font: font,
+        fontSize: fontSize,
+        colorValue: colorValue,
+        bold: bold,
+        italic: italic,
+        underline: underline,
+        strokeWidth: strokeWidth,
+        strokeColorValue: strokeColorValue,
+        shadow: shadow,
+        bgColorValue: bgColorValue,
+        alignment: alignment,
+      );
+    }
+
     return [
       Container(
         padding: const EdgeInsets.all(10),
@@ -169,19 +203,13 @@ class InspectorPanel extends StatelessWidget {
             const SizedBox(height: 10),
 
             // Text content input
-            TextField(
-              maxLines: 3,
-              decoration: InputDecoration(
-                hintText: 'Enter text...',
-                hintStyle: TextStyle(color: AppTheme.textMuted, fontSize: 12),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              ),
-              style: TextStyle(color: AppTheme.textMain, fontSize: 13),
-              onChanged: (val) {
-                clip.textContent = val;
-                controller.notifyListeners();
-                controller.markEngineSync();
-              },
+            // v1.0.0: wrapped in a StatefulWidget holding a TextEditingController
+            // so undo/redo (which mutate clip.textContent outside the field) sync
+            // the displayed text. The old uncontrolled TextField kept stale text
+            // after Ctrl+Z.
+            _TextContentField(
+              clip: clip,
+              onChanged: (val) => editText(content: val),
             ),
             const SizedBox(height: 10),
 
@@ -204,7 +232,7 @@ class InspectorPanel extends StatelessWidget {
                         style: TextStyle(color: AppTheme.textMain, fontSize: 11),
                         items: fonts.map((f) => DropdownMenuItem(value: f, child: Text(f, style: TextStyle(fontFamily: f, fontSize: 11)))).toList(),
                         onChanged: (val) {
-                          if (val != null) { clip.textFont = val; controller.notifyListeners(); }
+                          if (val != null) editText(font: val);
                         },
                       ),
                     ),
@@ -223,11 +251,7 @@ class InspectorPanel extends StatelessWidget {
                         min: 12.0,
                         max: 200.0,
                         activeColor: AppTheme.primaryLight,
-                        onChanged: (val) {
-                          clip.textFontSize = val;
-                    controller.notifyListeners();
-                    controller.markEngineSync();
-                        },
+                        onChanged: (val) => editText(fontSize: val),
                       ),
                     ],
                   ),
@@ -239,18 +263,23 @@ class InspectorPanel extends StatelessWidget {
             // Style toggles: Bold, Italic, Underline, Shadow, Gradient
             Row(
               children: [
-                _styleToggle(Icons.format_bold_rounded, clip.textBold, () { clip.textBold = !clip.textBold; controller.notifyListeners(); }),
-                _styleToggle(Icons.format_italic_rounded, clip.textItalic, () { clip.textItalic = !clip.textItalic; controller.notifyListeners(); }),
-                _styleToggle(Icons.format_underlined_rounded, clip.textUnderline, () { clip.textUnderline = !clip.textUnderline; controller.notifyListeners(); }),
-                _styleToggle(Icons.blur_on, clip.textShadow, () { clip.textShadow = !clip.textShadow; controller.notifyListeners(); }),
-                _styleToggle(Icons.gradient, clip.textGradient, () { clip.textGradient = !clip.textGradient; controller.notifyListeners(); }),
+                _styleToggle(Icons.format_bold_rounded, clip.textBold, () => editText(bold: !clip.textBold)),
+                _styleToggle(Icons.format_italic_rounded, clip.textItalic, () => editText(italic: !clip.textItalic)),
+                _styleToggle(Icons.format_underlined_rounded, clip.textUnderline, () => editText(underline: !clip.textUnderline)),
+                _styleToggle(Icons.blur_on, clip.textShadow, () => editText(shadow: !clip.textShadow)),
+                // v1.0.1: Gradient toggle now routes through setClipText so it's
+                // undoable (previously mutated the clip directly, bypassing
+                // the command history — Ctrl+Z did not revert it).
+                _styleToggle(Icons.gradient, clip.textGradient, () {
+                  controller.setClipText(clip.id, gradient: !clip.textGradient);
+                }),
                 const Spacer(),
 
                 // Alignment
                 ...alignments.map((a) => _alignmentButton(
                   a['icon'] as IconData,
                   clip.textAlignment == a['value'],
-                  () { clip.textAlignment = a['value'] as int; controller.notifyListeners(); },
+                  () => editText(alignment: a['value'] as int),
                 )),
               ],
             ),
@@ -283,7 +312,7 @@ class InspectorPanel extends StatelessWidget {
                                         AppTheme.primaryLight, AppTheme.accent, AppTheme.clipVideo, AppTheme.clipAudio,
                                         AppTheme.clipImage, AppTheme.clipText, AppTheme.clipOverlay, AppTheme.success,
                                       ],
-                                      onColorTap: (c) { clip.textColor = c; controller.notifyListeners(); controller.markEngineSync(); Navigator.pop(ctx); },
+                                      onColorTap: (c) { editText(colorValue: c.toARGB32()); Navigator.pop(ctx); },
                                     ),
                                   ],
                                 ),
@@ -322,7 +351,7 @@ class InspectorPanel extends StatelessWidget {
                                       AppTheme.primaryLight, AppTheme.accent, AppTheme.clipVideo, AppTheme.clipAudio,
                                       AppTheme.clipImage, AppTheme.clipText, AppTheme.clipOverlay, AppTheme.success,
                                     ],
-                                    onColorTap: (c) { clip.textStrokeColor = c; controller.notifyListeners(); Navigator.pop(ctx); },
+                                    onColorTap: (c) { editText(strokeColorValue: c.toARGB32()); Navigator.pop(ctx); },
                                   ),
                                 ],
                               ),
@@ -338,7 +367,7 @@ class InspectorPanel extends StatelessWidget {
                         min: 0.0,
                         max: 20.0,
                         activeColor: AppTheme.primaryLight,
-                        onChanged: (val) { clip.textStrokeWidth = val; controller.notifyListeners(); },
+                        onChanged: (val) => editText(strokeWidth: val),
                       ),
                     ),
                   ],
@@ -465,11 +494,16 @@ class InspectorPanel extends StatelessWidget {
     // (model-backed + JSON-persisted). Previously "Exposure" overwrote the
     // filter intensity and "Brightness" actually changed playback speed.
     // v0.8.0: Mirrored to the native engine so preview/export show the grade.
+    // v1.0.0: All 8 engine-supported fields exposed (previously only 4).
     void setColor({
       double? exposure,
       double? contrast,
       double? saturation,
       double? temperature,
+      double? tint,
+      double? vibrance,
+      double? highlights,
+      double? shadows,
     }) {
       controller.setClipColorCorrection(
         clip.id,
@@ -477,6 +511,10 @@ class InspectorPanel extends StatelessWidget {
         contrast: contrast,
         saturation: saturation,
         temperature: temperature,
+        tint: tint,
+        vibrance: vibrance,
+        highlights: highlights,
+        shadows: shadows,
       );
     }
 
@@ -502,6 +540,12 @@ class InspectorPanel extends StatelessWidget {
           _colorSlider('Contrast', clip.colorContrast, -1.0, 1.0, AppTheme.accent, (val) => setColor(contrast: val)),
           _colorSlider('Saturation', clip.colorSaturation, -1.0, 1.0, AppTheme.success, (val) => setColor(saturation: val)),
           _colorSlider('Temperature', clip.colorTemperature, -1.0, 1.0, AppTheme.accentWarm, (val) => setColor(temperature: val)),
+          // v1.0.0: New sliders — Tint/Vibrance/Highlights/Shadows were in
+          // the engine + project model but had no UI control.
+          _colorSlider('Tint', clip.colorTint, -1.0, 1.0, AppTheme.warning, (val) => setColor(tint: val)),
+          _colorSlider('Vibrance', clip.colorVibrance, -1.0, 1.0, AppTheme.accent, (val) => setColor(vibrance: val)),
+          _colorSlider('Highlights', clip.colorHighlights, -1.0, 1.0, AppTheme.success, (val) => setColor(highlights: val)),
+          _colorSlider('Shadows', clip.colorShadows, -1.0, 1.0, AppTheme.textSecondary, (val) => setColor(shadows: val)),
         ],
       ),
     );
@@ -519,6 +563,10 @@ class InspectorPanel extends StatelessWidget {
               min: min,
               max: max,
               activeColor: accentColor,
+              // v1.0.0: Without a fresh gesture id per drag, every color
+              // slider drag on a clip shares one id and coalesces into a
+              // single undo entry — undo couldn't revert one slider alone.
+              onChangeStart: (_) => controller.beginPropertyGesture(),
               onChanged: onChanged,
             ),
           ),
@@ -1228,6 +1276,70 @@ class _ColorGrid extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+// ====================================================================
+// v1.0.0: Text content field with undo/redo sync. A vanilla TextField
+// keeps its own internal editing state and ignores external changes to
+// the bound clip, so undo/redo of text edits left the field stale. This
+// widget owns a TextEditingController and re-syncs when the clip's
+// textContent diverges from what the user has typed locally.
+// ====================================================================
+class _TextContentField extends StatefulWidget {
+  final Clip clip;
+  final ValueChanged<String> onChanged;
+  const _TextContentField({required this.clip, required this.onChanged});
+
+  @override
+  State<_TextContentField> createState() => _TextContentFieldState();
+}
+
+class _TextContentFieldState extends State<_TextContentField> {
+  late TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.clip.textContent);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TextContentField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Clip switched → reset to the new clip's text.
+    if (oldWidget.clip.id != widget.clip.id) {
+      _controller.text = widget.clip.textContent;
+      return;
+    }
+    // Same clip, but the text was changed outside the field (undo, redo,
+    // paste from Media Bin, programmatic setClipText). The clip object is
+    // mutated in place, so oldWidget.clip == widget.clip — comparing against
+    // the controller's current text is the only reliable signal.
+    if (_controller.text != widget.clip.textContent) {
+      _controller.text = widget.clip.textContent;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      maxLines: 3,
+      decoration: InputDecoration(
+        hintText: 'Enter text...',
+        hintStyle: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      ),
+      style: TextStyle(color: AppTheme.textMain, fontSize: 13),
+      onChanged: widget.onChanged,
     );
   }
 }

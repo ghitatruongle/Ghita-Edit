@@ -24,15 +24,20 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
   double _vibrance = 0.0;
   double _temperature = 0.0;
   bool _bgRemoved = false;
+  // v1.0.1: Track which clip the local slider values belong to so we can
+  // reset them when a different clip is selected.
+  String? _activeClipId;
 
   Future<void> _pickImageFile() async {
+    final messenger = ScaffoldMessenger.of(context);
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['png', 'jpg', 'jpeg', 'bmp', 'webp', 'gif'],
     );
     if (result != null && result.files.single.path != null && mounted) {
       await widget.controller.importPhotoToStudio(result.files.single.path!);
-      ScaffoldMessenger.of(context).showSnackBar(
+      if (!mounted) return;
+      messenger.showSnackBar(
         SnackBar(content: Text('Imported Photo Layer: ${result.files.single.name}')),
       );
     }
@@ -41,6 +46,11 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
   void _applyColorCorrection() {
     final sel = widget.controller.selectedClip ?? widget.controller.project.allClips.firstOrNull;
     if (sel != null) {
+      // v1.0.2: NO beginPropertyGesture() here — it was called on every
+      // slider tick, giving each tick a fresh gestureId so coalescing never
+      // engaged and a single drag pushed dozens of undo entries (evicting
+      // older commands from the 100-entry stack). The gesture now opens once
+      // per drag via the slider's onChangeStart (see _buildSlider).
       widget.controller.setClipColorCorrection(
         sel.id,
         exposure: _exposure,
@@ -65,6 +75,21 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
   Widget build(BuildContext context) {
     final clips = widget.controller.project.allClips;
     final activeClip = widget.controller.selectedClip ?? clips.firstOrNull;
+
+    // v1.0.1: When the selected clip changes, reset the local slider state
+    // to reflect the new clip's actual color correction values. Previously
+    // the sliders kept showing the previous clip's values.
+    if (activeClip?.id != _activeClipId) {
+      _activeClipId = activeClip?.id;
+      if (activeClip != null) {
+        _exposure = activeClip.colorExposure;
+        _contrast = activeClip.colorContrast;
+        _saturation = activeClip.colorSaturation;
+        _vibrance = activeClip.colorVibrance;
+        _temperature = activeClip.colorTemperature;
+        _bgRemoved = activeClip.filterType == 22;
+      }
+    }
 
     return Container(
       color: AppTheme.background,
@@ -149,23 +174,23 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
                       _buildSlider('Exposure', _exposure, -1.0, 1.0, (v) {
                         setState(() => _exposure = v);
                         _applyColorCorrection();
-                      }),
+                      }, onChangeStart: (_) => widget.controller.beginPropertyGesture()),
                       _buildSlider('Contrast', _contrast, -1.0, 1.0, (v) {
                         setState(() => _contrast = v);
                         _applyColorCorrection();
-                      }),
+                      }, onChangeStart: (_) => widget.controller.beginPropertyGesture()),
                       _buildSlider('Saturation', _saturation, -1.0, 1.0, (v) {
                         setState(() => _saturation = v);
                         _applyColorCorrection();
-                      }),
+                      }, onChangeStart: (_) => widget.controller.beginPropertyGesture()),
                       _buildSlider('Vibrance', _vibrance, -1.0, 1.0, (v) {
                         setState(() => _vibrance = v);
                         _applyColorCorrection();
-                      }),
+                      }, onChangeStart: (_) => widget.controller.beginPropertyGesture()),
                       _buildSlider('Temperature', _temperature, -1.0, 1.0, (v) {
                         setState(() => _temperature = v);
                         _applyColorCorrection();
-                      }),
+                      }, onChangeStart: (_) => widget.controller.beginPropertyGesture()),
 
                       const SizedBox(height: 16),
                       const Divider(color: AppTheme.divider),
@@ -329,7 +354,7 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
     );
   }
 
-  Widget _buildSlider(String label, double val, double min, double max, ValueChanged<double> onChanged) {
+  Widget _buildSlider(String label, double val, double min, double max, ValueChanged<double> onChanged, {ValueChanged<double>? onChangeStart}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -353,6 +378,9 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
             min: min,
             max: max,
             onChanged: onChanged,
+            // v1.0.2: Open the undo gesture once at drag start so all ticks
+            // of one drag coalesce into a single undo entry.
+            onChangeStart: onChangeStart,
           ),
         ),
       ],

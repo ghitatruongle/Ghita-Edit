@@ -223,6 +223,12 @@ GHITA_API void ghita_engine_set_audio_preview_enabled(GhitaEngineContext* ctx, i
     if (ctx) ctx->engine.setAudioPreviewEnabled(enabled != 0);
 }
 
+// v1.0.3: Noise suppression toggle ("làm rõ âm thanh") — applied to preview
+// audio mixing (DC blocker / low-cut).
+GHITA_API void ghita_engine_set_noise_suppress(GhitaEngineContext* ctx, int enabled) {
+    if (ctx) ctx->engine.setNoiseSuppress(enabled != 0);
+}
+
 GHITA_API uint8_t* ghita_engine_get_direct_buffer(GhitaEngineContext* ctx, int* out_width, int* out_height) {
     if (!ctx) return nullptr;
     return ctx->engine.getFrameDirectBufferPointer(out_width, out_height);
@@ -379,6 +385,15 @@ GHITA_API void ghita_engine_set_filter_preset(GhitaEngineContext* ctx, int clip_
 GHITA_API bool ghita_engine_get_audio_waveform_peaks(GhitaEngineContext* ctx, float* out_samples, int sample_count) {
     if (!ctx || !out_samples || sample_count <= 0) return false;
     return ctx->engine.getAudioWaveform(out_samples, sample_count);
+}
+
+// v1.0.1: Expose the real timeline audio mixer so release smoke tests can
+// verify ACTUAL decoded audio (getAudioWaveform reads the legacy single
+// loadMedia() decoder and silently reports a synthetic sine for timeline
+// clips — a false positive for "is audio really decoding?").
+GHITA_API bool ghita_engine_mix_audio_window(GhitaEngineContext* ctx, int64_t start_ms, int64_t end_ms, float* out_samples, int sample_count) {
+    if (!ctx || !out_samples || sample_count <= 0 || end_ms <= start_ms) return false;
+    return ctx->engine.mixAudioWindow(start_ms, end_ms, out_samples, sample_count, false);
 }
 
 }

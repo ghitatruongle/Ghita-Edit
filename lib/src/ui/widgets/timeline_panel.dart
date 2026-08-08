@@ -91,7 +91,6 @@ class _TimelinePanelState extends State<TimelinePanel> {
 
   // Trim dragging
   String? _trimmingClipId;
-  bool _trimmingStart = false;
 
   // Multi-select / marquee
   bool _marqueeActive = false;
@@ -626,6 +625,9 @@ class _TimelinePanelState extends State<TimelinePanel> {
 
     return DragTarget<Map<String, dynamic>>(
       onAcceptWithDetails: (details) {
+        // v1.0.2: Locked tracks must reject drops too — the body-drag and
+        // trim paths already guard locks, but this one accepted drops.
+        if (track.isLocked) return;
         final item = details.data;
         final clipData = item['clip'] as models.Clip?;
         if (clipData == null) return;
@@ -718,8 +720,10 @@ class _TimelinePanelState extends State<TimelinePanel> {
       bottom: 3,
       child: Stack(
         children: [
-          // Left trim handle
-          if ((clip.isSelected || isMultiSelected) && !track.isLocked)
+          // Left trim handle — v1.0.2: ALWAYS visible (CapCut-style) so users
+          // can grab and stretch any clip without knowing it must be selected
+          // first. Previously handles only appeared after selection.
+          if (!track.isLocked && !clip.isLocked)
             Positioned(
               left: 0,
               top: 0,
@@ -728,7 +732,6 @@ class _TimelinePanelState extends State<TimelinePanel> {
               child: _TrimHandle(
                 onDragStart: (_) {
                   _trimmingClipId = clip.id;
-                  _trimmingStart = true;
                   final track = ctrl.project.trackForClip(clip.id);
                   if (track != null) {
                     _trimOrigins[clip.id] = _TrimOrigin(
@@ -772,8 +775,11 @@ class _TimelinePanelState extends State<TimelinePanel> {
                     clip.durationMs = origin.originalDurationMs;
                     ctrl.commandHistory.execute(cmd, ctrl.project);
                   }
+                  // v1.0.2: Clear the temp entry — otherwise after an undo the
+                  // clip rendered at the trimmed x-position while its data was
+                  // back at the original (visible desync until the next drag).
+                  _tempClipPositions.remove(clip.id);
                   _trimmingClipId = null;
-                  _trimmingStart = false;
                 },
                 onDragCancel: () {
                   // v0.7.8: Restore the clip when the gesture is cancelled —
@@ -785,14 +791,14 @@ class _TimelinePanelState extends State<TimelinePanel> {
                   }
                   _tempClipPositions.remove(clip.id);
                   _trimmingClipId = null;
-                  _trimmingStart = false;
                   ctrl.notifyListeners();
                 },
               ),
             ),
 
-          // Right trim handle
-          if ((clip.isSelected || isMultiSelected) && !track.isLocked)
+          // Right trim handle — v1.0.2: always visible (CapCut-style), same
+          // rationale as the left handle above.
+          if (!track.isLocked && !clip.isLocked)
             Positioned(
               right: 0,
               top: 0,
@@ -801,7 +807,6 @@ class _TimelinePanelState extends State<TimelinePanel> {
               child: _TrimHandle(
                 onDragStart: (_) {
                   _trimmingClipId = clip.id;
-                  _trimmingStart = false;
                   final track = ctrl.project.trackForClip(clip.id);
                   if (track != null) {
                     _trimOrigins[clip.id] = _TrimOrigin(
@@ -836,8 +841,9 @@ class _TimelinePanelState extends State<TimelinePanel> {
                     clip.durationMs = origin.originalDurationMs;
                     ctrl.commandHistory.execute(cmd, ctrl.project);
                   }
+                  // v1.0.2: Same cleanup as the start-trim path (see above).
+                  _tempClipPositions.remove(clip.id);
                   _trimmingClipId = null;
-                  _trimmingStart = false;
                 },
                 onDragCancel: () {
                   // v0.7.8: Restore the clip when the gesture is cancelled —
@@ -849,16 +855,21 @@ class _TimelinePanelState extends State<TimelinePanel> {
                   }
                   _tempClipPositions.remove(clip.id);
                   _trimmingClipId = null;
-                  _trimmingStart = false;
                   ctrl.notifyListeners();
                 },
               ),
             ),
 
           // Main clip body
+          // v1.0.2: The body must NOT cover the trim handles — it used to
+          // start at inset 0 (handles only got 6px when a trim was already
+          // active), so the body's horizontal-drag GestureDetector swallowed
+          // every grab at the clip edges and clips could not be stretched.
+          // Now the body yields 6px to each handle whenever they are visible
+          // (track/clip unlocked).
           Positioned(
-            left: (_trimmingClipId == clip.id && _trimmingStart) ? 6 : 0,
-            right: (_trimmingClipId == clip.id && !_trimmingStart) ? 6 : 0,
+            left: (!track.isLocked && !clip.isLocked) ? 6 : 0,
+            right: (!track.isLocked && !clip.isLocked) ? 6 : 0,
             top: 0,
             bottom: 0,
             child: GestureDetector(
@@ -910,15 +921,11 @@ class _TimelinePanelState extends State<TimelinePanel> {
               onHorizontalDragEnd: (_) {
                 if (_draggingClipId != null && _dragStartMs != null) {
                   if (ctrl.selectedClipCount > 1) {
-                    // Move all selected clips
-                    for (final selClip in ctrl.selectedClips) {
-                      final currentPos = _tempClipPositions[selClip.id] ?? selClip.timelineStartMs;
-                      final selTrack = ctrl.project.trackForClip(selClip.id);
-                      if (selTrack != null && currentPos != selClip.timelineStartMs) {
-                        ctrl.moveClipFrom(selTrack.id, selClip.id, selClip.timelineStartMs, currentPos);
-                      }
-                    }
-                    // Apply ripple once: shift clips after the rightmost edge of the selection
+                    // v1.0.2: Compute the ripple delta BEFORE the move loop —
+                    // moveClipFrom overwrites timelineStartMs, so computing it
+                    // after always yielded 0 and ripple silently never ran in
+                    // multi-select mode.
+                    int? rightmostDelta;
                     if (_rippleMode) {
                       final sortedSelected = ctrl.selectedClips.toList()
                         ..sort((a, b) => a.timelineEndMs.compareTo(b.timelineEndMs));
@@ -926,13 +933,20 @@ class _TimelinePanelState extends State<TimelinePanel> {
                         final rightmostClip = sortedSelected.last;
                         final selTrack = ctrl.project.trackForClip(rightmostClip.id);
                         if (selTrack != null) {
-                          // Compute total delta of the rightmost clip
                           final rightmostCurrent = _tempClipPositions[rightmostClip.id] ?? rightmostClip.timelineStartMs;
-                          final rightmostDelta = rightmostCurrent - rightmostClip.timelineStartMs;
+                          rightmostDelta = rightmostCurrent - rightmostClip.timelineStartMs;
                           if (rightmostDelta != 0) {
                             _applyRipple(selTrack, rightmostClip, rightmostDelta, ctrl);
                           }
                         }
+                      }
+                    }
+                    // Move all selected clips
+                    for (final selClip in ctrl.selectedClips) {
+                      final currentPos = _tempClipPositions[selClip.id] ?? selClip.timelineStartMs;
+                      final selTrack = ctrl.project.trackForClip(selClip.id);
+                      if (selTrack != null && currentPos != selClip.timelineStartMs) {
+                        ctrl.moveClipFrom(selTrack.id, selClip.id, selClip.timelineStartMs, currentPos);
                       }
                     }
                   } else {
@@ -973,9 +987,16 @@ class _TimelinePanelState extends State<TimelinePanel> {
                 child: Stack(
                   children: [
                     Row(
+                      // v1.0.2: RenderFlex overflow when a clip is very thin
+                      // (e.g. right after a split/drag): the icon + gap alone
+                      // (15px) overflowed a 2.4px-wide clip. Hide decoration
+                      // below sensible widths so only the (squeezable)
+                      // Expanded text label remains.
                       children: [
-                        Icon(_iconForClipType(clip.type), size: 11, color: Colors.white),
-                        const SizedBox(width: 4),
+                        if (widthPx > 20)
+                          Icon(_iconForClipType(clip.type), size: 11, color: Colors.white),
+                        if (widthPx > 20)
+                          const SizedBox(width: 4),
                         Expanded(
                           child: Text(
                             clip.displayName,
@@ -983,11 +1004,11 @@ class _TimelinePanelState extends State<TimelinePanel> {
                             style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600),
                           ),
                         ),
-                        if (clip.filterType > 0)
+                        if (clip.filterType > 0 && widthPx > 40)
                           const Icon(Icons.auto_fix_high_rounded, size: 9, color: Colors.amberAccent),
-                        if (clip.isLocked)
+                        if (clip.isLocked && widthPx > 40)
                           const Icon(Icons.lock_rounded, size: 9, color: AppTheme.warning),
-                        if (isMultiSelected)
+                        if (isMultiSelected && widthPx > 40)
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
                             decoration: BoxDecoration(
@@ -1298,9 +1319,27 @@ class MiniMapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant MiniMapPainter oldDelegate) {
-    return oldDelegate.tracks != tracks ||
+    if (oldDelegate.tracks != tracks ||
         oldDelegate.playheadSec != playheadSec ||
         oldDelegate.pxPerSec != pxPerSec ||
-        oldDelegate.scale != scale;
+        oldDelegate.scale != scale) {
+      return true;
+    }
+    // v1.0.2: The tracks List instance never changes across clip moves/trims,
+    // so the old identity check alone left the mini-map stale. Compare the
+    // actual clip positions (cheap at timeline scales).
+    return _clipSignature() != oldDelegate._clipSignature();
+  }
+
+  /// v1.0.2: Snapshot of every clip's id + start position — changes whenever
+  /// a clip is moved, trimmed, added or removed.
+  String _clipSignature() {
+    final buf = StringBuffer();
+    for (final t in tracks) {
+      for (final c in t.clips) {
+        buf.write('${c.id}:${c.timelineStartMs};');
+      }
+    }
+    return buf.toString();
   }
 }

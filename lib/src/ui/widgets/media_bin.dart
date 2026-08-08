@@ -14,8 +14,12 @@ import '../theme/app_theme.dart';
 
 class MediaBin extends StatefulWidget {
   final EditorController controller;
+  // v1.0.0: Optional initial/requested tab index (0=Media 1=Audio 2=Stickers
+  // 3=Effects 4=Text). The bottom toolbar tools set this to jump to the
+  // relevant tab. When the parent changes it, the bin animates to that tab.
+  final int initialTab;
 
-  const MediaBin({super.key, required this.controller});
+  const MediaBin({super.key, required this.controller, this.initialTab = 0});
 
   @override
   State<MediaBin> createState() => _MediaBinState();
@@ -32,12 +36,22 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
+    // v1.0.0: respect the requested initial tab.
+    if (widget.initialTab > 0 && widget.initialTab < 5) {
+      _tabController.index = widget.initialTab;
+    }
     _syncImportedMedia();
   }
 
   @override
   void didUpdateWidget(covariant MediaBin oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // v1.0.0: jump to the tab requested by the parent (toolbar tools).
+    if (oldWidget.initialTab != widget.initialTab &&
+        widget.initialTab >= 0 &&
+        widget.initialTab < 5) {
+      _tabController.animateTo(widget.initialTab);
+    }
     _syncImportedMedia();
   }
 
@@ -58,10 +72,10 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
       }
     }
 
-    _importedMedia.removeWhere((m) {
-      final id = m['id'] as String;
-      return !clips.any((c) => c.id == id);
-    });
+    // v1.0.2: O(1) lookup — the old `clips.any(...)` per entry made this
+    // quadratic, and it runs on every parent rebuild (30 fps during playback).
+    final liveIds = clips.map((c) => c.id).toSet();
+    _importedMedia.removeWhere((m) => !liveIds.contains(m['id'] as String));
   }
 
   String _typeString(ClipType type) {
@@ -280,11 +294,23 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
           // v0.8.0: Tapping selects the existing clip (and seeks to it) —
           // it used to call importMedia again, duplicating the clip on the
           // timeline on every tap.
+          // v1.0.2: If the media was never imported as a timeline clip (e.g.
+          // a leftover bin entry), tap adds it to the timeline instead of
+          // silently selecting nothing.
           ...audioItems.map((item) => _presetTile(item['name'] as String, 'Audio', Icons.music_note_rounded, () {
             final clip = item['clip'] as dynamic;
             if (clip != null) {
-              widget.controller.selectClip(clip.id as String);
-              widget.controller.seek(clip.timelineStartMs as int);
+              final id = clip.id as String;
+              final onTimeline = widget.controller.project.allClips.any((c) => c.id == id);
+              if (onTimeline) {
+                widget.controller.selectClip(id);
+                widget.controller.seek(clip.timelineStartMs as int);
+              } else {
+                final path = item['path'] as String?;
+                if (path != null && path.isNotEmpty) {
+                  widget.controller.importMedia(path);
+                }
+              }
             }
           })),
           const SizedBox(height: 10),

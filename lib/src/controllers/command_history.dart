@@ -363,6 +363,254 @@ class ChangeClipTransitionCommand extends EditCommand {
   }
 }
 
+/// Command: Change a clip's color correction (all 8 fields) with undo.
+/// v1.0.0: Previously `EditorController.setClipColorCorrection` mutated the
+/// clip directly, bypassing the command history — color edits were NOT
+/// undoable. This command routes them through the undo stack with one entry
+/// per drag gesture (sliders fire many onChange ticks).
+class ChangeClipColorCorrectionCommand extends EditCommand {
+  final String clipId;
+  final double newExposure;
+  final double newContrast;
+  final double newHighlights;
+  final double newShadows;
+  final double newTemperature;
+  final double newTint;
+  final double newVibrance;
+  final double newSaturation;
+  final int? gestureId;
+
+  late double _oldExposure;
+  late double _oldContrast;
+  late double _oldHighlights;
+  late double _oldShadows;
+  late double _oldTemperature;
+  late double _oldTint;
+  late double _oldVibrance;
+  late double _oldSaturation;
+
+  ChangeClipColorCorrectionCommand({
+    required this.clipId,
+    required this.newExposure,
+    required this.newContrast,
+    required this.newHighlights,
+    required this.newShadows,
+    required this.newTemperature,
+    required this.newTint,
+    required this.newVibrance,
+    required this.newSaturation,
+    this.gestureId,
+  });
+
+  @override
+  String? get coalesceKey => 'clip-color:$clipId:$gestureId';
+
+  @override
+  String get description => 'Adjust color correction';
+
+  @override
+  void inheritUndoState(EditCommand old) {
+    if (old is ChangeClipColorCorrectionCommand) {
+      _oldExposure = old._oldExposure;
+      _oldContrast = old._oldContrast;
+      _oldHighlights = old._oldHighlights;
+      _oldShadows = old._oldShadows;
+      _oldTemperature = old._oldTemperature;
+      _oldTint = old._oldTint;
+      _oldVibrance = old._oldVibrance;
+      _oldSaturation = old._oldSaturation;
+    }
+  }
+
+  void _capture(Clip clip) {
+    _oldExposure = clip.colorExposure;
+    _oldContrast = clip.colorContrast;
+    _oldHighlights = clip.colorHighlights;
+    _oldShadows = clip.colorShadows;
+    _oldTemperature = clip.colorTemperature;
+    _oldTint = clip.colorTint;
+    _oldVibrance = clip.colorVibrance;
+    _oldSaturation = clip.colorSaturation;
+  }
+
+  void _apply(Clip clip) {
+    clip.colorExposure = newExposure;
+    clip.colorContrast = newContrast;
+    clip.colorHighlights = newHighlights;
+    clip.colorShadows = newShadows;
+    clip.colorTemperature = newTemperature;
+    clip.colorTint = newTint;
+    clip.colorVibrance = newVibrance;
+    clip.colorSaturation = newSaturation;
+  }
+
+  void _restore(Clip clip) {
+    clip.colorExposure = _oldExposure;
+    clip.colorContrast = _oldContrast;
+    clip.colorHighlights = _oldHighlights;
+    clip.colorShadows = _oldShadows;
+    clip.colorTemperature = _oldTemperature;
+    clip.colorTint = _oldTint;
+    clip.colorVibrance = _oldVibrance;
+    clip.colorSaturation = _oldSaturation;
+  }
+
+  @override
+  void execute(Project project) {
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    _capture(clip);
+    _apply(clip);
+  }
+
+  @override
+  void undo(Project project) {
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    _restore(clip);
+  }
+}
+
+/// Command: Change a clip's text-overlay properties with undo.
+/// v1.0.0: The inspector rich-text editor previously mutated clip fields
+/// directly (not undoable). This command snapshots the whole text-property
+/// set and coalesces a typing session into a single undo entry.
+class ChangeClipTextCommand extends EditCommand {
+  final String clipId;
+  final String newContent;
+  final String newFont;
+  final double newFontSize;
+  final int newColorValue;
+  final bool newBold;
+  final bool newItalic;
+  final bool newUnderline;
+  final double newStrokeWidth;
+  final int newStrokeColorValue;
+  final bool newShadow;
+  final int newBgColorValue;
+  final int newAlignment;
+  // v1.0.1: gradient was missing from the text command — toggling it in the
+  // inspector was not undoable.
+  final bool newGradient;
+
+  late String _oldContent;
+  late String _oldFont;
+  late double _oldFontSize;
+  late int _oldColorValue;
+  late bool _oldBold;
+  late bool _oldItalic;
+  late bool _oldUnderline;
+  late double _oldStrokeWidth;
+  late int _oldStrokeColorValue;
+  late bool _oldShadow;
+  late int _oldBgColorValue;
+  late int _oldAlignment;
+  late bool _oldGradient;
+
+  ChangeClipTextCommand({
+    required this.clipId,
+    required this.newContent,
+    required this.newFont,
+    required this.newFontSize,
+    required this.newColorValue,
+    required this.newBold,
+    required this.newItalic,
+    required this.newUnderline,
+    required this.newStrokeWidth,
+    required this.newStrokeColorValue,
+    required this.newShadow,
+    required this.newBgColorValue,
+    required this.newAlignment,
+    required this.newGradient,
+  });
+
+  /// One undo entry per clip text-edit session — coalesce on the clip id only
+  /// (no gestureId) so a whole typing run collapses to a single undo.
+  @override
+  String? get coalesceKey => 'clip-text:$clipId';
+
+  @override
+  String get description => 'Edit text';
+
+  @override
+  void inheritUndoState(EditCommand old) {
+    if (old is ChangeClipTextCommand) {
+      _oldContent = old._oldContent;
+      _oldFont = old._oldFont;
+      _oldFontSize = old._oldFontSize;
+      _oldColorValue = old._oldColorValue;
+      _oldBold = old._oldBold;
+      _oldItalic = old._oldItalic;
+      _oldUnderline = old._oldUnderline;
+      _oldStrokeWidth = old._oldStrokeWidth;
+      _oldStrokeColorValue = old._oldStrokeColorValue;
+      _oldShadow = old._oldShadow;
+      _oldBgColorValue = old._oldBgColorValue;
+      _oldAlignment = old._oldAlignment;
+      _oldGradient = old._oldGradient;
+    }
+  }
+
+  void _capture(Clip clip) {
+    _oldContent = clip.textContent;
+    _oldFont = clip.textFont;
+    _oldFontSize = clip.textFontSize;
+    _oldColorValue = clip.textColorValue;
+    _oldBold = clip.textBold;
+    _oldItalic = clip.textItalic;
+    _oldUnderline = clip.textUnderline;
+    _oldStrokeWidth = clip.textStrokeWidth;
+    _oldStrokeColorValue = clip.textStrokeColorValue;
+    _oldShadow = clip.textShadow;
+    _oldBgColorValue = clip.textBackgroundColorValue;
+    _oldAlignment = clip.textAlignment;
+    _oldGradient = clip.textGradient;
+  }
+
+  void _apply(Clip clip) {
+    clip.textContent = newContent;
+    clip.textFont = newFont;
+    clip.textFontSize = newFontSize;
+    clip.textColorValue = newColorValue;
+    clip.textBold = newBold;
+    clip.textItalic = newItalic;
+    clip.textUnderline = newUnderline;
+    clip.textStrokeWidth = newStrokeWidth;
+    clip.textStrokeColorValue = newStrokeColorValue;
+    clip.textShadow = newShadow;
+    clip.textBackgroundColorValue = newBgColorValue;
+    clip.textAlignment = newAlignment;
+    clip.textGradient = newGradient;
+  }
+
+  @override
+  void execute(Project project) {
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    _capture(clip);
+    _apply(clip);
+  }
+
+  @override
+  void undo(Project project) {
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    clip.textContent = _oldContent;
+    clip.textFont = _oldFont;
+    clip.textFontSize = _oldFontSize;
+    clip.textColorValue = _oldColorValue;
+    clip.textBold = _oldBold;
+    clip.textItalic = _oldItalic;
+    clip.textUnderline = _oldUnderline;
+    clip.textStrokeWidth = _oldStrokeWidth;
+    clip.textStrokeColorValue = _oldStrokeColorValue;
+    clip.textShadow = _oldShadow;
+    clip.textBackgroundColorValue = _oldBgColorValue;
+    clip.textAlignment = _oldAlignment;
+    clip.textGradient = _oldGradient;
+  }
+}
+
 /// Command: Add a track dynamically (v0.3.5).
 class AddTrackCommand extends EditCommand {
   final Track track;
@@ -415,6 +663,7 @@ class CommandHistory extends ChangeNotifier {
   final List<EditCommand> _undoStack = [];
   final List<EditCommand> _redoStack = [];
   final int maxHistory;
+  bool _disposed = false;
 
   CommandHistory({this.maxHistory = 100});
 
@@ -432,6 +681,7 @@ class CommandHistory extends ChangeNotifier {
 
   /// Execute a command and push it to the undo stack.
   void execute(EditCommand command, Project project) {
+    if (_disposed) return;
     command.execute(project);
 
     // v0.7.8: Coalesce consecutive commands with the same key (e.g. slider
@@ -457,7 +707,7 @@ class CommandHistory extends ChangeNotifier {
 
   /// Undo the last command.
   bool undo(Project project) {
-    if (!canUndo) return false;
+    if (_disposed || !canUndo) return false;
     final command = _undoStack.removeLast();
     command.undo(project);
     _redoStack.add(command);
@@ -468,7 +718,7 @@ class CommandHistory extends ChangeNotifier {
 
   /// Redo the last undone command.
   bool redo(Project project) {
-    if (!canRedo) return false;
+    if (_disposed || !canRedo) return false;
     final command = _redoStack.removeLast();
     command.execute(project);
     _undoStack.add(command);
@@ -479,8 +729,16 @@ class CommandHistory extends ChangeNotifier {
 
   /// Clear all history.
   void clear() {
+    if (_disposed) return;
     _undoStack.clear();
     _redoStack.clear();
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    super.dispose();
   }
 }
