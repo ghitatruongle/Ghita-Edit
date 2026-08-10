@@ -105,6 +105,58 @@ typedef DartGhitaEngineGetAudioWaveform = bool Function(Pointer<GhitaEngineConte
 typedef CGhitaEngineSetNoiseSuppress = Void Function(Pointer<GhitaEngineContext> ctx, Int32 enabled);
 typedef DartGhitaEngineSetNoiseSuppress = void Function(Pointer<GhitaEngineContext> ctx, int enabled);
 
+// ========== v1.1.0 New API (PLAN 3: Accuracy) ==========
+
+// Keyframe-aware insertion (property/interpolation/bezier aware).
+typedef CGhitaEngineAddKeyframeEx = Int32 Function(
+  Pointer<GhitaEngineContext> ctx, Int32 clipId, Int64 timeMs, Float value,
+  Int32 property, Int32 interpolation,
+  Float cp1x, Float cp1y, Float cp2x, Float cp2y,
+);
+typedef DartGhitaEngineAddKeyframeEx = int Function(
+  Pointer<GhitaEngineContext> ctx, int clipId, int timeMs, double value,
+  int property, int interpolation,
+  double cp1x, double cp1y, double cp2x, double cp2y,
+);
+
+typedef CGhitaEngineGetClipKeyframeCount = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId);
+typedef DartGhitaEngineGetClipKeyframeCount = int Function(Pointer<GhitaEngineContext> ctx, int clipId);
+
+// Picture-in-picture geometry.
+typedef CGhitaEngineSetClipPip = Int32 Function(
+  Pointer<GhitaEngineContext> ctx, Int32 clipId,
+  Float x, Float y, Float w, Float h, Float rotation,
+);
+typedef DartGhitaEngineSetClipPip = int Function(
+  Pointer<GhitaEngineContext> ctx, int clipId,
+  double x, double y, double w, double h, double rotation,
+);
+
+// Speed-ramp points.
+typedef CGhitaEngineAddSpeedRampPoint = Int32 Function(
+    Pointer<GhitaEngineContext> ctx, Int32 clipId, Float t, Float speed);
+typedef DartGhitaEngineAddSpeedRampPoint = int Function(
+    Pointer<GhitaEngineContext> ctx, int clipId, double t, double speed);
+
+typedef CGhitaEngineClearSpeedCurve = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId);
+typedef DartGhitaEngineClearSpeedCurve = int Function(Pointer<GhitaEngineContext> ctx, int clipId);
+
+// Raw (effects-free) render at an explicit position — split view "before".
+typedef CGhitaEngineRenderFrameAtEx = Bool Function(
+  Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer,
+  Int32 width, Int32 height, Int64 positionMs, Int32 applyFx,
+);
+typedef DartGhitaEngineRenderFrameAtEx = bool Function(
+  Pointer<GhitaEngineContext> ctx, Pointer<Uint8> outBuffer,
+  int width, int height, int positionMs, int applyFx,
+);
+
+// Real timeline waveform.
+typedef CGhitaEngineGetTimelineWaveform = Bool Function(
+    Pointer<GhitaEngineContext> ctx, Pointer<Float> outSamples, Int32 sampleCount, Int32 trackIndex);
+typedef DartGhitaEngineGetTimelineWaveform = bool Function(
+    Pointer<GhitaEngineContext> ctx, Pointer<Float> outSamples, int sampleCount, int trackIndex);
+
 // ========== v0.4.5 New API ==========
 
 // Media info
@@ -374,6 +426,16 @@ class GhitaNativeBindings {
   // older DLLs.
   DartGhitaEngineSetNoiseSuppress? setNoiseSuppress;
 
+  // v1.1.0 (PLAN 3): Accuracy features — nullable; features degrade to
+  // no-ops on older DLLs (pattern v1.0.1).
+  DartGhitaEngineAddKeyframeEx? addKeyframeEx;
+  DartGhitaEngineGetClipKeyframeCount? getClipKeyframeCount;
+  DartGhitaEngineSetClipPip? setClipPip;
+  DartGhitaEngineAddSpeedRampPoint? addSpeedRampPoint;
+  DartGhitaEngineClearSpeedCurve? clearSpeedCurve;
+  DartGhitaEngineRenderFrameAtEx? renderFrameAtEx;
+  DartGhitaEngineGetTimelineWaveform? getTimelineWaveform;
+
   GhitaNativeBindings._internal() {
     _loadLibrary();
   }
@@ -536,6 +598,15 @@ class GhitaNativeBindings {
     setClipText = _tryLookup('ghita_engine_set_clip_text', () => _lib.lookupFunction<CGhitaEngineSetClipText, DartGhitaEngineSetClipText>('ghita_engine_set_clip_text')) ?? _setClipTextStub;
     hasClip = _tryLookup('ghita_engine_has_clip', () => _lib.lookupFunction<CGhitaEngineHasClip, DartGhitaEngineHasClip>('ghita_engine_has_clip')) ?? _hasClipStub;
     setNoiseSuppress = _tryLookup('ghita_engine_set_noise_suppress', () => _lib.lookupFunction<CGhitaEngineSetNoiseSuppress, DartGhitaEngineSetNoiseSuppress>('ghita_engine_set_noise_suppress'));
+
+    // v1.1.0 (PLAN 3): Accuracy features — defensive lookups.
+    addKeyframeEx = _tryLookup('ghita_engine_add_keyframe_ex', () => _lib.lookupFunction<CGhitaEngineAddKeyframeEx, DartGhitaEngineAddKeyframeEx>('ghita_engine_add_keyframe_ex'));
+    getClipKeyframeCount = _tryLookup('ghita_engine_get_clip_keyframe_count', () => _lib.lookupFunction<CGhitaEngineGetClipKeyframeCount, DartGhitaEngineGetClipKeyframeCount>('ghita_engine_get_clip_keyframe_count'));
+    setClipPip = _tryLookup('ghita_engine_set_clip_pip', () => _lib.lookupFunction<CGhitaEngineSetClipPip, DartGhitaEngineSetClipPip>('ghita_engine_set_clip_pip'));
+    addSpeedRampPoint = _tryLookup('ghita_engine_add_speed_ramp_point', () => _lib.lookupFunction<CGhitaEngineAddSpeedRampPoint, DartGhitaEngineAddSpeedRampPoint>('ghita_engine_add_speed_ramp_point'));
+    clearSpeedCurve = _tryLookup('ghita_engine_clear_speed_curve', () => _lib.lookupFunction<CGhitaEngineClearSpeedCurve, DartGhitaEngineClearSpeedCurve>('ghita_engine_clear_speed_curve'));
+    renderFrameAtEx = _tryLookup('ghita_engine_render_frame_at_ex', () => _lib.lookupFunction<CGhitaEngineRenderFrameAtEx, DartGhitaEngineRenderFrameAtEx>('ghita_engine_render_frame_at_ex'));
+    getTimelineWaveform = _tryLookup('ghita_engine_get_timeline_waveform', () => _lib.lookupFunction<CGhitaEngineGetTimelineWaveform, DartGhitaEngineGetTimelineWaveform>('ghita_engine_get_timeline_waveform'));
   }
 
   // v1.0.1: Stub implementations for v0.8.0 bindings that may be absent

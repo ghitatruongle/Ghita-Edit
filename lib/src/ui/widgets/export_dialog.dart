@@ -101,14 +101,13 @@ class _ExportDialogState extends State<ExportDialog> {
       format: 'MP4', codec: 'VP9', bitrateMbps: 8.0, includeAudio: true,
       description: 'VP9 • 8 Mbps • 30fps',
     ),
-    ExportPreset(
-      name: 'GIF Export',
-      label: 'Animated GIF',
-      icon: Icons.gif_rounded,
-      width: 480, height: 480, fps: 15,
-      format: 'GIF', codec: 'GIF', bitrateMbps: 0.0, includeAudio: false,
-      description: 'GIF • 480x480 • 15fps',
-    ),
+    // v1.1.0 (PLAN 3.12): GIF preset REMOVED — the engine cannot produce a
+    // valid GIF: the libavcodec gif encoder only accepts pal8 (palette
+    // quantization), and the v1.0.0 claim "GIF export animated thật" never
+    // actually worked (muxer rejects the audio stream / encoder rejects the
+    // pixel format). Honest: no GIF entry until the engine implements
+    // palette generation. The engine reports the failure loudly — it does
+    // not silently substitute another codec.
     ExportPreset(
       name: 'Audio Only',
       label: 'Audio Only (MP3)',
@@ -118,12 +117,16 @@ class _ExportDialogState extends State<ExportDialog> {
       description: 'MP3 • 128 kbps',
     ),
     ExportPreset(
-      name: 'Archive ProRes',
-      label: 'Archive (ProRes)',
+      name: 'Archive H264',
+      label: 'Archive (H.264)',
       icon: Icons.archive,
       width: 1920, height: 1080, fps: 60,
-      format: 'MOV', codec: 'ProRes', bitrateMbps: 200.0, includeAudio: true,
-      description: 'ProRes • 200 Mbps • 60fps • MOV',
+      format: 'MOV', codec: 'H.264', bitrateMbps: 200.0, includeAudio: true,
+      // v1.1.0 (PLAN 3.10): The old "Archive (ProRes)" preset silently
+      // exported H.264 into a .mov while claiming ProRes — the engine now
+      // looks up a real ProRes encoder and fails loudly when absent. The
+      // preset is renamed honestly to what it actually produces.
+      description: 'H.264 • 200 Mbps • 60fps • MOV',
     ),
     ExportPreset(
       name: 'Custom',
@@ -529,8 +532,8 @@ class _ExportDialogState extends State<ExportDialog> {
   List<String> get _codecOptions {
     if (!_customMode) return [];
     switch (_selectedFormat) {
-      case 'MOV': return ['H.264', 'ProRes'];
-      case 'GIF': return ['GIF'];
+      case 'MOV': return ['H.264']; // v1.1.0 (PLAN 3.10): ProRes removed — the engine fails loudly when the build lacks the encoder, but the preset UI no longer advertises it.
+      // v1.1.0 (PLAN 3.12): 'GIF' case removed — no GIF container support.
       case 'MP3': return ['MP3'];
       default: return ['H.264', 'H.265', 'VP9'];
     }
@@ -720,8 +723,10 @@ class _ExportDialogState extends State<ExportDialog> {
             const SizedBox(height: 10),
 
             if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+              // v1.1.0 (PLAN 3.12): GIF removed from the container list —
+              // the engine cannot encode it (pal8 palette requirement).
               _buildDropdown('Container Format', _selectedFormat,
-                  ['MP4', 'MOV', 'GIF', 'MP3'], _onFormatChanged, Icons.file_present),
+                  ['MP4', 'MOV', 'MP3'], _onFormatChanged, Icons.file_present),
 
               if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
                 const SizedBox(height: 10),

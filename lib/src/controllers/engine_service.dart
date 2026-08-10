@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ffi';
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 import '../ffi/native_bindings.dart';
@@ -291,6 +292,7 @@ class EngineService extends ChangeNotifier {
     }
     bindings.seek(_ctx!, positionMs);
     _positionMs = positionMs;
+
   }
 
   void setVolume(double val) {
@@ -318,19 +320,141 @@ class EngineService extends ChangeNotifier {
     }
   }
 
+  // ========== v1.1.0 (PLAN 3): Accuracy features ==========
+
+  /// v1.1.0 (PLAN 3.1): Keyframe-aware insertion (property/interpolation/
+  /// bezier). No-op (false) on engines without the symbol.
+  bool addClipKeyframeEx(int clipId, int timeMs, double value, int property,
+      int interpolation, double cp1x, double cp1y, double cp2x, double cp2y) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.addKeyframeEx;
+    if (!isReady || fn == null || clipId <= 0) return false;
+    try {
+      return fn(_ctx!, clipId, timeMs, value, property, interpolation,
+              cp1x, cp1y, cp2x, cp2y) == 0;
+    } catch (e) {
+      debugPrint('[EngineService] addClipKeyframeEx failed: $e');
+      return false;
+    }
+  }
+
+  /// v1.1.0 (PLAN 3.4): Picture-in-picture geometry (frame fractions).
+  bool setClipPip(int clipId, double x, double y, double w, double h,
+      double rotation) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.setClipPip;
+    if (!isReady || fn == null || clipId <= 0) return false;
+    try {
+      return fn(_ctx!, clipId, x, y, w, h, rotation) == 0;
+    } catch (e) {
+      debugPrint('[EngineService] setClipPip failed: $e');
+      return false;
+    }
+  }
+
+  /// v1.1.0 (PLAN 3.11): Append a speed-ramp point (t normalized 0..1).
+  bool addSpeedRampPoint(int clipId, double t, double speed) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.addSpeedRampPoint;
+    if (!isReady || fn == null || clipId <= 0) return false;
+    try {
+      return fn(_ctx!, clipId, t, speed) == 0;
+    } catch (e) {
+      debugPrint('[EngineService] addSpeedRampPoint failed: $e');
+      return false;
+    }
+  }
+
+  /// v1.1.0 (PLAN 3.11): Clear the speed-ramp curve of a clip.
+  void clearSpeedCurve(int clipId) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.clearSpeedCurve;
+    if (!isReady || fn == null || clipId <= 0) return;
+    try {
+      fn(_ctx!, clipId);
+    } catch (e) {
+      debugPrint('[EngineService] clearSpeedCurve failed: $e');
+    }
+  }
+
+  /// v1.1.0 (PLAN 3.5): Render at an explicit position WITHOUT the effects
+  /// (per-clip filter/cc + global filter) — the "before" side of split view.
+  Uint8List? renderRawFrameAt(int positionMs,
+      {int width = renderWidth, int height = renderHeight}) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.renderFrameAtEx;
+    if (!isReady || fn == null) return null;
+    final ptr = calloc<Uint8>(width * height * 4);
+    try {
+      if (!fn(_ctx!, ptr, width, height, positionMs, 0)) return null;
+      return Uint8List.fromList(ptr.asTypedList(width * height * 4));
+    } catch (e) {
+      debugPrint('[EngineService] renderRawFrameAt failed: $e');
+      return null;
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  // v1.1.0 (PLAN 3.7): Real timeline waveform cache — the timeline fetches
+  // per (trackIndex, sampleCount); invalidated whenever the timeline changes
+  // (see EditorController._onCommandHistoryChanged / load / new).
+  final Map<String, Float32List> _timelineWaveformCache = {};
+  static const int _maxTimelineWaveformCacheEntries = 16;
+
+  void clearTimelineWaveformCache() {
+    _timelineWaveformCache.clear();
+  }
+
+  /// v1.1.0 (PLAN 3.7): REAL timeline waveform — peak per bucket from the
+  /// engine's mix pipeline (the old getAudioWaveform reads the legacy single
+  /// loadMedia() decoder and ignores trims/moves/multi-clip timelines).
+  Float32List getTimelineWaveform(int count, int trackIndex) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.getTimelineWaveform;
+    if (!isReady || fn == null || count <= 0) return Float32List(0);
+    final key = '$trackIndex:$count';
+    final cached = _timelineWaveformCache[key];
+    if (cached != null) return Float32List.fromList(cached);
+
+    final ptr = calloc<Float>(count);
+    try {
+      final ok = fn(_ctx!, ptr, count, trackIndex);
+      if (!ok) return Float32List(0);
+      final result = Float32List.fromList(ptr.asTypedList(count));
+      if (_timelineWaveformCache.length >= _maxTimelineWaveformCacheEntries &&
+          !_timelineWaveformCache.containsKey(key)) {
+        _timelineWaveformCache.remove(_timelineWaveformCache.keys.first);
+      }
+      _timelineWaveformCache[key] = result;
+      return Float32List.fromList(result);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
   // v0.4.5: Extended filter range (0-10 instead of 0-4)
   // v0.8.0: Range extended to 0-20 (VHS/Glitch/Vignette/Grain/...).
   // v1.0.2: Range extended to 0-22 (Skin Retouch 21, Chroma Key 22).
+  // v1.1.0 (PLAN_REVIEW A.1): OUT-OF-RANGE filter ids are now CLAMPED to
+  // 0..22 instead of silently rejected — the old reject (early return) kept
+  // a stale value while EditorController.setFilter clamps; the two layers
+  // disagreed.
   void applyFilter(int filterType, double intensity) {
     _checkDisposed();
-    if (filterType < 0 || filterType > 22) return;
-    if (intensity < 0.0) intensity = 0.0;
-    if (intensity > 1.0) intensity = 1.0;
-    _activeFilterType = filterType;
-    _filterIntensity = intensity;
+    final safeType = filterType.clamp(0, 22);
+    final safeIntensity = intensity.clamp(0.0, 1.0);
+    _activeFilterType = safeType;
+    _filterIntensity = safeIntensity;
     final bindings = _bindings;
     if (isReady && bindings != null) {
-      bindings.applyFilter(_ctx!, filterType, intensity);
+      bindings.applyFilter(_ctx!, safeType, safeIntensity);
     }
   }
 
@@ -396,7 +520,7 @@ class EngineService extends ChangeNotifier {
     final bindings = _bindings;
     if (!isReady || bindings == null || clipId <= 0) return false;
     try {
-      return bindings.removeClip(_ctx!, clipId) != 0;
+      return bindings.removeClip(_ctx!, clipId) == 0;
     } catch (e) {
       debugPrint('[EngineService] removeClip failed: $e');
       return false;
@@ -494,7 +618,7 @@ class EngineService extends ChangeNotifier {
     final bindings = _bindings;
     if (!isReady || bindings == null || clipId <= 0) return false;
     try {
-      return bindings.setClipFilter(_ctx!, clipId, filterType, intensity) != 0;
+      return bindings.setClipFilter(_ctx!, clipId, filterType, intensity) == 0;
     } catch (e) {
       debugPrint('[EngineService] setClipFilter failed: $e');
       return false;
@@ -533,6 +657,33 @@ class EngineService extends ChangeNotifier {
       debugPrint('[EngineService] renderFrameAt failed: $e\n$st');
       return null;
     }
+  }
+
+  // v1.1.0 (PLAN_REVIEW fix #1): Probe media duration OFF the UI thread.
+  // FFmpeg stream scanning (avformat_open_input + find_stream_info) can block
+  // 100ms-2s on slow/network media and FREEZES the UI because the FFI call
+  // runs on the UI isolate. A throwaway engine context in a separate isolate
+  // probes the file and reports just the duration; the main engine state is
+  // untouched (the C++ engine's own mutexes protect shared codec globals).
+  Future<int> probeDurationAsync(String path) {
+    final b = _bindings;
+    if (!isReady || b == null || path.isEmpty) return Future.value(0);
+    return Isolate.run(() {
+      final ctx = b.createEngine();
+      if (ctx.address == 0) return 0;
+      try {
+        b.initEngine(ctx);
+        final p = path.toNativeUtf8();
+        b.loadMedia(ctx, p);
+        calloc.free(p);
+        final ms = b.getDurationMs(ctx);
+        return ms > 0 ? ms : 0;
+      } catch (_) {
+        return 0;
+      } finally {
+        b.destroyEngine(ctx);
+      }
+    });
   }
 
   void loadMedia(String path) {
@@ -715,19 +866,30 @@ class EngineService extends ChangeNotifier {
     bindings.setPlaybackRate(_ctx!, _playbackRate);
   }
 
-  double getPlaybackRate() {
-    _checkDisposed();
-    final bindings = _bindings;
-    if (!isReady || bindings == null) return 1.0;
-    return bindings.getPlaybackRate(_ctx!);
-  }
-
   // v0.5.8: Frame caching for improved performance
   // v0.7.9: True LRU — getCachedFrame re-inserts the entry so the least
   // recently used frame is always evicted first (was FIFO, which kept frames
   // that were never revisited and evicted hot scrub frames).
+  // v1.1.0 (PLAN 2.2/C1): 50 entries × 0.88 MB (640×360×4) ≈ 44 MB of RAM —
+  // reduced to 24 (≈21 MB) which still covers a full scrub across 24
+  // distinct positions. Cache hits now ALIAS the cached bytes instead of
+  // memcpy-ing them (see _frameBytesIsCacheRef) — one 0.88 MB copy saved on
+  // every hit.
   final Map<String, Uint8List> _frameCache = {};
-  final int _maxCacheSize = 50; // Max cached frames
+  final int _maxCacheSize = 24; // Max cached frames (was 50)
+
+  // v1.1.0 (PLAN 2.2/C1): True when _frameBytes aliases an entry of
+  // _frameCache (set on a cache hit). A NEW render must NOT write into the
+  // aliased entry (it would corrupt the cache) — allocate a fresh buffer
+  // first. The render path is the only writer; consumers (PreviewPlayer)
+  // snapshot the bytes before decoding, so aliasing is safe.
+  bool _frameBytesIsCacheRef = false;
+
+  // v1.1.0 (PLAN_REVIEW fix #2): idle-poll snapshot — compare-only fields so
+  // a paused editor tick short-circuits before any FFI call.
+  int _lastPolledPosMs = 0;
+  int _lastPolledDurMs = 0;
+  int _lastPolledGen = -1;
 
   void cacheFrame(String key, Uint8List frame) {
     if (_disposed || !isReady) return;
@@ -745,16 +907,18 @@ class EngineService extends ChangeNotifier {
     return frame;
   }
 
-  void clearCache() {
-    _frameCache.clear();
-  }
-
   // v0.7.9: PERF-03 — thumbnail cache (path-keyed, LRU, bounded). Native
   // thumbnail extraction is currently unavailable in the DLL (missing
   // symbol), but the cache stays ready for when the engine ships it —
   // Media Bin can switch from icons to thumbnails without re-fetching.
+  // v1.1.0 (PLAN 2.3/C2): 100 entries × 0.88 MB potential ≈ 88 MB — reduced
+  // to 48 and thumbnails are standardized to 240px (≈12.4 MB worst case).
   final Map<String, Uint8List> _thumbnailCache = {};
-  final int _maxThumbnailCacheSize = 100;
+  final int _maxThumbnailCacheSize = 48; // was 100
+
+  /// Standard thumbnail dimensions (240px wide, 16:9) — used by Media Bin.
+  static const int thumbnailWidth = 240;
+  static const int thumbnailHeight = 135;
 
   Uint8List? getCachedThumbnail(String path) => _thumbnailCache[path];
 
@@ -767,26 +931,10 @@ class EngineService extends ChangeNotifier {
 
   void clearThumbnailCache() => _thumbnailCache.clear();
 
-  // v0.5.5: Text overlay rendering (basic rasterizer stub)
-  bool renderTextOverlay(Uint8List buffer, int width, int height,
-                         String text, int fontSize, double r, double g, double b, double a) {
-    _checkDisposed();
-    final bindings = _bindings;
-    if (!isReady || bindings == null) return false;
-
-    final bufferPtr = calloc<Uint8>(buffer.length);
-    final textPtr = text.toNativeUtf8();
-    try {
-      bufferPtr.asTypedList(buffer.length).setAll(0, buffer);
-      return bindings.renderTextOverlay(
-        _ctx!, bufferPtr, width, height,
-        textPtr, fontSize, r, g, b, a
-      );
-    } finally {
-      calloc.free(bufferPtr);
-      calloc.free(textPtr);
-    }
-  }
+  // v0.5.5: Text overlay rendering — v1.1.0 (PLAN 1.1/B16): REMOVED.
+  // The standalone wrapper duplicated GhitaEngine::renderTextOverlay, which
+  // is a labeled stub (solid-rect placeholder) — real timeline text renders
+  // via the GDI path inside the compositor. Nothing called this wrapper.
 
   // v0.7.0: Color correction
   // v0.7.8: Symbol may be absent from the DLL (defensive FFI) — no-op then.
@@ -852,30 +1000,31 @@ class EngineService extends ChangeNotifier {
     fn(_ctx!, clipId, filterType, intensity);
   }
 
-  // v0.7.0: Audio waveform peaks for timeline
-  Float32List getAudioWaveformPeaks(int count) {
-    _checkDisposed();
-    final bindings = _bindings;
-    final fn = bindings?.getAudioWaveformPeaks;
-    if (!isReady || fn == null || count <= 0) return Float32List(0);
-    final ptr = calloc<Float>(count);
-    try {
-      final ok = fn(_ctx!, ptr, count);
-      if (ok) {
-        return Float32List.fromList(ptr.asTypedList(count));
-      }
-      return Float32List(0);
-    } finally {
-      calloc.free(ptr);
-    }
-  }
-
   bool _tickFrame() {
     if (_disposed || !_isRunning || !isReady || _framePointer == null) return false;
     final bindings = _bindings;
     if (bindings == null) return false;
 
+    // v1.1.0 (PLAN_REVIEW fix #2): paused & idle → skip the FFI/state work
+    // entirely (the 33ms timer still runs but costs ~0 per tick). A play/
+    // seek/filter/volume change mutates the cache key or position first, so
+    // the next tick re-enters; the "last polled" values are updated at the
+    // end of every real tick.
+    if (!_isPlaying && _positionMs == _lastPolledPosMs &&
+        _durationMs == _lastPolledDurMs &&
+        _frameGeneration == _lastPolledGen) {
+      return true;
+    }
+
     try {
+      // v1.1.0 (PLAN 2.10): Capture pre-tick state — a paused idle tick used
+      // to notifyListeners() 30×/s for nothing (full UI rebuild each time).
+      // Notify only when something actually changed: a new frame rendered,
+      // or the playhead/duration/playing state moved.
+      final oldPos = _positionMs;
+      final oldDur = _durationMs;
+      final oldPlaying = _isPlaying;
+
       _isPlaying = bindings.isPlaying(_ctx!);
       _positionMs = bindings.getPositionMs(_ctx!);
       _durationMs = bindings.getDurationMs(_ctx!);
@@ -887,12 +1036,26 @@ class EngineService extends ChangeNotifier {
       final cacheKey = '${_positionMs}_${renderWidth}x${renderHeight}_f$_activeFilterType'
           '_i${_filterIntensity.toStringAsFixed(3)}_v${_volume.toStringAsFixed(3)}'
           '_r${_playbackRate.toStringAsFixed(3)}';
-      
+
       // Try to get frame from cache first
       final cachedFrame = getCachedFrame(cacheKey);
-      if (cachedFrame != null) {
-        _frameBytes!.setAll(0, cachedFrame);
+      // v1.1.0 (PLAN_REVIEW fix #4): NEVER serve the cache while playing —
+      // the engine advances the playhead INSIDE renderFrameRgba, so a cache
+      // hit (e.g. frame at 0ms cached during a previous pause) would keep
+      // returning without ever advancing: Play at 0ms "didn't run" until the
+      // user scrubbed. Playing must always call the native render.
+      if (cachedFrame != null && !bindings.isPlaying(_ctx!)) {
+        // v1.1.0 (PLAN 2.2/C1): Alias instead of copy — the old setAll()
+        // memcpy'd 0.88 MB on every hit. Consumers snapshot the bytes before
+        // decoding, so sharing the cached entry is safe.
+        _frameBytes = cachedFrame;
+        _frameBytesIsCacheRef = true;
         _isPlaying = bindings.isPlaying(_ctx!); // Keep playing state updated
+        // v1.1.0 (PLAN 2.10): The frame is unchanged, but a moved playhead /
+        // changed duration / playing state still needs a UI wake-up.
+        if (_positionMs != oldPos || _durationMs != oldDur || _isPlaying != oldPlaying) {
+          notifyListeners();
+        }
         return true;
       }
 
@@ -904,6 +1067,12 @@ class EngineService extends ChangeNotifier {
       );
       if (success) {
         final nativeList = _framePointer!.asTypedList(renderWidth * renderHeight * 4);
+        // v1.1.0 (PLAN 2.2/C1): Never write into a cache entry — if the
+        // previous tick aliased one, allocate a fresh buffer first.
+        if (_frameBytesIsCacheRef || _frameBytes == null) {
+          _frameBytes = Uint8List(renderWidth * renderHeight * 4);
+          _frameBytesIsCacheRef = false;
+        }
         _frameBytes!.setAll(0, nativeList);
         // v1.0.2: Bump the generation ONLY for genuinely new frames — a
         // cache hit below reuses the same bytes and must not trigger a
@@ -914,8 +1083,19 @@ class EngineService extends ChangeNotifier {
         // ones and scrubbing back showed the wrong frame).
         cacheFrame(cacheKey, Uint8List.fromList(_frameBytes!));
       }
-      // v0.7.8: Push state (position/duration/frame) to the UI every tick.
-      notifyListeners();
+      // v1.1.0 (PLAN 2.10): Notify on a genuinely new frame OR moved state —
+      // a filter change re-renders (success) even with an unmoved playhead.
+      if (success ||
+          _positionMs != oldPos ||
+          _durationMs != oldDur ||
+          _isPlaying != oldPlaying) {
+        notifyListeners();
+      }
+      // v1.1.0 (PLAN_REVIEW fix #2): refresh the idle-poll snapshot — the
+      // next paused/idle tick short-circuits on these values.
+      _lastPolledPosMs = _positionMs;
+      _lastPolledDurMs = _durationMs;
+      _lastPolledGen = _frameGeneration;
       return success;
     } catch (e, st) {
       debugPrint('[EngineService] _tickFrame failed: $e\n$st');

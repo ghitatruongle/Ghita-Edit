@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(ghita_engine VERSION 1.0.0 LANGUAGES CXX C)
+project(ghita_engine VERSION 1.1.1 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,8 +23,16 @@ set(ENGINE_HEADERS
 # --- FFmpeg detection ---
 find_package(PkgConfig QUIET)
 
-set(FFMPEG_LIBS)
-set(FFMPEG_INCLUDE_DIRS)
+# v1.1.0 (PLAN_REVIEW B.1): opt-out for bounds-checking builds. The MinGW
+# FFmpeg DLLs resolve mingw64's libstdc++ while an assertions build uses the
+# ucrt64 runtime — the two cannot coexist in one process. GHITA_DISABLE_FFMPEG
+# yields a synthetic-only build that CAN run under -D_GLIBCXX_ASSERTIONS
+# (real-media tests then report "skipped").
+option(GHITA_DISABLE_FFMPEG "Build without FFmpeg (synthetic only)" OFF)
+if(GHITA_DISABLE_FFMPEG)
+    set(FFMPEG_LIBS)
+    set(FFMPEG_INCLUDE_DIRS)
+endif()
 
 # v0.8.0: Prefer a MinGW-built FFmpeg when compiling with MinGW. MSVC-built
 # FFmpeg (vcpkg) frees memory through the MSVC CRT while MinGW code allocates
@@ -123,6 +131,12 @@ if(NOT FFMPEG_LIBS)
     endif()
 endif()
 
+# Force-off after ALL detection branches — GHITA_DISABLE_FFMPEG wins even if
+# a detection path populated the lists above (synthetic-only build).
+if(GHITA_DISABLE_FFMPEG)
+    set(FFMPEG_LIBS)
+    set(FFMPEG_INCLUDE_DIRS)
+endif()
 if(FFMPEG_LIBS)
     message(STATUS "FFmpeg integration enabled")
     add_definitions(-DGHITA_HAS_FFMPEG)

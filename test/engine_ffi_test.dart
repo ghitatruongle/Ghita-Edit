@@ -5,6 +5,7 @@ import 'package:ghita_edit/src/controllers/command_history.dart';
 import 'package:ghita_edit/src/controllers/project_service.dart';
 import 'package:ghita_edit/src/core/version.dart';
 import 'package:ghita_edit/src/models/clip.dart';
+import 'package:ghita_edit/src/models/curve_speed.dart';
 import 'package:ghita_edit/src/models/track.dart';
 import 'package:ghita_edit/src/models/project.dart';
 import 'package:ghita_edit/src/ui/widgets/timeline_panel.dart';
@@ -1116,6 +1117,386 @@ void main() {
       expect(controller.activeFilterType, equals(20));
       controller.setFilter(11, 0.5);
       expect(controller.activeFilterType, equals(11));
+    });
+  });
+
+  // ========== v1.1.0 regression tests (PLAN_1.1.0 Track 1) ==========
+
+  group('PLAN 1.1 Track 1 regression', () {
+    late EditorController controller;
+
+    setUp(() => controller = EditorController());
+    tearDown(() => controller.dispose());
+
+    test('trimClipStart never leaves a clip shorter than the minimum duration', () {
+      // PLAN 1.1/B8: the left trim handle used to be able to create a
+      // 0/negative-duration clip; the model layer now clamps to
+      // Track.kMinClipDurationMs as the last line of defense.
+      final track = controller.project.tracks.first;
+      final clip = Clip(
+        id: Clip.nextId(),
+        sourceFilePath: '/fake/video.mp4',
+        displayName: 't.mp4',
+        timelineStartMs: 1000,
+        durationMs: 5000,
+        type: ClipType.video,
+      );
+      track.clips.add(clip);
+
+      // Trim start almost to the right edge (delta 4950 of 5000) → the
+      // effective delta clamps so at least kMinClipDurationMs survives.
+      track.trimClipStart(clip.id, 1000 + 4950);
+      expect(clip.durationMs, greaterThanOrEqualTo(Track.kMinClipDurationMs));
+      expect(clip.timelineStartMs + clip.durationMs, equals(6000));
+
+      // Trimming past the end is a no-op (delta >= duration).
+      track.trimClipStart(clip.id, 1000 + 6000);
+      expect(clip.durationMs, greaterThanOrEqualTo(Track.kMinClipDurationMs));
+
+      // trimClipEnd to the clip start is a no-op too.
+      track.trimClipEnd(clip.id, clip.timelineStartMs);
+      expect(clip.durationMs, greaterThanOrEqualTo(Track.kMinClipDurationMs));
+    });
+
+    test('ChangeMultiClipFilterCommand applies to every clip and undoes as one', () {
+      // PLAN 1.1/B12: the inspector multi-select "Apply Filter" used to
+      // mutate clips directly (no undo, no engine sync). The new command
+      // snapshots the whole batch → one Ctrl+Z restores all clips.
+      controller.importMedia('/fake/a.mp4');
+      controller.importMedia('/fake/b.mp4');
+      final clips = controller.project.allClips;
+      expect(clips.length, greaterThanOrEqualTo(2));
+
+      final history = controller.commandHistory;
+      history.execute(
+        ChangeMultiClipFilterCommand(
+          clipIds: clips.map((c) => c.id).toList(),
+          newFilterType: 15,
+          newIntensity: 0.5,
+        ),
+        controller.project,
+      );
+      for (final c in clips) {
+        expect(c.filterType, equals(15));
+        expect(c.filterIntensity, equals(0.5));
+      }
+
+      expect(history.canUndo, isTrue);
+      history.undo(controller.project);
+      for (final c in clips) {
+        expect(c.filterType, equals(0));
+        expect(c.filterIntensity, equals(1.0));
+      }
+
+      // Redo applies the batch again.
+      history.redo(controller.project);
+      for (final c in clips) {
+        expect(c.filterType, equals(15));
+      }
+    });
+
+    test('filter reset through setClipFilter is undoable', () {
+      // PLAN 1.1/B12: the inspector Reset button now routes through the
+      // undoable command path instead of a direct mutation.
+      controller.importMedia('/fake/video.mp4');
+      final clip = controller.project.allClips.first;
+
+      controller.setClipFilter(clip.id, 5, 0.5);
+      expect(clip.filterType, equals(5));
+
+      controller.setClipFilter(clip.id, 0, 1.0); // "Reset"
+      expect(clip.filterType, equals(0));
+
+      controller.undo();
+      expect(clip.filterType, equals(5));
+      expect(clip.filterIntensity, equals(0.5));
+    });
+
+    test('Track.kMinClipDurationMs is shared by trim paths', () {
+      expect(Track.kMinClipDurationMs, equals(100));
+    });
+  });
+
+  // ========== v1.1.0 regression tests (PLAN_1.1.0 Track 3) ==========
+
+  group('PLAN 3 Track 3 regression', () {
+    late EditorController controller;
+
+    setUp(() => controller = EditorController());
+    tearDown(() => controller.dispose());
+
+    test('Clip JSON round-trips keyframes / pip / speed curve', () {
+      final clip = Clip(
+        id: 'c1',
+        sourceFilePath: '/fake/v.mp4',
+        displayName: 'v.mp4',
+        timelineStartMs: 0,
+        durationMs: 5000,
+        keyframes: const [
+          KeyframeData(timeMs: 0, value: 0, property: 0),
+          KeyframeData(
+              timeMs: 1000,
+              value: 1,
+              property: 0,
+              interpolation: 2,
+              cp1x: 1,
+              cp1y: 0,
+              cp2x: 0,
+              cp2y: 1),
+        ],
+        speedCurve: const [SpeedRampPoint(0.0, 1.0), SpeedRampPoint(1.0, 4.0)],
+        pipX: 0.25,
+        pipY: 0.25,
+        pipW: 0.5,
+        pipH: 0.5,
+      );
+      final restored = Clip.fromJson(clip.toJson());
+      expect(restored.keyframes.length, equals(2));
+      expect(restored.keyframes[1].interpolation, equals(2));
+      expect(restored.keyframes[1].cp2y, equals(1.0));
+      expect(restored.speedCurve.length, equals(2));
+      expect(restored.speedCurve[1].speed, equals(4.0));
+      expect(restored.pipW, equals(0.5));
+      expect(restored.pipH, equals(0.5));
+      expect(restored.pipX, equals(0.25));
+    });
+
+    test('legacy Clip JSON without Track-3 fields loads with safe defaults', () {
+      final restored = Clip.fromJson(const {
+        'id': 'c2',
+        'sourceFilePath': '/fake/v.mp4',
+        'displayName': 'v.mp4',
+        'timelineStartMs': 0,
+        'durationMs': 1000,
+      });
+      expect(restored.keyframes, isEmpty);
+      expect(restored.speedCurve, isEmpty);
+      expect(restored.pipW, equals(1.0));
+      expect(restored.pipH, equals(1.0));
+      expect(restored.pipRotation, equals(0.0));
+    });
+
+    test('ChangeSpeedCurveCommand applies and undoes', () {
+      controller.importMedia('/fake/v.mp4');
+      final clip = controller.project.allClips.first;
+      final curve = const [SpeedRampPoint(0.0, 0.5), SpeedRampPoint(1.0, 2.0)];
+      controller.setClipSpeedCurve(clip.id, curve);
+      expect(clip.speedCurve.length, equals(2));
+      expect(clip.speedCurve.last.speed, equals(2.0));
+
+      controller.undo();
+      expect(clip.speedCurve, isEmpty);
+      controller.redo();
+      expect(clip.speedCurve.length, equals(2));
+    });
+
+    test('ChangePipCommand applies, undoes and coalesces per gesture', () {
+      controller.importMedia('/fake/v.mp4');
+      final clip = controller.project.allClips.first;
+
+      controller.beginPropertyGesture();
+      controller.setClipPip(clip.id, w: 0.5, h: 0.5);
+      controller.setClipPip(clip.id, w: 0.4, h: 0.4); // same gesture → coalesce
+      expect(clip.pipW, equals(0.4));
+      // Stack: [AddClip, Pip] — the two setClipPip calls coalesced into ONE.
+      expect(controller.commandHistory.undoCount, equals(2));
+
+      controller.undo();
+      expect(clip.pipW, equals(1.0)); // back to pre-gesture value
+      expect(clip.pipH, equals(1.0));
+    });
+
+    test('SpeedCurvePreset.evaluateSpeedAt produces valid curve points', () {
+      // PLAN 3.11: presets must stay within the engine's 0.25-4.0 clamp range.
+      for (final preset in SpeedCurvePreset.values) {
+        if (preset == SpeedCurvePreset.custom) continue;
+        for (var i = 0; i <= 8; i++) {
+          final s = preset.evaluateSpeedAt(i / 8);
+          expect(s, greaterThanOrEqualTo(0.1));
+          expect(s, lessThanOrEqualTo(4.0));
+        }
+      }
+    });
+
+    // ===== v1.1.0 (PLAN_REVIEW A.1): model invariant guards =====
+
+    test('Clip.splitAt partitions the source window exactly under speed 2x', () {
+      // PLAN_REVIEW A.1 invariant: left.sourceOut - left.sourceIn equals
+      // right.sourceIn - parent.sourceIn for ANY speed — two halves must
+      // tile the parent source span without overlap or gap.
+      final clip = Clip(
+        id: 'c',
+        sourceFilePath: '/fake/v.mp4',
+        displayName: 'v',
+        timelineStartMs: 1000,
+        durationMs: 1500,
+        sourceInMs: 200,
+        sourceOutMs: 200 + 1500 * 2, // speed 2x covers 3000ms of source
+        speed: 2.0,
+      );
+      final parts = clip.splitAt(1000 + 500)!; // split at timeline 1500
+      final left = parts[0];
+      final right = parts[1];
+      expect(left.durationMs, equals(500));
+      expect(right.durationMs, equals(1000));
+      // Exact tiling: left covers [200, 1200) and right starts at 1200.
+      expect(left.sourceInMs, equals(200));
+      expect(left.sourceOutMs, equals(200 + 500 * 2));
+      expect(right.sourceInMs, equals(200 + 500 * 2));
+      expect(right.sourceOutMs, equals(left.sourceOutMs + 1000 * 2));
+      // Timeline positions tile too.
+      expect(right.timelineStartMs, equals(1500));
+      expect(right.timelineEndMs, equals(2500));
+      expect(left.timelineEndMs, equals(right.timelineStartMs));
+    });
+
+    test('splitAt returns null at boundary (no zero-duration half)', () {
+      final clip = Clip(
+        id: 'c',
+        sourceFilePath: '/fake/v.mp4',
+        displayName: 'v',
+        timelineStartMs: 0,
+        durationMs: 200,
+        speed: 1.0,
+      );
+      expect(clip.splitAt(0), isNull);
+      expect(clip.splitAt(200), isNull);
+      expect(clip.splitAt(100), isNotNull);
+      final parts = clip.splitAt(100)!;
+      expect(parts[0].durationMs, greaterThanOrEqualTo(Track.kMinClipDurationMs));
+      expect(parts[1].durationMs, greaterThanOrEqualTo(Track.kMinClipDurationMs));
+    });
+
+    test('Project serialization round-trips every field', () {
+      final project = Project(
+        name: 'Ser Test',
+        outputWidth: 1280,
+        outputHeight: 720,
+        outputFps: 30,
+        outputFormat: 'mp4',
+      );
+      final track = project.tracks.first;
+      track.addClipAt(
+          Clip(
+            id: 'ser1',
+            sourceFilePath: '/fake/a.mp4',
+            displayName: 'a.mp4',
+            timelineStartMs: 0,
+            durationMs: 2000,
+            speed: 1.5,
+            volume: 0.7,
+            opacity: 0.8,
+            pipW: 0.5,
+            pipH: 0.5,
+            keyframes: const [
+              KeyframeData(timeMs: 0, value: 0.5, property: 0)
+            ],
+          ),
+          0);
+      final restored = Project.fromJsonString(project.toJsonString());
+      expect(restored.name, equals('Ser Test'));
+      expect(restored.outputWidth, equals(1280));
+      expect(restored.outputFps, equals(30));
+      final clip = restored.allClips.first;
+      expect(clip.speed, equals(1.5));
+      expect(clip.volume, equals(0.7));
+      expect(clip.opacity, equals(0.8));
+      expect(clip.pipW, equals(0.5));
+      expect(clip.keyframes.length, equals(1));
+    });
+
+    test('CommandHistory coalesces per gesture and survives undo/redo', () {
+      final project = Project(name: 'Coalesce');
+      final history = CommandHistory();
+      final track = project.tracks.first;
+      track.addClipAt(
+          Clip(
+            id: 'cc1',
+            sourceFilePath: '/fake/a.mp4',
+            displayName: 'a',
+            timelineStartMs: 0,
+            durationMs: 1000,
+          ),
+          0);
+      final clip = track.clips.first;
+
+      // Gesture 1: two slider ticks coalesce into ONE undo entry.
+      history.execute(ChangeClipPropertyCommand(clipId: clip.id, property: 'opacity', newValue: 0.4, gestureId: 1), project);
+      history.execute(ChangeClipPropertyCommand(clipId: clip.id, property: 'opacity', newValue: 0.3, gestureId: 1), project);
+      expect(history.undoCount, equals(1));
+
+      // Undo → back to 1.0.
+      history.undo(project);
+      expect(clip.opacity, equals(1.0));
+      expect(history.canRedo, isTrue);
+
+      // Redo → 0.3.
+      history.redo(project);
+      expect(clip.opacity, equals(0.3));
+
+      // Gesture 2 (new gestureId) must NOT coalesce with gesture 1's entry.
+      history.execute(ChangeClipPropertyCommand(clipId: clip.id, property: 'opacity', newValue: 0.5, gestureId: 2), project);
+      expect(history.undoCount, equals(2));
+      history.undo(project);
+      expect(clip.opacity, equals(0.3)); // gesture 2 undone, gesture 1 intact
+    });
+
+    // ===== v1.1.0 (PLAN_REVIEW A.3): controller coverage for the 70% gate =====
+
+    test('newProject resets playback state and default pip', () {
+      controller.importMedia('/fake/v.mp4');
+      final clip = controller.project.allClips.first;
+      controller.setClipPip(clip.id, w: 0.5, h: 0.5);
+      controller.setFilter(7, 0.5);
+      expect(clip.pipW, equals(0.5));
+
+      controller.newProject();
+      expect(controller.project.allClips, isEmpty);
+      expect(controller.positionMs, equals(0));
+      expect(controller.isPlaying, isFalse);
+      expect(controller.activeFilterType, equals(0));
+      // A fresh project's first clip uses the default full-frame pip.
+      controller.importMedia('/fake/b.mp4');
+      final fresh = controller.project.allClips.first;
+      expect(fresh.pipW, equals(1.0));
+      expect(fresh.pipH, equals(1.0));
+    });
+
+    test('change-clip-text command is undoable and preserves all fields', () {
+      controller.importMedia('/fake/v.mp4');
+      final clip = controller.project.allClips.first;
+      // Turn it into a text clip.
+      clip.type = ClipType.text;
+      controller.setClipText(clip.id,
+          content: 'Hi', fontSize: 40, gradient: true, bold: true);
+      expect(clip.textContent, equals('Hi'));
+      expect(clip.textGradient, isTrue);
+      expect(clip.textBold, isTrue);
+      controller.undo();
+      expect(clip.textContent, equals(''));
+      expect(clip.textGradient, isFalse);
+      expect(clip.textBold, isFalse);
+      controller.redo();
+      expect(clip.textContent, equals('Hi'));
+      expect(clip.textGradient, isTrue);
+    });
+
+    test('playback rate clamps to engine range 0.25-4x', () {
+      controller.engineService.setPlaybackRate(10.0);
+      expect(controller.engineService.playbackRate, equals(4.0));
+      controller.engineService.setPlaybackRate(0.01);
+      expect(controller.engineService.playbackRate, equals(0.25));
+      controller.engineService.setPlaybackRate(2.0);
+      expect(controller.engineService.playbackRate, equals(2.0));
+    });
+
+    test('audio mixer master volume clamps through the controller', () {
+      controller.setVolume(5.0);
+      expect(controller.volume, equals(2.0));
+      controller.setVolume(-3.0);
+      expect(controller.volume, equals(0.0));
+      controller.setVolume(1.5);
+      expect(controller.volume, equals(1.5));
     });
   });
 }

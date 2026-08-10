@@ -79,4 +79,44 @@ void main() {
     expect(colored, greaterThan(0),
         reason: 'decoded frames must be non-black (got only dark pixels)');
   });
+
+  // v1.1.0 (PLAN_1.1.0 Track 1/B7): After importMedia, the native engine
+  // timeline must hold the PROBED clip duration — the old code synced the
+  // provisional 10s clip before the probe ran and never re-synced, so
+  // preview wrapped and EXPORT produced exactly 10s regardless of the real
+  // media length ("export ra đúng 10 giây").
+  testWidgets('real engine: import resyncs engine timeline duration',
+      (tester) async {
+    final video = File(
+        '${Directory.current.path}${Platform.pathSeparator}test_video.mp4');
+    if (!video.existsSync()) {
+      markTestSkipped('test_video.mp4 not present — skipping');
+      return;
+    }
+
+    final controller = EditorController();
+    addTearDown(controller.dispose);
+
+    await tester.runAsync(() async {
+      await controller.init();
+      expect(controller.isEngineReady, isTrue,
+          reason: 'engine must initialize (status: ${controller.statusMessage})');
+
+      await controller.importMedia(video.path);
+      // Let the deferred engine resync microtask (and the probe) settle.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      final clip = controller.project.allClips.first;
+      final engineDur = controller.engineService.durationMs;
+      expect(clip.durationMs, greaterThan(0),
+          reason: 'probe must read the real media duration');
+      expect(engineDur, equals(clip.durationMs),
+          reason: 'engine timeline duration must match the probed clip '
+              'duration (regression: engine stuck at the 10000ms provisional)');
+      if (clip.durationMs != 10000) {
+        expect(engineDur, isNot(equals(10000)),
+            reason: 'engine must not hold the provisional 10s duration');
+      }
+    });
+  });
 }

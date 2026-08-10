@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../controllers/editor_controller.dart';
+import '../../controllers/command_history.dart';
 import '../../models/clip.dart';
+import '../../models/curve_speed.dart';
 import '../../models/project.dart';
 import '../theme/app_theme.dart';
 
@@ -98,9 +100,10 @@ class InspectorPanel extends StatelessWidget {
               if (selectedClip != null && selectedClips.length == 1)
                 TextButton.icon(
                   onPressed: () {
-                    selectedClip.filterType = 0;
-                    selectedClip.filterIntensity = 1.0;
-                    controller.notifyListeners();
+                    // v1.1.0 (PLAN 1.1/B12): Undoable reset — the old code
+                    // mutated the clip directly (no undo entry) and never
+                    // re-synced the engine, so the preview kept the filter.
+                    controller.setClipFilter(selectedClip.id, 0, 1.0);
                   },
                   icon: const Icon(Icons.refresh_rounded, size: 14, color: AppTheme.textMuted),
                   label: const Text('Reset', style: TextStyle(fontSize: 9)),
@@ -450,35 +453,41 @@ class InspectorPanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                const Text('Scale', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
-                const Spacer(),
-                Text('${(clip.stickerScale * 100).toInt()}%', style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.w600)),
-              ],
-            ),
-            Slider(
-              value: clip.stickerScale.clamp(0.1, 5.0),
-              min: 0.1,
-              max: 5.0,
-              activeColor: AppTheme.clipSticker,
-              onChanged: (val) { clip.stickerScale = val; controller.notifyListeners(); },
-            ),
-            Row(
-              children: [
-                const Text('Rotation', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
-                const Spacer(),
-                Text('${clip.stickerRotation.toInt()}°', style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.w600)),
-              ],
-            ),
-            Slider(
-              value: clip.stickerRotation.clamp(-180.0, 180.0),
-              min: -180.0,
-              max: 180.0,
-              divisions: 36,
-              activeColor: AppTheme.clipSticker,
-              onChanged: (val) { clip.stickerRotation = val; controller.notifyListeners(); },
-            ),
+Row(
+                children: [
+                  const Text('Scale', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+                  const Spacer(),
+                  Text('${(clip.stickerScale * 100).toInt()}%', style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.w600)),
+                ],
+              ),
+              Slider(
+                value: clip.stickerScale.clamp(0.1, 5.0),
+                min: 0.1,
+                max: 5.0,
+                activeColor: AppTheme.clipSticker,
+                // v1.1.0 (PLAN 3.12/B13): DISABLED — the engine renders
+                // stickers via GDI text (fixed size); scale had NO effect on
+                // preview/export while the UI pretended it did. Honest label
+                // until the engine supports sticker transform.
+                onChanged: null,
+              ),
+              Row(
+                children: [
+                  const Text('Rotation', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+                  const Spacer(),
+                  Text('${clip.stickerRotation.toInt()}°', style: const TextStyle(color: AppTheme.accent, fontSize: 11, fontWeight: FontWeight.w600)),
+                ],
+              ),
+              Slider(
+                value: clip.stickerRotation.clamp(-180.0, 180.0),
+                min: -180.0,
+                max: 180.0,
+                divisions: 36,
+                activeColor: AppTheme.clipSticker,
+                onChanged: null, // v1.1.0: disabled — no engine transform support
+              ),
+              const Text('Sticker transform chưa được engine hỗ trợ (disbled trung thực)',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontStyle: FontStyle.italic)),
           ],
         ),
       ),
@@ -615,12 +624,18 @@ class InspectorPanel extends StatelessWidget {
               Expanded(
                 child: TextButton.icon(
                   onPressed: () {
-                    final filterType = controller.activeFilterType;
-                    final intensity = controller.filterIntensity;
-                    for (final clip in clips) {
-                      clip.filterType = filterType;
-                      clip.filterIntensity = intensity;
-                    }
+                    // v1.1.0 (PLAN 1.1/B12): Batch filter through the
+                    // command history — one undo entry for the whole batch,
+                    // and the command listener re-syncs the engine timeline
+                    // (previously: direct mutation, no undo, no engine sync).
+                    controller.commandHistory.execute(
+                      ChangeMultiClipFilterCommand(
+                        clipIds: clips.map((c) => c.id).toList(),
+                        newFilterType: controller.activeFilterType,
+                        newIntensity: controller.filterIntensity,
+                      ),
+                      controller.project,
+                    );
                     controller.notifyListeners();
                   },
                   icon: const Icon(Icons.auto_fix_high, size: 14, color: AppTheme.primaryLight),
@@ -730,6 +745,91 @@ class InspectorPanel extends StatelessWidget {
           // Volume (v0.7.8: undoable)
           _sliderRow('Volume', '${(clip.volume * 100).toInt()}%', clip.volume, 0.0, 2.0, AppTheme.clipAudio, (val) {
             controller.setClipVolume(clip.id, val);
+          }, onChangedStart: (_) => controller.beginPropertyGesture()),
+
+          // v1.1.0 (PLAN 3.11): Speed Ramp — CapCut-style curve presets wired
+          // to the engine. curve_speed.dart was dead code in v1.0.0 (its
+          // evaluateSpeedAt was never called); picking a preset now builds a
+          // real point curve the engine integrates when rendering.
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.speed_rounded, size: 14, color: AppTheme.accent),
+              const SizedBox(width: 6),
+              const Text('Speed Ramp', style: TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+              const Spacer(),
+              if (clip.speedCurve.isNotEmpty)
+                Text('${clip.speedCurve.length} pts', style: const TextStyle(color: AppTheme.accent, fontSize: 10, fontFamily: 'monospace')),
+            ],
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<SpeedCurvePreset>(
+                    isDense: true,
+                    isExpanded: true,
+                    dropdownColor: AppTheme.surface,
+                    style: const TextStyle(color: AppTheme.textMain, fontSize: 11),
+                    hint: const Text('Select preset…', style: TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+                    items: SpeedCurvePreset.values
+                        .where((p) => p != SpeedCurvePreset.custom)
+                        .map((p) => DropdownMenuItem(value: p, child: Text(p.displayName)))
+                        .toList(),
+                    onChanged: (preset) {
+                      if (preset == null) return;
+                      final points = <SpeedRampPoint>[
+                        for (var i = 0; i <= 8; i++)
+                          SpeedRampPoint(i / 8, preset.evaluateSpeedAt(i / 8)),
+                      ];
+                      controller.setClipSpeedCurve(clip.id, points);
+                    },
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: clip.speedCurve.isEmpty
+                    ? null
+                    : () => controller.setClipSpeedCurve(clip.id, const []),
+                child: const Text('Clear', style: TextStyle(fontSize: 10)),
+              ),
+            ],
+          ),
+
+          // v1.1.0 (PLAN 3.4): Picture-in-picture geometry — real engine
+          // rendering (the v1.0.0 render_pip C API was a stub returning
+          // hasClip).
+          const SizedBox(height: 8),
+          const Divider(height: 1, color: AppTheme.divider),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Icon(Icons.picture_in_picture_alt_rounded, size: 14, color: AppTheme.clipOverlay),
+              const SizedBox(width: 6),
+              // v1.1.0: Flexible — long labels must not overflow narrow panels.
+              const Flexible(
+                child: Text('PICTURE-IN-PICTURE', overflow: TextOverflow.ellipsis, style: TextStyle(color: AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: clip.pipW >= 1.0 && clip.pipH >= 1.0 && clip.pipX == 0 && clip.pipY == 0
+                    ? null
+                    : () => controller.setClipPip(clip.id),
+                child: const Text('Reset', style: TextStyle(fontSize: 10)),
+              ),
+            ],
+          ),
+          _sliderRow('X', '${(clip.pipX * 100).toInt()}%', clip.pipX, 0.0, 1.0, AppTheme.clipOverlay, (v) {
+            controller.setClipPip(clip.id, x: v, y: clip.pipY, w: clip.pipW, h: clip.pipH, rotation: clip.pipRotation);
+          }, onChangedStart: (_) => controller.beginPropertyGesture()),
+          _sliderRow('Y', '${(clip.pipY * 100).toInt()}%', clip.pipY, 0.0, 1.0, AppTheme.clipOverlay, (v) {
+            controller.setClipPip(clip.id, x: clip.pipX, y: v, w: clip.pipW, h: clip.pipH, rotation: clip.pipRotation);
+          }, onChangedStart: (_) => controller.beginPropertyGesture()),
+          _sliderRow('Width', '${(clip.pipW * 100).toInt()}%', clip.pipW, 0.1, 1.0, AppTheme.clipOverlay, (v) {
+            controller.setClipPip(clip.id, x: clip.pipX, y: clip.pipY, w: v, h: clip.pipH, rotation: clip.pipRotation);
+          }, onChangedStart: (_) => controller.beginPropertyGesture()),
+          _sliderRow('Height', '${(clip.pipH * 100).toInt()}%', clip.pipH, 0.1, 1.0, AppTheme.clipOverlay, (v) {
+            controller.setClipPip(clip.id, x: clip.pipX, y: clip.pipY, w: clip.pipW, h: v, rotation: clip.pipRotation);
           }, onChangedStart: (_) => controller.beginPropertyGesture()),
         ],
       ),
@@ -919,7 +1019,12 @@ class InspectorPanel extends StatelessWidget {
   // ============================================================
 
   Widget _buildTransitionCard(Clip clip, EditorController controller) {
-    final transitions = ['None', 'Fade In', 'Fade Out', 'Crossfade', 'Slide', 'Wipe', 'Zoom', 'Dissolve', 'Radial'];
+    // v1.1.0 (PLAN 3.12): Only the transitions the ENGINE actually renders —
+    // the v1.0.0 changelog claimed Slide/Wipe/Zoom/Dissolve/Radial were real,
+    // but the compositor only implements FadeIn/FadeOut/Crossfade (the others
+    // were metadata-only no-ops). Honest dropdown until the effects exist.
+    final transitions = ['None', 'Fade In', 'Fade Out', 'Crossfade'];
+    final safeType = clip.transitionType.clamp(0, transitions.length - 1);
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -942,7 +1047,7 @@ class InspectorPanel extends StatelessWidget {
           DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               // v0.7.8: Reflect the clip's actual transition instead of 'None'
-              value: transitions[clip.transitionType.clamp(0, transitions.length - 1)],
+              value: transitions[safeType],
               isExpanded: true,
               dropdownColor: AppTheme.surface,
               style: const TextStyle(color: AppTheme.textMain, fontSize: 12),
@@ -1112,9 +1217,15 @@ class InspectorPanel extends StatelessWidget {
     // v0.7.8: Chips are functional — per-clip chips update the clip model,
     // global chips go through controller.setFilter (previously dead onTap).
     // v0.7.9: Each chip now carries a descriptive tooltip (UX-03).
+    // v1.1.0 (PLAN 1.1/B15): Fallback list extended 0-22 — it only renders
+    // when the engine JSON is unavailable (demo mode), but it must not claim
+    // the supported filters are missing.
     const names = {
       0: 'None', 1: 'Gray', 2: 'Sepia', 3: 'Invert', 4: 'Bright',
       5: 'Blur', 6: 'Edge', 7: 'Grade', 8: 'Adjust', 9: 'Pixel', 10: 'Mosaic',
+      11: 'VHS', 12: 'Glitch', 13: 'Chromatic', 14: 'Vignette', 15: 'Grain',
+      16: 'Light Leak', 17: 'Sharpen', 18: 'Posterize', 19: 'Duotone',
+      20: 'BG Blur', 21: 'Skin Retouch', 22: 'Chroma Key',
     };
     const descriptions = {
       0: 'No filter applied',
@@ -1128,6 +1239,18 @@ class InspectorPanel extends StatelessWidget {
       8: 'Brightness / contrast / saturation / hue',
       9: 'Pixelate effect',
       10: 'Mosaic effect',
+      11: 'VHS scanlines & noise',
+      12: 'Horizontal band displacement',
+      13: 'RGB channel split',
+      14: 'Darkened corners',
+      15: 'Static film grain',
+      16: 'Warm diagonal light leak',
+      17: 'Edge sharpening',
+      18: 'Reduced color levels',
+      19: 'Blue shadows / orange highlights',
+      20: 'Blur outside a center ellipse',
+      21: 'Skin smoothing & brightening',
+      22: 'Green-screen removal (alpha)',
     };
     final activeType = clip?.filterType ?? controller.activeFilterType;
 
@@ -1151,7 +1274,7 @@ class InspectorPanel extends StatelessWidget {
 
     // v0.8.0: Filters 0-20 are all engine-supported; only truly unknown ids
     // (corrupt/old projects) get a disabled chip.
-    if (activeType > 20) {
+    if (activeType > 22) {
       chips.add(_filterChip(
         'Filter #$activeType',
         activeType,
@@ -1208,6 +1331,9 @@ class InspectorPanel extends StatelessWidget {
   }
 
   String _getFilterName(int type) {
+    // v1.1.0 (PLAN 1.1/B15): Full 0-22 mapping — the old switch only covered
+    // 0-10 and labeled the engine-supported filters 11-22 as "unsupported"
+    // (misleading). Names mirror getAvailableFiltersJson in the engine.
     switch (type) {
       case 0: return 'Original (Pass-through)';
       case 1: return 'Grayscale';
@@ -1220,7 +1346,19 @@ class InspectorPanel extends StatelessWidget {
       case 8: return 'Adjust (BCSH)';
       case 9: return 'Pixelate';
       case 10: return 'Mosaic';
-      // v0.7.8: Unsupported ids (e.g. from old projects) show honestly
+      case 11: return 'VHS Effect';
+      case 12: return 'Glitch';
+      case 13: return 'Chromatic Aberration';
+      case 14: return 'Vignette';
+      case 15: return 'Film Grain';
+      case 16: return 'Light Leak';
+      case 17: return 'Sharpen';
+      case 18: return 'Posterize';
+      case 19: return 'Duotone';
+      case 20: return 'Background Blur';
+      case 21: return 'Skin Retouch';
+      case 22: return 'Chroma Key';
+      // v0.7.8: Truly unknown ids (corrupt/very old projects) show honestly
       // instead of being mislabeled as "Original".
       default: return 'Filter #$type (unsupported)';
     }

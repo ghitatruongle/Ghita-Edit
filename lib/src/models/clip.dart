@@ -1,5 +1,70 @@
 import 'dart:ui';
 
+/// v1.1.0 (PLAN 3.1): One keyframe of a clip animation. Mirrors the native
+/// struct: property 0=opacity, 1=position offset (fraction of frame),
+/// 2=scale, 3=rotation (stored; render support limited), 4=filter intensity.
+/// interpolation 0=linear, 1=step, 2=bezier (control points normalized to
+/// the segment toward the next keyframe).
+class KeyframeData {
+  final int timeMs;
+  final double value;
+  final int property;
+  final int interpolation;
+  final double cp1x;
+  final double cp1y;
+  final double cp2x;
+  final double cp2y;
+
+  const KeyframeData({
+    required this.timeMs,
+    required this.value,
+    this.property = 0,
+    this.interpolation = 0,
+    this.cp1x = 0,
+    this.cp1y = 0,
+    this.cp2x = 0,
+    this.cp2y = 0,
+  });
+
+  Map<String, dynamic> toJson() => {
+        't': timeMs,
+        'v': value,
+        'p': property,
+        'i': interpolation,
+        'c1x': cp1x,
+        'c1y': cp1y,
+        'c2x': cp2x,
+        'c2y': cp2y,
+      };
+
+  factory KeyframeData.fromJson(Map<String, dynamic> json) => KeyframeData(
+        timeMs: json['t'] as int? ?? 0,
+        value: (json['v'] as num?)?.toDouble() ?? 0.0,
+        property: json['p'] as int? ?? 0,
+        interpolation: json['i'] as int? ?? 0,
+        cp1x: (json['c1x'] as num?)?.toDouble() ?? 0.0,
+        cp1y: (json['c1y'] as num?)?.toDouble() ?? 0.0,
+        cp2x: (json['c2x'] as num?)?.toDouble() ?? 0.0,
+        cp2y: (json['c2y'] as num?)?.toDouble() ?? 0.0,
+      );
+}
+
+/// v1.1.0 (PLAN 3.11): One speed-ramp point — normalized timeline position
+/// [t] in 0..1 mapped to a playback speed multiplier.
+class SpeedRampPoint {
+  final double t;
+  final double speed;
+
+  const SpeedRampPoint(this.t, this.speed);
+
+  Map<String, dynamic> toJson() => {'t': t, 's': speed};
+
+  factory SpeedRampPoint.fromJson(Map<String, dynamic> json) => SpeedRampPoint(
+        (json['t'] as num?)?.toDouble() ?? 0.0,
+        (json['s'] as num?)?.toDouble() ?? 1.0,
+      );
+}
+
 /// Represents a media clip on the timeline.
 /// Each clip references a source media file and defines an in/out range.
 class Clip {
@@ -70,6 +135,21 @@ class Clip {
   double stickerScale;
   double stickerRotation; // degrees
 
+  /// v1.1.0 (PLAN 3.1): Keyframe animation (property-aware, bezier capable).
+  List<KeyframeData> keyframes;
+
+  /// v1.1.0 (PLAN 3.4): Picture-in-picture geometry — fractions of the
+  /// output frame. The default (w=1, h=1, x=0, y=0) fills the frame.
+  double pipX;
+  double pipY;
+  double pipW;
+  double pipH;
+  double pipRotation;
+
+  /// v1.1.0 (PLAN 3.11): Speed-ramp curve — normalized positions 0..1 to
+  /// playback multipliers. Empty = constant [speed].
+  List<SpeedRampPoint> speedCurve;
+
   /// v0.7.0: Group/lock
   String? groupId;
   bool isLocked;
@@ -132,6 +212,13 @@ class Clip {
     this.isLocked = false,
     this.transitionType = 0,
     this.transitionDurationMs = 500,
+    this.keyframes = const [],
+    this.speedCurve = const [],
+    this.pipX = 0.0,
+    this.pipY = 0.0,
+    this.pipW = 1.0,
+    this.pipH = 1.0,
+    this.pipRotation = 0.0,
   })  : sourceOutMs = sourceOutMs ?? (sourceInMs + durationMs),
         textBold = textBold ?? false,
         textItalic = textItalic ?? false,
@@ -194,6 +281,14 @@ class Clip {
     // v0.7.8: transition
     int? transitionType,
     int? transitionDurationMs,
+    // v1.1.0 (PLAN 3): keyframes / pip / speed curve
+    List<KeyframeData>? keyframes,
+    List<SpeedRampPoint>? speedCurve,
+    double? pipX,
+    double? pipY,
+    double? pipW,
+    double? pipH,
+    double? pipRotation,
   }) {
     return Clip(
       id: id ?? this.id,
@@ -238,6 +333,13 @@ class Clip {
       colorSaturation: colorSaturation ?? this.colorSaturation,
       transitionType: transitionType ?? this.transitionType,
       transitionDurationMs: transitionDurationMs ?? this.transitionDurationMs,
+      keyframes: keyframes ?? this.keyframes,
+      speedCurve: speedCurve ?? this.speedCurve,
+      pipX: pipX ?? this.pipX,
+      pipY: pipY ?? this.pipY,
+      pipW: pipW ?? this.pipW,
+      pipH: pipH ?? this.pipH,
+      pipRotation: pipRotation ?? this.pipRotation,
     );
   }
 
@@ -339,6 +441,14 @@ class Clip {
         // v0.7.8: transition
         'transitionType': transitionType,
         'transitionDurationMs': transitionDurationMs,
+        // v1.1.0 (PLAN 3): keyframes / pip / speed curve (optional fields)
+        'keyframes': keyframes.map((k) => k.toJson()).toList(),
+        'speedCurve': speedCurve.map((p) => p.toJson()).toList(),
+        'pipX': pipX,
+        'pipY': pipY,
+        'pipW': pipW,
+        'pipH': pipH,
+        'pipRotation': pipRotation,
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) => Clip(
@@ -394,6 +504,21 @@ class Clip {
         // v0.7.8: transition
         transitionType: json['transitionType'] as int? ?? 0,
         transitionDurationMs: json['transitionDurationMs'] as int? ?? 500,
+        // v1.1.0 (PLAN 3): optional fields with safe defaults — old project
+        // files without them load unchanged.
+        keyframes: (json['keyframes'] as List<dynamic>?)
+                ?.map((k) => KeyframeData.fromJson(k as Map<String, dynamic>))
+                .toList() ??
+            const [],
+        speedCurve: (json['speedCurve'] as List<dynamic>?)
+                ?.map((p) => SpeedRampPoint.fromJson(p as Map<String, dynamic>))
+                .toList() ??
+            const [],
+        pipX: (json['pipX'] as num?)?.toDouble() ?? 0.0,
+        pipY: (json['pipY'] as num?)?.toDouble() ?? 0.0,
+        pipW: (json['pipW'] as num?)?.toDouble() ?? 1.0,
+        pipH: (json['pipH'] as num?)?.toDouble() ?? 1.0,
+        pipRotation: (json['pipRotation'] as num?)?.toDouble() ?? 0.0,
       );
 
   @override

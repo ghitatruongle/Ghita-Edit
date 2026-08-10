@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../controllers/editor_controller.dart';
@@ -24,9 +28,89 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
   double _vibrance = 0.0;
   double _temperature = 0.0;
   bool _bgRemoved = false;
+  // v1.1.0 (PLAN 3.9): Real rendered preview frame + export state.
+  Uint8List? _previewBytes;
+  bool _exporting = false;
   // v1.0.1: Track which clip the local slider values belong to so we can
   // reset them when a different clip is selected.
   String? _activeClipId;
+
+  // v1.1.0 (PLAN 3.9): Render the selected clip's frame at its timeline
+  // position (with filters/cc applied) into the canvas — the v1.0.0 canvas
+  // was a fake placeholder icon.
+  Future<void> _refreshPreview() async {
+    final controller = widget.controller;
+    final engine = controller.engineService;
+    final clip = controller.selectedClip ?? controller.project.allClips.firstOrNull;
+    if (!engine.isReady || clip == null) {
+      if (mounted) setState(() => _previewBytes = null);
+      return;
+    }
+    // Give the deferred engine sync a chance to register the clip.
+    var nativeId = controller.nativeClipIdFor(clip.id);
+    if (nativeId == null) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      nativeId = controller.nativeClipIdFor(clip.id);
+    }
+    if (nativeId == null || !mounted) return;
+    final bytes = engine.renderFrameAt(clip.timelineStartMs, width: 560, height: 360);
+    if (bytes == null || !mounted) return;
+    setState(() => _previewBytes = bytes);
+  }
+
+  // v1.1.0 (PLAN 3.9): REAL PNG export — captures the rendered frame and
+  // encodes it (the v1.0.0 button only claimed success in a snackbar).
+  Future<void> _exportPng() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final bytes = _previewBytes;
+    if (bytes == null) {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('No image loaded yet — import a photo first.')));
+      return;
+    }
+    final result = await FilePicker.platform.saveFile(
+      dialogTitle: 'Export Image',
+      fileName: 'GhitaEdit_Photo.png',
+      type: FileType.custom,
+      allowedExtensions: ['png'],
+    );
+    if (result == null || !mounted) return;
+
+    setState(() => _exporting = true);
+    try {
+      final completer = Completer<Uint8List>();
+      ui.decodeImageFromPixels(
+        bytes,
+        560,
+        360,
+        ui.PixelFormat.rgba8888,
+        (ui.Image img) async {
+          try {
+            final data = await img.toByteData(format: ui.ImageByteFormat.png);
+            img.dispose();
+            completer.complete(data!.buffer.asUint8List());
+          } catch (e) {
+            img.dispose();
+            completer.completeError(e);
+          }
+        },
+      );
+      final png = await completer.future;
+      await File(result).writeAsBytes(png);
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text('Exported PNG (${(png.length / 1024).toStringAsFixed(0)} KB)'),
+        backgroundColor: Colors.green,
+      ));
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+            content: Text('Export failed: $e'), backgroundColor: Colors.red));
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
 
   Future<void> _pickImageFile() async {
     final messenger = ScaffoldMessenger.of(context);
@@ -89,6 +173,8 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
         _temperature = activeClip.colorTemperature;
         _bgRemoved = activeClip.filterType == 22;
       }
+      // v1.1.0 (PLAN 3.9): Render the real frame for the canvas.
+      _refreshPreview();
     }
 
     return Container(
@@ -106,13 +192,18 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
               children: [
                 const Icon(Icons.photo_filter, color: AppTheme.accentLight, size: 20),
                 const SizedBox(width: 8),
-                const Text(
-                  '🎨 PHOTO EDITOR STUDIO (PHOTOSHOP MODE)',
-                  style: TextStyle(
-                    color: AppTheme.textMain,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    letterSpacing: 1.0,
+                // v1.1.0 (PLAN_REVIEW A.2): Flexible + ellipsis — the header
+                // overflowed 245px on narrow panels.
+                const Flexible(
+                  child: Text(
+                    '🎨 PHOTO EDITOR STUDIO (PHOTOSHOP MODE)',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppTheme.textMain,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      letterSpacing: 1.0,
+                    ),
                   ),
                 ),
                 const Spacer(),
@@ -132,17 +223,23 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
                 const SizedBox(width: 12),
 
                 ElevatedButton.icon(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Photo Exported Successfully (PNG 4K Lossless / WEBP / JPEG 100%)')),
-                    );
-                  },
-                  icon: const Icon(Icons.file_download, size: 14),
-                  label: const Text('EXPORT HIGH-RES IMAGE', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                  // v1.1.0 (PLAN 3.9): REAL PNG export.
+                  onPressed: _exporting ? null : _exportPng,
+                  icon: _exporting
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.file_download, size: 14),
+                  label: Text(_exporting ? 'EXPORTING…' : 'EXPORT PNG',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 11)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.accent,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6)),
                   ),
                 ),
               ],
@@ -202,13 +299,18 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
                       ),
                       const SizedBox(height: 8),
 
-                      SwitchListTile(
-                        value: _bgRemoved,
-                        onChanged: _toggleBackgroundRemoval,
-                        activeThumbColor: AppTheme.accent,
-                        title: const Text('Magic Cutout (Remove Background)', style: TextStyle(color: AppTheme.textMain, fontSize: 11, fontWeight: FontWeight.bold)),
-                        subtitle: const Text('AI color distance transparency mask', style: TextStyle(color: AppTheme.textMuted, fontSize: 9)),
-                        contentPadding: EdgeInsets.zero,
+                      // v1.1.0 (PLAN_REVIEW A.2): wrap in a transparent Material — the ListTile
+                      // assertion requires it (parent Container paints a bg).
+                      Material(
+                        type: MaterialType.transparency,
+                        child: SwitchListTile(
+                          value: _bgRemoved,
+                          onChanged: _toggleBackgroundRemoval,
+                          activeThumbColor: AppTheme.accent,
+                          title: const Text('Magic Cutout (Remove Background)', style: TextStyle(color: AppTheme.textMain, fontSize: 11, fontWeight: FontWeight.bold)),
+                          subtitle: const Text('AI color distance transparency mask', style: TextStyle(color: AppTheme.textMuted, fontSize: 9)),
+                          contentPadding: EdgeInsets.zero,
+                        ),
                       ),
                     ],
                   ),
@@ -229,14 +331,28 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
                           boxShadow: AppTheme.shadowLg,
                         ),
                         child: Stack(
+                          fit: StackFit.expand,
                           children: [
-                            Center(
-                              child: Icon(
-                                activeClip?.type == ClipType.image ? Icons.image : Icons.videocam,
-                                size: 80,
-                                color: AppTheme.textMuted,
+                            // v1.1.0 (PLAN 3.9): REAL rendered frame — the
+                            // v1.0.0 canvas was a placeholder icon.
+                            if (_previewBytes != null)
+                              ClipRect(
+                                child: Image.memory(
+                                  _previewBytes!,
+                                  fit: BoxFit.contain,
+                                  gaplessPlayback: true,
+                                ),
+                              )
+                            else
+                              Center(
+                                child: Icon(
+                                  activeClip?.type == ClipType.image
+                                      ? Icons.image
+                                      : Icons.videocam,
+                                  size: 80,
+                                  color: AppTheme.textMuted,
+                                ),
                               ),
-                            ),
                             Center(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -246,12 +362,19 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
                                     activeClip != null
                                         ? '📷 EDITING: ${activeClip.displayName}'
                                         : 'PHOTOSHOP IMAGE CANVAS (4K READY)',
-                                    style: const TextStyle(color: AppTheme.textMain, fontSize: 12, fontWeight: FontWeight.bold),
+                                    style: const TextStyle(
+                                        color: AppTheme.textMain,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold),
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    _bgRemoved ? '✨ BACKGROUND REMOVED (TRANSPARENT PNG)' : 'Color Correction & Layer FX Applied',
-                                    style: const TextStyle(color: AppTheme.accentLight, fontSize: 10),
+                                    _bgRemoved
+                                        ? '✨ BACKGROUND REMOVED (TRANSPARENT PNG)'
+                                        : 'Color Correction & Layer FX Applied',
+                                    style: const TextStyle(
+                                        color: AppTheme.accentLight,
+                                        fontSize: 10),
                                   ),
                                 ],
                               ),
@@ -277,9 +400,15 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            '🥞 LAYERS STACK (${clips.length})',
-                            style: const TextStyle(color: AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.0),
+                          // v1.1.0 (PLAN_REVIEW A.2): Flexible + ellipsis —
+                          // long "LAYERS STACK (n)" text overflowed narrow
+                          // right panels.
+                          Flexible(
+                            child: Text(
+                              '🥞 LAYERS STACK (${clips.length})',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.0),
+                            ),
                           ),
                           IconButton(
                             icon: const Icon(Icons.add_a_photo_outlined, size: 16, color: AppTheme.accentLight),

@@ -224,6 +224,10 @@ class EditorController extends ChangeNotifier {
   // (a slider drag executing 60 commands/s results in one sync per frame).
   bool _engineSyncDirty = false;
 
+  /// v1.1.0 (PLAN 3.6): Native (engine) clip id for a Dart clip id — null
+  /// until the deferred timeline sync has assigned one.
+  int? nativeClipIdFor(String dartClipId) => _nativeClipIdMap[dartClipId];
+
   void _markEngineSync() {
     if (_engineSyncDirty || _disposed) return;
     _engineSyncDirty = true;
@@ -302,6 +306,34 @@ class EditorController extends ChangeNotifier {
               fontSize: clip.textFontSize,
               colorArgb: clip.textColorValue,
             );
+          }
+          // v1.1.0 (PLAN 3.1/3.4/3.11): Sync keyframes, PiP geometry and the
+          // speed-ramp curve. Replaces the whole set (clear then add) so a
+          // removed keyframe/point cannot linger in the engine.
+          engine.clearClipKeyframes(nativeId);
+          for (final kf in clip.keyframes) {
+            engine.addClipKeyframeEx(
+              nativeId,
+              kf.timeMs,
+              kf.value,
+              kf.property,
+              kf.interpolation,
+              kf.cp1x,
+              kf.cp1y,
+              kf.cp2x,
+              kf.cp2y,
+            );
+          }
+          if (clip.pipW < 1.0 || clip.pipH < 1.0 || clip.pipX != 0.0 ||
+              clip.pipY != 0.0 || clip.pipRotation != 0.0) {
+            engine.setClipPip(nativeId, clip.pipX, clip.pipY, clip.pipW,
+                clip.pipH, clip.pipRotation);
+          } else {
+            engine.setClipPip(nativeId, 0.0, 0.0, 1.0, 1.0, 0.0);
+          }
+          engine.clearSpeedCurve(nativeId);
+          for (final p in clip.speedCurve) {
+            engine.addSpeedRampPoint(nativeId, p.t, p.speed);
           }
         }
         trackIndex++;
@@ -403,20 +435,24 @@ class EditorController extends ChangeNotifier {
       commandHistory.execute(cmd, project);
       project.selectClip(clip.id);
 
-      // Asynchronously probe real media metadata via engine without blocking UI
+      // Asynchronously probe real media metadata — v1.1.0 (PLAN_REVIEW fix
+      // #1): the probe now runs in a SEPARATE ISOLATE with a throwaway engine
+      // context, so FFmpeg scan time (100ms-2s on slow media) no longer
+      // freezes the UI. The old path called engine.loadMedia() on the UI
+      // isolate (blocking FFI) and updated the waveform caches for nothing.
       if (_engine.isReady) {
-        await Future.microtask(() {
-          try {
-            _engine.loadMedia(path);
-            final mediaDur = _engine.mediaInfo['durationMs'];
-            if (mediaDur is int && mediaDur > 0) {
-              clip.durationMs = mediaDur;
-              clip.sourceOutMs = clip.sourceInMs + mediaDur;
-            }
-          } catch (e) {
-            // Engine load error handled gracefully in demo/mock fallback
-          }
-        });
+        final mediaDur = await _engine.probeDurationAsync(path);
+        if (mediaDur > 0) {
+          clip.durationMs = mediaDur;
+          clip.sourceOutMs = clip.sourceInMs + mediaDur;
+        }
+        // v1.1.0 (PLAN 1.1/B7): The provisional 10s clip was already synced
+        // to the native timeline by the AddClipCommand microtask BEFORE this
+        // probe ran, so the engine kept durationMs=10000 and preview wrapped
+        // / export produced exactly 10s regardless of the real media length.
+        // Re-sync now that the real duration is known (deferred, one per
+        // event-loop turn — same pattern as every other command).
+        _markEngineSync();
       }
 
       _statusMessage = 'Imported: $fileName';
@@ -889,6 +925,41 @@ class EditorController extends ChangeNotifier {
 
   // ========== UNDO / REDO ==========
 
+  // v1.1.0 (PLAN 3.11): Set a clip's speed-ramp curve — undoable via
+  // ChangeSpeedCurveCommand; the command listener re-syncs the engine.
+  void setClipSpeedCurve(String clipId, List<SpeedRampPoint> curve) {
+    if (_disposed) return;
+    commandHistory.execute(
+      ChangeSpeedCurveCommand(clipId: clipId, newCurve: curve),
+      project,
+    );
+    notifyListeners();
+  }
+
+  // v1.1.0 (PLAN 3.4): Set a clip's picture-in-picture geometry — undoable
+  // (one entry per drag gesture via coalescing).
+  void setClipPip(String clipId,
+      {double x = 0.0,
+      double y = 0.0,
+      double w = 1.0,
+      double h = 1.0,
+      double rotation = 0.0}) {
+    if (_disposed) return;
+    commandHistory.execute(
+      ChangePipCommand(
+        clipId: clipId,
+        newX: x.clamp(0.0, 1.0),
+        newY: y.clamp(0.0, 1.0),
+        newW: w.clamp(0.01, 1.0),
+        newH: h.clamp(0.01, 1.0),
+        newRotation: rotation,
+        gestureId: _propertyGestureCounter,
+      ),
+      project,
+    );
+    notifyListeners();
+  }
+
   void undo() {
     if (_disposed) return;
     // v1.0.1: Capture the description BEFORE undoing — after undo the
@@ -932,6 +1003,8 @@ class EditorController extends ChangeNotifier {
     _nativeClipIdMap.clear();
     _nextNativeClipId = 1;
     _engineSyncDirty = false;
+    // v1.1.0 (PLAN 3.7): Waveform peaks are timeline-specific.
+    _engine.clearTimelineWaveformCache();
     // v0.8.0: Drop all native clips — the new project starts empty.
     if (_engine.isReady) _engine.clearClips();
     _statusMessage = 'New project created';
@@ -977,6 +1050,8 @@ class EditorController extends ChangeNotifier {
       _nativeClipIdMap.clear();
       _nextNativeClipId = 1;
       _engineSyncDirty = false;
+      // v1.1.0 (PLAN 3.7): Waveform peaks are timeline-specific.
+      _engine.clearTimelineWaveformCache();
       // v0.8.0: Drop ALL native clips first — ids are reassigned from 1 on
       // load, so clips of the previous project beyond the new project's clip
       // count would otherwise survive as invisible ghost clips on the engine
@@ -1157,6 +1232,9 @@ class EditorController extends ChangeNotifier {
     // v0.8.0: Keep the native timeline in sync with every command (add/remove/
     // move/trim/split/filter/property) — deferred once per event-loop turn.
     _markEngineSync();
+    // v1.1.0 (PLAN 3.7): The timeline waveform reflects the actual timeline —
+    // any timeline mutation invalidates the cached peaks.
+    _engine.clearTimelineWaveformCache();
   }
 
   void _startAutoSave() {

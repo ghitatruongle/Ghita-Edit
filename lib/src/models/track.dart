@@ -2,6 +2,12 @@ import 'clip.dart';
 
 /// Represents a track on the timeline (video, audio, overlay, etc.)
 class Track {
+  // v1.1.0 (PLAN 1.1/B8): Minimum clip duration enforced by trim operations
+  // at the model layer — the UI drag handles also clamp to this, but the
+  // model is the last line of defense so a zero/negative duration clip can
+  // never enter the timeline (the engine rejects durationMs <= 0 on upsert).
+  static const int kMinClipDurationMs = 100;
+
   // v0.7.8: Monotonic counter — timestamp-only track IDs can collide when
   // multiple tracks are added within the same millisecond.
   static int _idCounter = 0;
@@ -105,11 +111,19 @@ class Track {
     final delta = newStartMs - clip.timelineStartMs;
     if (delta >= clip.durationMs) return; // Can't trim past end
 
+    // v1.1.0 (PLAN 1.1/B8): Cap the trim so at least kMinClipDurationMs of
+    // the clip survives — previously a trim near the right edge produced a
+    // 0/negative-duration clip that the engine rejects and export chokes on.
+    final maxDelta = clip.durationMs - kMinClipDurationMs;
+    if (maxDelta <= 0) return;
+
     // v0.7.8: Clamp the delta — never trim before the source media start
     // (negative sourceInMs corrupts decoding) and never before timeline 0.
     final minDelta = clip.sourceInMs < 0 ? 0 : -clip.sourceInMs;
     final timelineMin = clip.timelineStartMs < 0 ? 0 : -clip.timelineStartMs;
-    final effectiveDelta = delta.clamp(minDelta > timelineMin ? minDelta : timelineMin, clip.durationMs - 1);
+    final lower = minDelta > timelineMin ? minDelta : timelineMin;
+    if (lower > maxDelta) return; // Degenerate bounds — nothing to trim
+    final effectiveDelta = delta.clamp(lower, maxDelta);
 
     clip.timelineStartMs += effectiveDelta;
     clip.sourceInMs += effectiveDelta;

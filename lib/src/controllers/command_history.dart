@@ -193,6 +193,53 @@ class ChangeFilterCommand extends EditCommand {
   }
 }
 
+/// Command: Apply one filter to many clips at once (v1.1.0).
+/// The inspector multi-select "Apply Filter" used to mutate every clip
+/// directly — not undoable and never mirrored to the engine. One command
+/// snapshots the whole batch so a single Ctrl+Z restores every clip, and the
+/// command-history listener triggers the engine timeline resync.
+class ChangeMultiClipFilterCommand extends EditCommand {
+  final List<String> clipIds;
+  final int newFilterType;
+  final double newIntensity;
+  final Map<String, int> _oldTypes = {};
+  final Map<String, double> _oldIntensities = {};
+
+  ChangeMultiClipFilterCommand({
+    required this.clipIds,
+    required this.newFilterType,
+    required this.newIntensity,
+  });
+
+  @override
+  String get description => 'Apply filter to ${clipIds.length} clips';
+
+  @override
+  void execute(Project project) {
+    // v1.1.0: Clear captured state on every execute (redo) — stale entries
+    // from a previous run would restore wrong values (same pattern as
+    // AddClipCommand._shiftedOrigins).
+    _oldTypes.clear();
+    _oldIntensities.clear();
+    for (final clip in project.allClips) {
+      if (!clipIds.contains(clip.id)) continue;
+      _oldTypes[clip.id] = clip.filterType;
+      _oldIntensities[clip.id] = clip.filterIntensity;
+      clip.filterType = newFilterType;
+      clip.filterIntensity = newIntensity;
+    }
+  }
+
+  @override
+  void undo(Project project) {
+    for (final clip in project.allClips) {
+      if (!clipIds.contains(clip.id)) continue;
+      clip.filterType = _oldTypes[clip.id] ?? 0;
+      clip.filterIntensity = _oldIntensities[clip.id] ?? 1.0;
+    }
+  }
+}
+
 /// Command: Trim clip (start or end).
 class TrimClipCommand extends EditCommand {
   final String trackId;
@@ -608,6 +655,106 @@ class ChangeClipTextCommand extends EditCommand {
     clip.textBackgroundColorValue = _oldBgColorValue;
     clip.textAlignment = _oldAlignment;
     clip.textGradient = _oldGradient;
+  }
+}
+
+/// Command: Set a clip's speed-ramp curve (v1.1.0, PLAN 3.11) — undoable,
+/// engine-synced via the command-history listener.
+class ChangeSpeedCurveCommand extends EditCommand {
+  final String clipId;
+  final List<SpeedRampPoint> newCurve;
+  late List<SpeedRampPoint> _oldCurve;
+  bool _applied = false;
+
+  ChangeSpeedCurveCommand({required this.clipId, required this.newCurve});
+
+  @override
+  String get description =>
+      newCurve.isEmpty ? 'Clear speed ramp' : 'Set speed ramp curve';
+
+  @override
+  void execute(Project project) {
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    _oldCurve = List.of(clip.speedCurve);
+    clip.speedCurve = List.of(newCurve);
+    _applied = true;
+  }
+
+  @override
+  void undo(Project project) {
+    if (!_applied) return;
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    clip.speedCurve = List.of(_oldCurve);
+  }
+}
+
+/// Command: Set a clip's picture-in-picture geometry (v1.1.0, PLAN 3.4) —
+/// undoable, engine-synced via the command-history listener. Coalesces per
+/// slider gesture (same pattern as ChangeClipPropertyCommand).
+class ChangePipCommand extends EditCommand {
+  final String clipId;
+  final double newX, newY, newW, newH, newRotation;
+  final int? gestureId;
+  late double _oldX, _oldY, _oldW, _oldH, _oldRotation;
+  bool _applied = false;
+
+  ChangePipCommand({
+    required this.clipId,
+    required this.newX,
+    required this.newY,
+    required this.newW,
+    required this.newH,
+    required this.newRotation,
+    this.gestureId,
+  });
+
+  @override
+  String? get coalesceKey => 'clip-pip:$clipId:$gestureId';
+
+  @override
+  String get description => 'Set picture-in-picture geometry';
+
+  @override
+  void inheritUndoState(EditCommand old) {
+    if (old is ChangePipCommand) {
+      _oldX = old._oldX;
+      _oldY = old._oldY;
+      _oldW = old._oldW;
+      _oldH = old._oldH;
+      _oldRotation = old._oldRotation;
+      _applied = true;
+    }
+  }
+
+  @override
+  void execute(Project project) {
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    _oldX = clip.pipX;
+    _oldY = clip.pipY;
+    _oldW = clip.pipW;
+    _oldH = clip.pipH;
+    _oldRotation = clip.pipRotation;
+    clip.pipX = newX;
+    clip.pipY = newY;
+    clip.pipW = newW;
+    clip.pipH = newH;
+    clip.pipRotation = newRotation;
+    _applied = true;
+  }
+
+  @override
+  void undo(Project project) {
+    if (!_applied) return;
+    final clip = project.allClips.where((c) => c.id == clipId).firstOrNull;
+    if (clip == null) return;
+    clip.pipX = _oldX;
+    clip.pipY = _oldY;
+    clip.pipW = _oldW;
+    clip.pipH = _oldH;
+    clip.pipRotation = _oldRotation;
   }
 }
 

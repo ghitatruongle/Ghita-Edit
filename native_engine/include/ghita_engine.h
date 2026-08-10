@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <list>
 #include <iomanip>
+#include <fstream>
 
 #ifdef GHITA_HAS_FFMPEG
 extern "C" {
@@ -258,6 +259,17 @@ private:
     bool m_pcmCached{false};
     bool pcmCacheAudio();
     bool readPcmFromCache(int64_t startMs, float* outSamples, int sampleCount, float volume);
+    // v1.1.0 (PLAN 2.7/B17): Persistent file handle + grow-only sample
+    // buffers. The old code opened the file and allocated two vectors on
+    // EVERY 100ms chunk (~10-20 opens + allocations per second of playback).
+    // All access happens under m_renderMutex, so the shared handle is safe.
+    std::ifstream m_pcmFile;
+    std::vector<int16_t> m_pcmI16Buf;
+    std::vector<float> m_pcmF32Buf;
+    // v1.1.0 (PLAN 2.9): Grow-only conversion buffer for decodeAudioSegment —
+    // 16384×2 floats ≈ 128 KB allocated per 100ms chunk was pure churn during
+    // playback. Guarded by m_renderMutex like the other decoder buffers.
+    std::vector<float> m_audioConvBuf;
 
     int m_videoStreamIdx{-1};
     int m_audioStreamIdx{-1};
@@ -281,27 +293,47 @@ private:
 };
 
 /**
- * @brief Legacy stub for FFmpeg native decoder integration (kept for ABI compatibility).
- */
-class FFmpegMediaDecoderStub : public IMediaDecoder {
-public:
-    FFmpegMediaDecoderStub() = default;
-    bool open(const std::string& filePath) override;
-    bool decodeFrame(uint8_t* outBuffer, int width, int height, int64_t timeMs, int filterType, float filterIntensity) override;
-    int64_t getDurationMs() const override { return m_durationMs; }
-    int getWidth() const override { return 1920; }
-    int getHeight() const override { return 1080; }
-    MediaInfo getMediaInfo() const override;
-private:
-    int64_t m_durationMs{60000};
-};
-
-/**
  * @brief Keyframe for animation curves.
+ * v1.1.0 (PLAN 3.1-3.3): Extended — property, interpolation mode and Bezier
+ * control points so keyframes are actually EVALUATED at render time (v1.0.0
+ * stored them but the compositor never read them).
  */
 struct Keyframe {
     int64_t timeMs{0};
     float value{0.0f};
+    // Property animated by this keyframe:
+    //   0 = opacity (0..1)        1 = position X offset (fraction of frame width)
+    //   2 = scale (0.1..4)        3 = rotation (degrees — stored, render limited)
+    //   4 = filter intensity (0..1)
+    int property{0};
+    // Interpolation toward the NEXT keyframe of the same property:
+    //   0 = linear, 1 = step (hold), 2 = bezier (cubic via control points)
+    int interpolation{0};
+    // Bezier control points (only for interpolation == 2). x/y are normalized
+    // to the segment between this keyframe and the next one.
+    float cp1x{0.0f}, cp1y{0.0f}, cp2x{0.0f}, cp2y{0.0f};
+};
+
+/**
+ * @brief Picture-in-picture geometry (v1.1.0, PLAN 3.4). All values are
+ * fractions of the output frame: x/y = top-left anchor, w/h = size. The
+ * overlay clip is decoded, scaled and blended at this rect.
+ */
+struct PipGeometry {
+    float x{0.0f};
+    float y{0.0f};
+    float w{1.0f};
+    float h{1.0f};
+    float rotation{0.0f};
+};
+
+/**
+ * @brief Speed-ramp point (v1.1.0, PLAN 3.11): normalized timeline position
+ * [0..1] mapped to a playback speed multiplier.
+ */
+struct SpeedRampPoint {
+    float t{0.0f};       // normalized position within the clip's timeline span
+    float speed{1.0f};   // multiplier at that position
 };
 
 /**
@@ -362,7 +394,16 @@ struct NativeClip {
     // v0.8.0: Per-clip color correction (applied after the filter).
     ColorCorrection cc;
     NativeTransition transition;
-    std::vector<Keyframe> keyframes; // v0.4.5: keyframe animation
+    std::vector<Keyframe> keyframes; // v0.4.5: keyframe animation (v1.1.0: evaluated at render)
+    // v1.1.0 (PLAN 3.3): Default interpolation applied between keyframes that
+    // don't carry their own (setClipKeyframeInterpolation was a no-op before).
+    int keyframeInterpolation{0};
+    // v1.1.0 (PLAN 3.4): Picture-in-picture geometry — when w/h < 1 the clip
+    // is rendered scaled into a rect instead of filling the frame.
+    PipGeometry pip;
+    // v1.1.0 (PLAN 3.11): Speed-ramp curve — when non-empty, playback speed
+    // varies over the clip's timeline span instead of being constant.
+    std::vector<SpeedRampPoint> speedCurve;
 };
 
 /**
@@ -467,6 +508,14 @@ public:
      */
     bool renderFrameAt(uint8_t* outBuffer, int width, int height, int64_t positionMs);
 
+    /**
+     * @brief v1.1.0 (PLAN 3.5): Same as renderFrameAt but with the effects
+     * (per-clip filter + color correction + global filter) skipped when
+     * [applyFx] is false — the split-view "before" side renders the raw
+     * timeline for a real before/after comparison.
+     */
+    bool renderFrameAtEx(uint8_t* outBuffer, int width, int height, int64_t positionMs, bool applyFx);
+
     /** @brief Returns direct memory buffer pointer for zero-copy GPU texture sharing. */
     uint8_t* getFrameDirectBufferPointer(int* outWidth, int* outHeight);
 
@@ -509,6 +558,20 @@ public:
     bool addClipKeyframe(int clipId, int64_t timeMs, float value);
     bool clearClipKeyframes(int clipId);
 
+    // v1.1.0 (PLAN 3.1-3.3): Extended keyframe API — property/interpolation/
+    // bezier aware. Returns 0 on success, -1 on error (mirrors C API).
+    int addClipKeyframeEx(int clipId, int64_t timeMs, float value, int property,
+                          int interpolation, float cp1x, float cp1y, float cp2x, float cp2y);
+    int setKeyframeBezierEx(int clipId, int keyframeIndex,
+                            float cp1x, float cp1y, float cp2x, float cp2y);
+    int getClipKeyframeCount(int clipId) const;
+    // v1.1.0 (PLAN 3.4): Picture-in-picture geometry.
+    int setClipPip(int clipId, const PipGeometry& pip);
+    // v1.1.0 (PLAN 3.11): Speed-ramp curve (points sorted by t).
+    int setClipSpeedCurve(int clipId, const std::vector<SpeedRampPoint>& curve);
+    // v1.1.0 (PLAN 3.11): Append a single speed-ramp point (kept sorted).
+    int addSpeedRampPoint(int clipId, float t, float speed);
+
     // v0.5.5: Keyframe interpolation
     bool setClipKeyframeInterpolation(int clipId, KeyframeInterpolation interpolation);
     KeyframeInterpolation getClipKeyframeInterpolation(int clipId) const;
@@ -537,6 +600,21 @@ public:
 
     // Engine self-test (used by test runner)
     static bool selfTest();
+
+    /**
+     * @brief v1.1.0 (PLAN 3.7): Extracts timeline waveform peaks for an audio
+     * track — splits the timeline into [sampleCount] windows and reports the
+     * peak of the real mixAudioWindow output per window (the old
+     * getAudioWaveform reads the legacy single loadMedia() decoder, which
+     * ignores trims/moves/multi-clip timelines).
+     */
+    bool getTimelineWaveform(float* outSamples, int sampleCount, int trackIndex);
+
+    /**
+     * @brief v1.1.0 (PLAN 3.6): Decodes the frame of ONE timeline clip at an
+     * explicit source time (unlike getThumbnail's timeline-position hack).
+     */
+    bool getClipThumbnail(uint8_t* outBuffer, int width, int height, int clipId, int64_t timeMs);
 
     /** @brief Filter indices for runtime filter selection. */
     enum FilterType {
@@ -605,6 +683,15 @@ private:
     static constexpr size_t kMaxClipDecoders = 8;
     // v0.8.0: Scratch buffer for compositing (one full frame).
     std::vector<uint8_t> m_renderScratch;
+    // v1.1.0 (PLAN 2.4/C3): Grow-only scratch for the per-track covering-clip
+    // resolution — renderTimelineFrame fills it in ONE linear scan over the
+    // startMs-sorted m_clips instead of a tracks×clips nested loop.
+    std::vector<const NativeClip*> m_activeClips;
+    // v1.1.0 (PLAN 2.9): Grow-only per-window mix segment buffer — allocated
+    // once, reused by every mixAudioWindow call (serialized by m_renderMutex).
+    std::vector<float> m_mixSegBuf;
+    // v1.1.0 (PLAN 3.2): Grow-only scratch for keyframe-scaled frames.
+    std::vector<uint8_t> m_scaleScratch;
 
     // Export state & async worker
     std::atomic<bool> m_isExporting{false};
@@ -642,7 +729,6 @@ private:
     void stopAudioPreviewThread();
     void audioPreviewLoop();
 
-    void updateClock();
     void recalculateDuration();
     void runExportLoop(std::string outputPath, int width, int height, int fps);
     void runExportLoopEx(std::string outputPath, int width, int height, int fps,
@@ -650,14 +736,56 @@ private:
 
     // v0.8.0: Timeline compositor internals (must be called with m_engineMutex
     // held; they take m_renderMutex for the actual decode).
-    bool renderTimelineFrame(uint8_t* outBuffer, int width, int height, int64_t posMs);
+    // v1.1.0 (PLAN 3.5): [applyFx] skips per-clip filter/cc and the global
+    // filter — the "before" side of split view.
+    bool renderTimelineFrame(uint8_t* outBuffer, int width, int height, int64_t posMs, bool applyFx = true);
     bool decodeClipFrame(int clipId, uint8_t* outBuffer, int width, int height,
+                         int64_t sourcePosMs, int filterType, float filterIntensity);
+    // v1.1.0 (PLAN 2.4/C3): Direct-clip overload — the compositor holds the
+    // NativeClip& already; looking it up by id again was an O(n) scan per
+    // clip per frame.
+    bool decodeClipFrame(const NativeClip& clip, uint8_t* outBuffer, int width, int height,
                          int64_t sourcePosMs, int filterType, float filterIntensity);
     std::shared_ptr<IMediaDecoder> getClipDecoder(int clipId, const std::string& filePath);
     void applyColorCorrectionToBuffer(uint8_t* buffer, int width, int height,
                                       const ColorCorrection& cc) const;
     bool renderTextGdi(uint8_t* outBuffer, int width, int height, const std::string& text,
                        float fontSize, uint32_t colorArgb) const;
+    // v1.1.0 (PLAN 2.8/C6): GDI text bitmap cache (LRU, bounded) — creating
+    // a DIB section + font + DrawTextW per frame per text clip is expensive
+    // (timeline with several text clips re-rasterizes every preview tick).
+    // Identical payloads (text/font size/color/frame size) reuse the bitmap.
+    // renderTextGdi is const, hence mutable. Guarded by m_renderMutex (every
+    // caller of renderTextGdi holds it).
+    struct TextGlyphCacheEntry {
+        std::string key;
+        int width{0};
+        int height{0};
+        std::vector<uint8_t> rgba;
+    };
+    mutable std::list<TextGlyphCacheEntry> m_textCache;
+    static constexpr size_t kMaxTextCacheEntries = 16; // 16 × 640×360×4 ≈ 15 MB worst case
+
+    // v1.1.0 (PLAN 2.4/C3): Keeps m_clips sorted by startMs — the timeline
+    // render then resolves the covering clip per track with ONE linear scan
+    // instead of a tracks×clips nested loop.
+    void sortClipsByStart();
+
+    /**
+     * @brief v1.1.0 (PLAN 3.2): Keyframe state evaluated at a timeline position.
+     */
+    struct KeyframeState {
+        float opacity{1.0f};
+        float offsetX{0.0f};  // fraction of frame width
+        float offsetY{0.0f};  // fraction of frame height
+        float scale{1.0f};
+        float filterIntensity{-1.0f}; // < 0 = use clip's own intensity
+    };
+    KeyframeState evalKeyframes(const NativeClip& clip, int64_t posMs) const;
+    // v1.1.0 (PLAN 3.11): Playback speed at a timeline position (integrated
+    // source offset helper). Constant speed when no curve is attached.
+    float evalSpeedAt(const NativeClip& clip, int64_t posMs) const;
+    int64_t evalSourceOffset(const NativeClip& clip, int64_t posMs) const;
 };
 
 #endif // GHITA_ENGINE_H

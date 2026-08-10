@@ -48,6 +48,18 @@ jobs:
           fi
           echo "CMake version consistent: $CMAKE_VER"
 
+      # v1.1.0 (PLAN 1.1/B18): The code shipped fixes v1.0.1-1.0.3 without ever
+      # bumping the version or the changelog, so the drift was invisible to the
+      # four-way check above. Gate the CHANGELOG on the current version.
+      - name: Check CHANGELOG has an entry for the current version
+        run: |
+          DART_VER=$(sed -n 's/.*kMajorVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart).$(sed -n 's/.*kMinorVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart).$(sed -n 's/.*kPatchVersion = \([0-9]*\).*/\1/p' lib/src/core/version.dart)
+          if ! grep -q "^## v$DART_VER" CHANGELOG.md; then
+            echo "CHANGELOG is missing an entry for v$DART_VER"
+            exit 1
+          fi
+          echo "CHANGELOG entry present: v$DART_VER"
+
   flutter-analyze-and-test:
     name: Flutter Linting & Test Suite
     runs-on: ubuntu-latest
@@ -121,6 +133,23 @@ jobs:
       - name: Run Engine Smoke Test
         shell: bash
         run: bash scripts/run_engine_smoke_test.sh
+
+      # v1.1.0 (PLAN 3.12): export matrix — MP4/H.264, MP4/H.265, MP4/VP9,
+      # GIF (skip: pal8 encoder limitation), MP3, MOV/H.264 — each verified
+      # with ffprobe (codec/streams/duration/size). Fails loudly on wrong
+      # output; skips formats whose encoder the engine cannot use yet.
+      - name: Verify Export Matrix (ffprobe)
+        shell: bash
+        run: |
+          # Generate the test media the matrix exports.
+          ffmpeg -y -f lavfi -i testsrc2=size=320x240:rate=30:duration=1.2 \
+            -f lavfi -i sine=frequency=440:duration=1.2 -c:v libx264 -pix_fmt yuv420p \
+            -c:a aac -shortest -movflags +faststart \
+            build/windows/x64/runner/Release/matrix_media.mp4
+          bash scripts/verify_export_matrix.sh \
+            --dll build/windows/x64/runner/Release/ghita_engine.dll \
+            --media build/windows/x64/runner/Release/matrix_media.mp4 \
+            --out build/export_matrix_ci
 
   build-native-engine-linux:
     name: Build C++ Native Engine (Linux GCC)

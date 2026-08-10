@@ -69,6 +69,12 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
           'path': clip.sourceFilePath,
           'clip': clip,
         });
+        // v1.1.0 (PLAN 3.6): Wire the REAL per-clip thumbnail — the engine
+        // now decodes a frame of THIS clip (clip_id aware, not a
+        // timeline-position hack), cached path-keyed.
+        if (clip.type == ClipType.video || clip.type == ClipType.image) {
+          _loadThumbnail(clip);
+        }
       }
     }
 
@@ -76,6 +82,25 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
     // quadratic, and it runs on every parent rebuild (30 fps during playback).
     final liveIds = clips.map((c) => c.id).toSet();
     _importedMedia.removeWhere((m) => !liveIds.contains(m['id'] as String));
+  }
+
+  // v1.1.0 (PLAN 3.6): Fetch + cache the clip's thumbnail asynchronously.
+  // Retries once after the deferred engine sync that assigns native ids.
+  Future<void> _loadThumbnail(Clip clip) async {
+    final engine = widget.controller.engineService;
+    if (!engine.isReady) return;
+    var nativeId = widget.controller.nativeClipIdFor(clip.id);
+    if (nativeId == null) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (!mounted) return;
+      nativeId = widget.controller.nativeClipIdFor(clip.id);
+    }
+    if (nativeId == null) return;
+    final timeMs = (clip.durationMs ~/ 2).clamp(0, 1 << 30);
+    final bytes = engine.getThumbnail(nativeId, timeMs, 96, 54);
+    if (bytes == null || !mounted) return;
+    engine.cacheThumbnail(clip.sourceFilePath, bytes);
+    if (mounted) setState(() {});
   }
 
   String _typeString(ClipType type) {

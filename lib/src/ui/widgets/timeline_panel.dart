@@ -92,6 +92,12 @@ class _TimelinePanelState extends State<TimelinePanel> {
   // Trim dragging
   String? _trimmingClipId;
 
+  // v1.1.0 (PLAN 1.1/B8): Shared minimum clip duration. The right trim
+  // handle clamped to 200ms but the LEFT handle had NO clamp at all —
+  // dragging it past the clip's right edge produced durationMs <= 0, which
+  // the engine rejects (upsert returns 0) and corrupts rendering/export.
+  static const int _kMinClipDurationMs = 100;
+
   // Multi-select / marquee
   bool _marqueeActive = false;
   Offset? _marqueeStart;
@@ -678,14 +684,20 @@ class _TimelinePanelState extends State<TimelinePanel> {
   // ============================================================
 
   Widget _buildAudioWaveform(Track track, EditorController ctrl, double pxPerSec) {
-    // v0.7.9: Zoom-out renders fewer samples (downsampled by the engine);
-    // the engine caches per sample-count, so zooming/scrubbing no longer
-    // refetches the full waveform on every rebuild.
-    final downsamplingFactor = pxPerSec < 20
-        ? 4
-        : (pxPerSec < 40 ? 2 : null);
+    // v1.1.0 (PLAN 2.10): Skip the FFI waveform fetch when the track has no
+    // audio-bearing clip — previously every build of an empty audio track
+    // called into the native waveform path (and cached a useless entry).
+    // Track 3 (PLAN 3.7) replaces this with a real timeline waveform.
+    final hasAudioSource = track.clips.any((c) =>
+        c.type == models.ClipType.audio || c.type == models.ClipType.video);
+    if (!hasAudioSource) return const SizedBox.shrink();
+
+    // v1.1.0 (PLAN 3.7): REAL timeline waveform — peak per bucket from the
+    // engine's mix pipeline (PLAN 3.7), which reflects the actual timeline
+    // (trims/moves/speed/multi-clip). The old getAudioWaveform read the
+    // legacy single loadMedia() decoder and ignored the timeline entirely.
     final waveform = ctrl.engineService
-        .getAudioWaveform(200, downsamplingFactor: downsamplingFactor);
+        .getTimelineWaveform(200, ctrl.tracks.indexOf(track));
     if (waveform.isEmpty) return const SizedBox.shrink();
 
     return Positioned.fill(
@@ -754,9 +766,16 @@ class _TimelinePanelState extends State<TimelinePanel> {
                     // old code computed durationMs from the NEW start and the
                     // clip visually stretched instead of trimming.
                     final endMs = clip.timelineEndMs;
-                    clip.timelineStartMs = snapped2;
-                    clip.durationMs = endMs - snapped2;
-                    _tempClipPositions[clip.id] = snapped2;
+                    // v1.1.0 (PLAN 1.1/B8): Never allow the trim to eat the
+                    // whole clip — mirror the right handle's minimum duration
+                    // (same shared constant) so durationMs can never hit 0.
+                    // min() instead of clamp: snapped2 is already >= 0 and
+                    // min<int> keeps the static type int.
+                    final clampedStart =
+                        min(snapped2, endMs - _kMinClipDurationMs);
+                    clip.timelineStartMs = clampedStart;
+                    clip.durationMs = endMs - clampedStart;
+                    _tempClipPositions[clip.id] = clampedStart;
                     ctrl.notifyListeners();
                   }
                 },
@@ -820,7 +839,9 @@ class _TimelinePanelState extends State<TimelinePanel> {
                   if (_trimmingClipId != clip.id) return;
                   final deltaMs = (details.delta.dx / pxPerSec * 1000).toInt();
                   final currentEnd = clip.timelineEndMs + deltaMs;
-                  final newDuration = max(200, currentEnd - clip.timelineStartMs);
+                  // v1.1.0 (PLAN 1.1/B8): Unified minimum duration — the
+                  // shared constant now backs both trim handles.
+                  final newDuration = max(_kMinClipDurationMs, currentEnd - clip.timelineStartMs);
                   final snappedEnd = _snapEngine.snap(clip.timelineStartMs + newDuration, pxPerSec)
                     ?? (clip.timelineStartMs + newDuration);
                   if (snappedEnd > clip.timelineStartMs + 100) {

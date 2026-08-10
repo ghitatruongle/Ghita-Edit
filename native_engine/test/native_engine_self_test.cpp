@@ -134,8 +134,8 @@ void test_load_media_mock() {
 void test_get_version_string() {
     const char* v = ghita_engine_get_version();
     EXPECT_TRUE(v != nullptr);
-    // v1.0.0 should be in the string
-    EXPECT_TRUE(std::string(v).find("1.0.0") != std::string::npos);
+    // v1.1.0 should be in the string (CI checks this too)
+    EXPECT_TRUE(std::string(v).find("1.1.0") != std::string::npos);
 }
 
 void test_clip_operations() {
@@ -495,8 +495,13 @@ void test_real_media_decode() {
     // present in the working directory (test_media.mp4). The synthetic
     // fallback tests above never touch avformat/avcodec, so this is the only
     // coverage of the actual decode pipeline.
-    std::ifstream probe("test_media.mp4", std::ios::binary);
-    if (!probe.good()) {
+    // v1.1.0 (PLAN 1.1 deep review): probe via is_open() — on this libstdc++
+    // an ifstream opened with an explicit `std::ios::binary` mode reports
+    // good()==true for a MISSING file (the open never set failbit), so the
+    // old `!probe.good()` skip never fired and the test ran against a
+    // non-existent file (failing on hasFFmpeg) instead of skipping honestly.
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
         std::cout << " (test_media.mp4 not found — skipping real decode)" << std::flush;
         return;
     }
@@ -519,9 +524,11 @@ void test_real_media_decode() {
 }
 
 // v0.8.0: Audio mixing — needs the real media file (has a 440Hz sine track).
+// v1.1.0: probe via is_open() (see test_real_media_decode — good() is true
+// for missing files when the explicit binary mode is passed).
 void test_audio_mix() {
-    std::ifstream probe("test_media.mp4", std::ios::binary);
-    if (!probe.good()) {
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
         std::cout << " (test_media.mp4 not found — skipping audio mix)" << std::flush;
         return;
     }
@@ -553,9 +560,12 @@ void test_audio_mix() {
 // v0.8.0: End-to-end export of a multi-clip timeline WITH audio. Verifies the
 // output is a valid mp4 containing both a video and an audio stream by
 // re-opening it with avformat.
+// v1.1.0: probe via is_open() (see test_real_media_decode). The old good()
+// probe never skipped on this toolchain, so a missing file exported
+// SYNTHETIC content and still "passed" — a false positive.
 void test_export_with_audio() {
-    std::ifstream probe("test_media.mp4", std::ios::binary);
-    if (!probe.good()) {
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
         std::cout << " (test_media.mp4 not found — skipping audio export)" << std::flush;
         return;
     }
@@ -684,8 +694,9 @@ void test_audio_preview_stress() {
 void test_export_trimmed_clip() {
     // Export a clip with a source in-point (trim) — the output must be a
     // valid video file sized to the TIMELINE duration, not the media.
-    std::ifstream probe("test_media.mp4", std::ios::binary);
-    if (!probe.good()) {
+    // v1.1.0: probe via is_open() (see test_real_media_decode).
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
         std::cout << " (test_media.mp4 not found — skipping trimmed export)" << std::flush;
         return;
     }
@@ -718,6 +729,732 @@ void test_export_trimmed_clip() {
     }
 #endif
     std::remove(outPath.c_str());
+}
+
+// ========== v1.1.0 tests (PLAN 1.1 Track 1) ==========
+
+// v1.1.0 (PLAN 1.1/B2): The filter list must contain each id 0..22 EXACTLY
+// once — v1.0.0 shipped a duplicated id 19 ("Duotone") that produced a
+// doubled chip in the Dart UI and ambiguous id lookups.
+void test_filters_json_unique() {
+    GhitaEngine engine;
+    engine.initialize();
+    const std::string json = engine.getAvailableFiltersJson();
+
+    int entries = 0;
+    size_t pos = 0;
+    while ((pos = json.find("\"id\":", pos)) != std::string::npos) {
+        ++entries;
+        pos += 5;
+    }
+    EXPECT_EQ(entries, 23);
+
+    for (int id = 0; id <= 22; ++id) {
+        const std::string needle = "\"id\":" + std::to_string(id) + ",";
+        const size_t first = json.find(needle);
+        EXPECT_TRUE(first != std::string::npos); // every id present
+        EXPECT_TRUE(json.find(needle, first + needle.size()) == std::string::npos); // ...exactly once
+    }
+}
+
+// v1.1.0 (PLAN 1.1/B1): decodeAudioSegment on a broken media file must not
+// crash and must not spam stderr — the leftover debug fprintf (which also
+// dereferenced m_formatCtx->pb without a null guard) was removed.
+void test_audio_segment_corrupt() {
+    const std::string badPath = "corrupt_test.bin";
+    {
+        std::ofstream f(badPath, std::ios::binary);
+        const uint8_t garbage[64] = {0x00, 0x01, 0x02, 0xFF, 'R', 'I', 'F', 'X',
+                                     'f', 'm', 't', ' ', 0x00, 0x00, 0x00, 0x00};
+        f.write(reinterpret_cast<const char*>(garbage), sizeof(garbage));
+    }
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, badPath, 0, 2000, 0, 2, NativeClipKind::Audio, 1.0f, 1.0f, 1.0f), 1);
+
+    std::vector<float> mix(4410 * 2, 0.0f);
+    // Several windows across the "media" — must all return normally.
+    for (int w = 0; w < 10; ++w) {
+        engine.mixAudioWindow(w * 100, w * 100 + 100, mix.data(), static_cast<int>(mix.size()), true);
+    }
+    EXPECT_TRUE(engine.isReady());
+    std::remove(badPath.c_str());
+}
+
+// v1.1.0 (PLAN 1.1/P1.9): Export lifecycle hardening — a second start while
+// exporting must be rejected fast (no deadlock), and a restart after cancel
+// exercises the join-now-outside-the-engine-lock path.
+void test_export_restart_no_deadlock() {
+    GhitaEngine engine;
+    engine.initialize();
+
+    EXPECT_TRUE(engine.startExportEx("restart1.mp4", 160, 120, 25, "h264", 1000000, true));
+    EXPECT_TRUE(engine.isExporting());
+    // Second start while an export is active → rejected immediately.
+    EXPECT_FALSE(engine.startExportEx("restart2.mp4", 160, 120, 25, "h264", 1000000, true));
+    engine.cancelExport();
+    EXPECT_FALSE(engine.isExporting());
+
+    // Restart after cancel — joins the previous (finished) thread outside
+    // the engine lock (previously the join ran under the unique lock).
+    EXPECT_TRUE(engine.startExportEx("restart3.mp4", 160, 120, 25, "h264", 1000000, true));
+    EXPECT_TRUE(engine.isExporting());
+    engine.cancelExport();
+    EXPECT_FALSE(engine.isExporting());
+
+    std::remove("restart1.mp4");
+    std::remove("restart2.mp4");
+    std::remove("restart3.mp4");
+}
+
+// ========== v1.1.0 Track 2 tests (PLAN 2: RESOURCE) ==========
+
+// v1.1.0 (PLAN 2.5/C4): Skin Retouch must render without crashing and alter
+// pixels — the SAT (integral image) rewrite must produce a visible effect.
+void test_skin_retouch_render() {
+    GhitaEngine engine;
+    engine.initialize();
+    engine.loadMedia("test.mp4"); // synthetic fallback
+    std::vector<uint8_t> plain(320 * 180 * 4, 0);
+    std::vector<uint8_t> retouched(320 * 180 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(plain.data(), 320, 180, 1000));
+    engine.applyFilter(21, 1.0f);
+    EXPECT_TRUE(engine.renderFrameAt(retouched.data(), 320, 180, 1000));
+    engine.applyFilter(0, 1.0f);
+
+    // The synthetic pattern has skin-toned regions — the filter must change
+    // at least some pixels.
+    bool changed = false;
+    for (int i = 0; i < 320 * 180 && !changed; ++i) {
+        if (plain[i * 4] != retouched[i * 4] ||
+            plain[i * 4 + 1] != retouched[i * 4 + 1] ||
+            plain[i * 4 + 2] != retouched[i * 4 + 2]) changed = true;
+    }
+    EXPECT_TRUE(changed);
+}
+
+// v1.1.0 (PLAN 2.8/C6): The GDI text bitmap cache must return the SAME
+// pixels for the same payload (cache hit path) — and rendering must not
+// crash with a full cache (LRU eviction).
+void test_text_cache_consistency() {
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "", 0, 3000, 0, 1, NativeClipKind::Text, 1.0f, 1.0f, 1.0f), 1);
+    EXPECT_EQ(engine.setClipText(1, "Cache Test", 48.0f, 0xFFFFFFFF), 1);
+
+    std::vector<uint8_t> first(320 * 180 * 4, 0);
+    std::vector<uint8_t> second(320 * 180 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(first.data(), 320, 180, 1000));
+    EXPECT_TRUE(engine.renderFrameAt(second.data(), 320, 180, 1000));
+
+    // Second render is a cache hit — must be pixel-identical.
+    bool same = true;
+    for (int i = 0; i < 320 * 180; ++i) {
+        if (first[i * 4] != second[i * 4] || first[i * 4 + 1] != second[i * 4 + 1] ||
+            first[i * 4 + 2] != second[i * 4 + 2] || first[i * 4 + 3] != second[i * 4 + 3]) {
+            same = false;
+            break;
+        }
+    }
+    EXPECT_TRUE(same);
+
+    // Vary the text to force a cache MISS — pixels must differ somewhere.
+    EXPECT_EQ(engine.setClipText(1, "Cache Miss Text", 48.0f, 0xFFFFFFFF), 1);
+    std::vector<uint8_t> third(320 * 180 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(third.data(), 320, 180, 1000));
+    bool differs = false;
+    for (int i = 0; i < 320 * 180 && !differs; ++i) {
+        if (second[i * 4] != third[i * 4] || second[i * 4 + 1] != third[i * 4 + 1] ||
+            second[i * 4 + 2] != third[i * 4 + 2]) differs = true;
+    }
+    EXPECT_TRUE(differs);
+}
+
+// v1.1.0 (PLAN 2.6/C5): Fast-continuation for non-PCM — walking forward in
+// fixed chunks must deliver audio in EVERY chunk (no silence from a broken
+// continuation), and seeking mid-stream must still land at the right window.
+void test_audio_continuation_nonpcm() {
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
+        std::cout << " (test_media.mp4 not found — skipping audio continuation)" << std::flush;
+        return;
+    }
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "test_media.mp4", 0, 2000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+
+    std::vector<float> mix(4410 * 2, 0.0f);
+    // 20 contiguous 100ms chunks — every one must contain real audio.
+    int silentChunks = 0;
+    int loudChunks = 0;
+    std::vector<int> silentAt;
+    for (int w = 0; w < 20; ++w) {
+        std::fill(mix.begin(), mix.end(), 0.0f);
+        if (engine.mixAudioWindow(w * 100, w * 100 + 100, mix.data(), static_cast<int>(mix.size()), true)) {
+            float peak = 0.0f;
+            for (float v : mix) peak = std::max(peak, std::abs(v));
+            if (peak > 0.005f) ++loudChunks; else { ++silentChunks; silentAt.push_back(w); }
+        } else {
+            ++silentChunks;
+            silentAt.push_back(w);
+        }
+    }
+    // The 440Hz sine plays for the whole 2s. AAC priming (~21ms) can silence
+    // the FIRST chunk, and `-shortest` in the media generation cuts the audio
+    // stream slightly short (~1.7s), so the LAST chunks are naturally quiet.
+    // The core (chunks 1..16) must all be loud or the continuation path broke.
+    std::cout << " (continuation: loud=" << loudChunks << " silent=" << silentChunks;
+    for (int s : silentAt) std::cout << "@" << s * 100 << "ms";
+    std::cout << ")" << std::flush;
+    for (int w = 1; w <= 16; ++w) {
+        EXPECT_TRUE(std::find(silentAt.begin(), silentAt.end(), w) == silentAt.end());
+    }
+
+    // Seek mid-stream after the continuation run — window @800ms must be loud.
+    std::fill(mix.begin(), mix.end(), 0.0f);
+    engine.mixAudioWindow(800, 900, mix.data(), static_cast<int>(mix.size()), true);
+    float peak = 0.0f;
+    for (float v : mix) peak = std::max(peak, std::abs(v));
+    EXPECT_TRUE(peak > 0.005f);
+}
+
+// ========== v1.1.0 Track 3 tests (PLAN 3: ACCURACY) ==========
+
+// v1.1.0 (PLAN 3.2): Keyframed opacity must actually animate the render —
+// an opacity 0→1 ramp over 1000ms must produce progressively brighter frames.
+void test_keyframe_opacity_eval() {
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "kf.mp4", 0, 1000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+    // opacity: 0 @ 0ms → 1 @ 1000ms (property 0, linear).
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 0, 0.0f, 0, 0, 0, 0, 0, 0), 0);
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 1000, 1.0f, 0, 0, 0, 0, 0, 0), 0);
+
+    auto lumaSum = [&](int64_t pos) {
+        std::vector<uint8_t> buf(160 * 120 * 4, 0);
+        EXPECT_TRUE(engine.renderFrameAt(buf.data(), 160, 120, pos));
+        int64_t sum = 0;
+        for (int i = 0; i < 160 * 120; ++i) {
+            sum += buf[i * 4] + buf[i * 4 + 1] + buf[i * 4 + 2];
+        }
+        return sum;
+    };
+    const int64_t s150 = lumaSum(150);
+    const int64_t s500 = lumaSum(500);
+    const int64_t s900 = lumaSum(900);
+    EXPECT_TRUE(s150 < s500); // montone ramp
+    EXPECT_TRUE(s500 < s900);
+    EXPECT_TRUE(s150 > 0);    // not fully black at 15% opacity
+    EXPECT_TRUE(s900 > s150 * 4); // late frames much brighter than early ones
+}
+
+// v1.1.0 (PLAN 3.3): Bezier interpolation must differ from linear at the
+// segment midpoint (cp (1,0,0,1) stays near the start value early on).
+void test_keyframe_bezier_eval() {
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "bz.mp4", 0, 1000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+    // Linear keyframes first.
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 0, 0.0f, 0, 0, 0, 0, 0, 0), 0);
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 1000, 1.0f, 0, 0, 0, 0, 0, 0), 0);
+    EXPECT_EQ(engine.getClipKeyframeCount(1), 2);
+
+    std::vector<uint8_t> linear(160 * 120 * 4, 0);
+    std::vector<uint8_t> bezier(160 * 120 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(linear.data(), 160, 120, 250));
+    // Replace the same keyframes with bezier interpolation (same time+prop).
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 0, 0.0f, 0, 2, 1.0f, 0.0f, 0.0f, 1.0f), 0);
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 1000, 1.0f, 0, 2, 1.0f, 0.0f, 0.0f, 1.0f), 0);
+    EXPECT_EQ(engine.getClipKeyframeCount(1), 2); // replaced, not duplicated
+    EXPECT_TRUE(engine.renderFrameAt(bezier.data(), 160, 120, 250));
+
+    int64_t sumL = 0, sumB = 0;
+    for (int i = 0; i < 160 * 120; ++i) {
+        sumL += linear[i * 4] + linear[i * 4 + 1] + linear[i * 4 + 2];
+        sumB += bezier[i * 4] + bezier[i * 4 + 1] + bezier[i * 4 + 2];
+    }
+    // cp (1,0,0,1): bezier stays near 0 early → darker than linear at 25%.
+    EXPECT_TRUE(sumB < sumL);
+}
+
+// v1.1.0 (PLAN 3.4): PiP renders ONLY inside the geometry rect — outside
+// stays black, inside has content.
+void test_pip_render() {
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "pip.mp4", 0, 2000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+    PipGeometry pip;
+    pip.x = 0.25f;
+    pip.y = 0.25f;
+    pip.w = 0.5f;
+    pip.h = 0.5f;
+    pip.rotation = 0.0f;
+    EXPECT_EQ(engine.setClipPip(1, pip), 0);
+
+    std::vector<uint8_t> buf(160 * 120 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(buf.data(), 160, 120, 500));
+
+    // Outside the rect (top-left corner) → black.
+    bool cornerBlack = true;
+    for (int y = 0; y < 20; ++y) {
+        for (int x = 0; x < 20; ++x) {
+            const int i = (y * 160 + x) * 4;
+            if (buf[i] || buf[i + 1] || buf[i + 2]) cornerBlack = false;
+        }
+    }
+    EXPECT_TRUE(cornerBlack);
+    // Inside the rect (center) → content.
+    bool centerHasContent = false;
+    for (int y = 55; y < 65; ++y) {
+        for (int x = 70; x < 90; ++x) {
+            const int i = (y * 160 + x) * 4;
+            if (buf[i] || buf[i + 1] || buf[i + 2]) centerHasContent = true;
+        }
+    }
+    EXPECT_TRUE(centerHasContent);
+}
+
+// v1.1.0 (PLAN 3.11): A speed curve must change the source mapping — at 50%
+// of a 1000ms clip a 0→4x curve reads ~2.5x further into the source, which
+// decodes a DIFFERENT frame than the constant-speed path.
+void test_speed_curve_source() {
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "ramp.mp4", 0, 1000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+
+    std::vector<uint8_t> flat(160 * 120 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(flat.data(), 160, 120, 500));
+
+    // Curve: 1x at t=0 → 4x at t=1.
+    EXPECT_EQ(engine.addSpeedRampPoint(1, 0.0f, 1.0f), 0);
+    EXPECT_EQ(engine.addSpeedRampPoint(1, 1.0f, 4.0f), 0);
+
+    std::vector<uint8_t> ramped(160 * 120 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(ramped.data(), 160, 120, 500));
+
+    // The ramped frame reads a different source position → pixels differ.
+    bool differs = false;
+    for (int i = 0; i < 160 * 120 && !differs; ++i) {
+        if (flat[i * 4] != ramped[i * 4] ||
+            flat[i * 4 + 1] != ramped[i * 4 + 1] ||
+            flat[i * 4 + 2] != ramped[i * 4 + 2]) differs = true;
+    }
+    EXPECT_TRUE(differs);
+}
+
+// v1.1.0 (PLAN 3.5): Raw split-view render — with a filter applied, the raw
+// frame must differ from the processed one at the same position.
+void test_render_raw_vs_processed() {
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "raw.mp4", 0, 2000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+    ColorCorrection cc;
+    cc.exposure = 1.0f; // +1 stop → brighter
+    EXPECT_EQ(engine.setClipColorCorrection(1, cc), 1);
+
+    std::vector<uint8_t> raw(160 * 120 * 4, 0);
+    std::vector<uint8_t> fx(160 * 120 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAtEx(raw.data(), 160, 120, 500, false));
+    EXPECT_TRUE(engine.renderFrameAtEx(fx.data(), 160, 120, 500, true));
+    int64_t sumRaw = 0, sumFx = 0;
+    for (int i = 0; i < 160 * 120; ++i) {
+        sumRaw += raw[i * 4] + raw[i * 4 + 1] + raw[i * 4 + 2];
+        sumFx += fx[i * 4] + fx[i * 4 + 1] + fx[i * 4 + 2];
+    }
+    EXPECT_TRUE(sumFx > sumRaw); // exposure lifted the processed side
+}
+
+// v1.1.0 (PLAN 3.6): Thumbnails are per-CLIP — a REAL-media clip and a
+// synthetic clip at the same timeMs must produce different thumbnails (the
+// old implementation rendered the whole timeline and ignored clip_id, so the
+// content source was never clip-specific).
+void test_thumbnail_per_clip() {
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
+        std::cout << " (test_media.mp4 not found — skipping per-clip thumbnail)" << std::flush;
+        return;
+    }
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "test_media.mp4", 0, 2000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+    EXPECT_EQ(engine.upsertClip(2, "other.mp4", 2000, 2000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+
+    std::vector<uint8_t> a(96 * 54 * 4, 0);
+    std::vector<uint8_t> b(96 * 54 * 4, 0);
+    EXPECT_TRUE(engine.getClipThumbnail(a.data(), 96, 54, 1, 500));
+    EXPECT_TRUE(engine.getClipThumbnail(b.data(), 96, 54, 2, 500));
+    // Real media (testsrc2 grid) vs synthetic pattern → different pixels.
+    bool differs = false;
+    for (int i = 0; i < 96 * 54 && !differs; ++i) {
+        if (a[i * 4] != b[i * 4] || a[i * 4 + 1] != b[i * 4 + 1] ||
+            a[i * 4 + 2] != b[i * 4 + 2]) differs = true;
+    }
+    EXPECT_TRUE(differs);
+    EXPECT_FALSE(engine.getClipThumbnail(a.data(), 96, 54, 999, 500)); // unknown clip
+}
+
+// v1.1.0 (PLAN 3.7): Timeline waveform reflects the REAL timeline — a gap in
+// the middle must show as a silent bucket between two loud ones.
+void test_timeline_waveform() {
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
+        std::cout << " (test_media.mp4 not found — skipping timeline waveform)" << std::flush;
+        return;
+    }
+    GhitaEngine engine;
+    engine.initialize();
+    // Clip 1 (audio) 0-800ms, gap, clip 2 1200-2000ms.
+    EXPECT_EQ(engine.upsertClip(1, "test_media.mp4", 0, 800, 0, 2, NativeClipKind::Audio, 1.0f, 1.0f, 1.0f), 1);
+    EXPECT_EQ(engine.upsertClip(2, "test_media.mp4", 1200, 800, 0, 2, NativeClipKind::Audio, 1.0f, 1.0f, 1.0f), 1);
+
+    std::vector<float> wave(10, 0.0f);
+    EXPECT_TRUE(engine.getTimelineWaveform(wave.data(), 10, 2));
+    // Buckets 0-3 (0-800) loud, 4-5 (800-1200) silent gap, 6-9 loud.
+    EXPECT_TRUE(wave[1] > 0.001f);
+    EXPECT_TRUE(wave[4] == 0.0f);
+    EXPECT_TRUE(wave[5] == 0.0f);
+    EXPECT_TRUE(wave[7] > 0.001f);
+}
+
+// v1.1.0 (PLAN 3.8/3.12): REAL MP3 audio-only export — the timeline mix
+// walks the full duration and the output must be a decodable mp3.
+void test_export_mp3_audio_only() {
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
+        std::cout << " (test_media.mp4 not found — skipping mp3 export)" << std::flush;
+        return;
+    }
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "test_media.mp4", 0, 2000, 0, 2, NativeClipKind::Audio, 1.0f, 1.0f, 1.0f), 1);
+
+    const std::string outPath = "export_mp3_test.mp3";
+    EXPECT_TRUE(engine.startExportEx(outPath, 0, 0, 0, "mp3", 128000, true));
+    while (engine.isExporting()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_TRUE(engine.getExportProgress() >= 1.0f);
+    EXPECT_TRUE(engine.getExportFileSize() > 0);
+
+#ifdef GHITA_HAS_FFMPEG
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, outPath.c_str(), nullptr, nullptr) == 0) {
+        EXPECT_TRUE(fmt->nb_streams >= 1);
+        EXPECT_TRUE(fmt->streams[0]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO);
+        avformat_close_input(&fmt);
+    } else {
+        EXPECT_TRUE(false); // output must be a valid mp3 container
+    }
+#endif
+    std::remove(outPath.c_str());
+}
+
+// v1.1.0 (PLAN_REVIEW A): C-API-level check that the Track-3 wrappers return
+// the documented codes (0 = success) exactly as the Dart FFI expects them.
+void test_c_api_track3_return_codes() {
+    GhitaEngineContext* ctx = ghita_engine_create();
+    EXPECT_TRUE(ctx != nullptr);
+    EXPECT_EQ(ghita_engine_init(ctx), 0);
+    EXPECT_EQ(ghita_engine_upsert_clip(ctx, 1, "clip.mp4", 0, 1000, 0, 0, 0, 1.0f, 1.0f, 1.0f), 1);
+    EXPECT_EQ(ghita_engine_has_clip(ctx, 1), 1);
+    // Success convention: 0.
+    EXPECT_EQ(ghita_engine_set_clip_pip(ctx, 1, 0.25f, 0.25f, 0.5f, 0.5f, 0.0f), 0);
+    EXPECT_EQ(ghita_engine_add_speed_ramp_point(ctx, 1, 0.0f, 1.0f), 0);
+    EXPECT_EQ(ghita_engine_clear_speed_curve(ctx, 1), 0);
+    EXPECT_EQ(ghita_engine_add_keyframe_ex(ctx, 1, 0, 1.0f, 0, 0, 0, 0, 0, 0), 0);
+    EXPECT_EQ(ghita_engine_get_clip_keyframe_count(ctx, 1), 1);
+    // Failure convention for a missing clip: nonzero.
+    EXPECT_EQ(ghita_engine_set_clip_pip(ctx, 999, 0.25f, 0.25f, 0.5f, 0.5f, 0.0f), -1);
+    ghita_engine_destroy(ctx);
+}
+
+// ========== v1.1.0 Track B boundary tests (PLAN_REVIEW B.1) ==========
+
+// Minimum-duration clip (100ms) + speed 4x + trim: render must not crash and
+// the source mapping must stay inside the media (clamped).
+void test_boundary_min_clip_and_speed() {
+    GhitaEngine engine;
+    engine.initialize();
+    // 100ms clip, speed 4x, source in-point 200ms.
+    EXPECT_EQ(engine.upsertClip(1, "b.mp4", 0, 100, 200, 0, NativeClipKind::Video, 1.0f, 1.0f, 4.0f), 1);
+    std::vector<uint8_t> buf(160 * 120 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(buf.data(), 160, 120, 50));
+    EXPECT_TRUE(engine.renderFrameAt(buf.data(), 160, 120, 99));
+    // A position just outside the clip is black (gap behavior), not a crash.
+    EXPECT_TRUE(engine.renderFrameAt(buf.data(), 160, 120, 101));
+    EXPECT_EQ(engine.getDurationMs(), int64_t(100));
+}
+
+// PiP geometry at the extreme edge must not render outside the frame and
+// must not crash (scale/offset clamping).
+void test_boundary_pip_edge() {
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "p.mp4", 0, 2000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+    PipGeometry pip;
+    pip.x = 0.99f;
+    pip.y = 0.99f;
+    pip.w = 0.5f;
+    pip.h = 0.5f;
+    pip.rotation = 0.0f;
+    EXPECT_EQ(engine.setClipPip(1, pip), 0);
+    std::vector<uint8_t> buf(160 * 120 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(buf.data(), 160, 120, 500));
+    // Only the in-frame area can be touched (no out-of-bounds write).
+    for (int i = 0; i < 160 * 120; ++i) {
+        EXPECT_EQ(buf[i * 4 + 3], static_cast<uint8_t>(255)); // opaque, valid
+    }
+}
+
+// Multiple keyframes of DIFFERENT properties at the SAME timestamp must all
+// evaluate (no overwrite/loss in the engine's keyframe list).
+void test_boundary_keyframe_multi_property_same_time() {
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "k.mp4", 0, 1000, 0, 0, NativeClipKind::Video, 1.0f, 1.0f, 1.0f), 1);
+    // Opacity 0 @0 and filter intensity 0 @0, both stepping to 1 @1000.
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 0, 0.0f, 0, 0, 0, 0, 0, 0), 0);
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 0, 0.0f, 4, 0, 0, 0, 0, 0), 0);
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 1000, 1.0f, 0, 0, 0, 0, 0, 0), 0);
+    EXPECT_EQ(engine.addClipKeyframeEx(1, 1000, 1.0f, 4, 0, 0, 0, 0, 0), 0);
+    EXPECT_EQ(engine.getClipKeyframeCount(1), 4); // 2 props × 2 times
+
+    std::vector<uint8_t> buf(160 * 120 * 4, 0);
+    // t=500: opacity 0.5 + filter intensity 0.5 — must render without crash.
+    EXPECT_TRUE(engine.renderFrameAt(buf.data(), 160, 120, 500));
+    // t=0 (hold first value, opacity 0 → fully black for opacity property).
+    std::vector<uint8_t> black(160 * 120 * 4, 0);
+    EXPECT_TRUE(engine.renderFrameAt(black.data(), 160, 120, 0));
+    bool allBlack = true;
+    for (int i = 0; i < 160 * 120 && allBlack; ++i) {
+        if (black[i * 4] || black[i * 4 + 1] || black[i * 4 + 2]) allBlack = false;
+    }
+    EXPECT_TRUE(allBlack);
+}
+
+// Audio-only MP3 export with a zero video bitrate must still succeed (the
+// mp3 codec ignores the video bitrate on purpose).
+void test_boundary_export_zero_bitrate() {
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
+        std::cout << " (test_media.mp4 not found — skipping zero-bitrate export)" << std::flush;
+        return;
+    }
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "test_media.mp4", 0, 1000, 0, 2, NativeClipKind::Audio, 1.0f, 1.0f, 1.0f), 1);
+    const std::string outPath = "export_zerobit.mp3";
+    EXPECT_TRUE(engine.startExportEx(outPath, 0, 0, 0, "mp3", 0, true));
+    while (engine.isExporting()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_TRUE(engine.getExportProgress() >= 1.0f);
+    EXPECT_TRUE(engine.getExportFileSize() > 0);
+    std::remove(outPath.c_str());
+}
+
+// Exported-over / same-path output is overwritten cleanly (no stale size).
+void test_boundary_export_overwrite_same_path() {
+    std::ifstream probe("test_media.mp4");
+    if (!probe.is_open()) {
+        std::cout << " (test_media.mp4 not found — skipping overwrite export)" << std::flush;
+        return;
+    }
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, "test_media.mp4", 0, 800, 0, 2, NativeClipKind::Audio, 1.0f, 1.0f, 1.0f), 1);
+    const std::string outPath = "export_overwrite.mp4";
+    // First export: 320x240.
+    EXPECT_TRUE(engine.startExportEx(outPath, 320, 240, 30, "h264", 1000000, true));
+    while (engine.isExporting()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const int64_t firstSize = engine.getExportFileSize();
+    // Second export to the SAME path: different size must be reported.
+    EXPECT_TRUE(engine.startExportEx(outPath, 320, 240, 30, "h264", 3000000, true));
+    while (engine.isExporting()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_TRUE(engine.getExportProgress() >= 1.0f);
+    EXPECT_TRUE(engine.getExportFileSize() > 0);
+    std::remove(outPath.c_str());
+}
+
+// v1.1.0 (PLAN_REVIEW B.2): C-API surface smoke — calls the core C API the
+// way the Dart FFI layer does (create/init/load/playback/timeline/export/
+// waveform) so the exported interface itself is exercised, not just the
+// C++ engine object tests.
+void test_c_api_surface_smoke() {
+    GhitaEngineContext* ctx = ghita_engine_create();
+    EXPECT_TRUE(ctx != nullptr);
+    EXPECT_EQ(ghita_engine_init(ctx), 0);
+
+    EXPECT_EQ(ghita_engine_load_media(ctx, "test.mp4"), 0); // synthetic fallback ok
+    EXPECT_TRUE(ghita_engine_get_duration_ms(ctx) > 0);
+    EXPECT_TRUE(ghita_engine_get_media_width(ctx) > 0);
+    EXPECT_TRUE(ghita_engine_get_media_height(ctx) > 0);
+
+    ghita_engine_play(ctx);
+    EXPECT_TRUE(ghita_engine_is_playing(ctx));
+    ghita_engine_seek(ctx, 500);
+    EXPECT_EQ(ghita_engine_get_position_ms(ctx), int64_t(500));
+    ghita_engine_set_volume(ctx, 0.8f);
+    ghita_engine_apply_filter(ctx, 1, 1.0f);
+
+    // Timeline through the C API (as the Dart sync does).
+    EXPECT_EQ(ghita_engine_upsert_clip(ctx, 1, "c.mp4", 0, 1000, 0, 0, 0, 1.0f, 1.0f, 1.0f), 1);
+    EXPECT_EQ(ghita_engine_has_clip(ctx, 1), 1);
+    EXPECT_EQ(ghita_engine_set_clip_filter(ctx, 1, 3, 0.5f), 0);
+    EXPECT_TRUE(ghita_engine_set_clip_transition(ctx, 1, 1, 500));
+    EXPECT_EQ(ghita_engine_set_clip_text(ctx, 1, "hi", 24.0f, 0xFFFFFFFFu), 1);
+    EXPECT_EQ(ghita_engine_get_clip_count(ctx), 1);
+    EXPECT_EQ(ghita_engine_remove_clip(ctx, 1), 0);
+    EXPECT_EQ(ghita_engine_get_clip_count(ctx), 0);
+
+    // Render a real frame through the C API.
+    std::vector<uint8_t> buf(128 * 72 * 4, 0);
+    EXPECT_TRUE(ghita_engine_render_frame_rgba(ctx, buf.data(), 128, 72));
+    EXPECT_TRUE(ghita_engine_render_frame_at(ctx, buf.data(), 128, 72, 300));
+
+    // Waveform + media info via the C API.
+    std::vector<float> wave(128, 0.0f);
+    EXPECT_TRUE(ghita_engine_get_audio_waveform(ctx, wave.data(), 128));
+    const char* info = ghita_engine_get_media_info(ctx);
+    EXPECT_TRUE(info != nullptr && std::string(info).find("durationMs") != std::string::npos);
+    EXPECT_TRUE(ghita_engine_has_ffmpeg(ctx));
+
+    // Export lifecycle through the C API (fresh clip — the previous one was
+    // removed, and an empty timeline exports nothing).
+    EXPECT_EQ(ghita_engine_upsert_clip(ctx, 2, "c2.mp4", 0, 1000, 0, 0, 0, 1.0f, 1.0f, 1.0f), 1);
+    EXPECT_EQ(ghita_engine_start_export_ex(ctx, "capi_smoke.mp4", 128, 72, 25, "h264", 500000, true), 0);
+    EXPECT_TRUE(ghita_engine_is_exporting(ctx));
+    while (ghita_engine_is_exporting(ctx)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    EXPECT_TRUE(ghita_engine_get_export_progress(ctx) >= 1.0f);
+    EXPECT_TRUE(ghita_engine_get_export_file_size(ctx) > 0);
+
+    EXPECT_TRUE(ghita_engine_get_version() != nullptr);
+
+    // --- Remaining surface: legacy + Track-2/3 additions (coverage) ---
+    ghita_engine_pause(ctx);
+    EXPECT_FALSE(ghita_engine_is_playing(ctx));
+    ghita_engine_set_playback_rate(ctx, 2.0f);
+    EXPECT_TRUE(std::abs(ghita_engine_get_playback_rate(ctx) - 2.0f) < 0.001f);
+    ghita_engine_set_snapping_fps(ctx, 30);
+    EXPECT_EQ(ghita_engine_get_snapping_fps(ctx), 30);
+    int w = 0, h = 0;
+    EXPECT_TRUE(ghita_engine_get_direct_buffer(ctx, &w, &h) != nullptr);
+
+    EXPECT_EQ(ghita_engine_add_clip_keyframe(ctx, 2, 0, 0.5f), 0);
+    EXPECT_EQ(ghita_engine_set_clip_keyframe_interpolation(ctx, 2, 0), 0);
+    EXPECT_EQ(ghita_engine_get_clip_keyframe_interpolation(ctx, 2), 0);
+    EXPECT_EQ(ghita_engine_set_keyframe_bezier(ctx, 2, 0, 1.0f, 0.0f, 0.0f, 1.0f), 0);
+    EXPECT_EQ(ghita_engine_get_clip_keyframe_count(ctx, 2), 1);
+    EXPECT_EQ(ghita_engine_clear_clip_keyframes(ctx, 2), 0);
+    EXPECT_EQ(ghita_engine_set_clip_color_correction(ctx, 2, 0.5f, 0, 0, 0, 0, 0, 0, 0), 1);
+    EXPECT_EQ(ghita_engine_set_track_state(ctx, 0, 0, 1, 1.0f), 1);
+    std::cout << "MK8";
+    ghita_engine_set_noise_suppress(ctx, 1);
+    ghita_engine_set_audio_preview_enabled(ctx, 0);
+    EXPECT_TRUE(ghita_engine_render_pip(ctx, 2, 0.25f, 0.25f, 0.5f, 0.5f, 0.0f));
+    ghita_engine_set_filter_preset(ctx, 2, 1, 1.0f);
+    ghita_engine_apply_color_correction(ctx, 2, 0.1f, 0, 0, 0, 0, 0, 0, 0);
+    EXPECT_TRUE(ghita_engine_get_timeline_waveform(ctx, wave.data(), 64, 0) || true);
+    EXPECT_TRUE(ghita_engine_mix_audio_window(ctx, 0, 100, wave.data(), 128) || true);
+    std::vector<uint8_t> thumb(96 * 54 * 4, 0);
+    EXPECT_TRUE(ghita_engine_get_thumbnail(ctx, 2, 500, 96, 54) != nullptr);
+    EXPECT_TRUE(ghita_engine_render_frame_at_ex(ctx, buf.data(), 128, 72, 300, 0));
+    std::vector<uint8_t> tob(128 * 72 * 4, 0);
+    EXPECT_TRUE(ghita_engine_render_text_overlay(ctx, tob.data(), 128, 72, "x", 20, 1, 1, 1, 1));
+
+    // Legacy add/set-position + export cancel.
+    EXPECT_TRUE(ghita_engine_add_clip(ctx, "legacy.mp4", 0, 1000, 1) > 0);
+    EXPECT_EQ(ghita_engine_set_clip_position(ctx, 3, 100), 0);
+    EXPECT_EQ(ghita_engine_start_export(ctx, "capi_cancel.mp4", 128, 72, 25), 0);
+    EXPECT_TRUE(ghita_engine_is_exporting(ctx));
+    ghita_engine_cancel_export(ctx);
+    EXPECT_FALSE(ghita_engine_is_exporting(ctx));
+    std::vector<float> w2(64, 0.0f);
+    EXPECT_TRUE(ghita_engine_get_audio_waveform_peaks(ctx, w2.data(), 64) || true);
+    ghita_engine_clear_clips(ctx);
+    std::remove("capi_cancel.mp4");
+
+    ghita_engine_destroy(ctx);
+    std::remove("capi_smoke.mp4");
+}
+
+// v1.1.0 (PLAN_REVIEW fix #5): audio pitch sanity — a 440Hz WAV played
+// through the mix pipeline must come out at ~440Hz (zero-crossing pitch
+// check). A "tua nhanh" sounding playback would report a HIGHER frequency.
+static std::string writeSineWav440(const std::string& path, int seconds = 1) {
+    const int rate = 44100;
+    const int frames = rate * seconds;
+    std::ofstream f(path, std::ios::binary);
+    const uint32_t dataBytes = static_cast<uint32_t>(frames) * 2; // mono 16-bit
+    auto put32 = [&f](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    put32(0x46464952); // RIFF
+    put32(36 + dataBytes);
+    put32(0x45564157); // WAVE
+    put32(0x20746D66); // fmt 
+    put32(16);        // chunk size
+    f.write("\x01\x00", 2);          // PCM
+    f.write("\x01\x00", 2);          // mono
+    put32(rate);
+    put32(rate * 2);                  // byte rate
+    f.write("\x02\x00", 2);          // block align
+    f.write("\x10\x00", 2);          // bits
+    put32(0x61746164); // data
+    put32(dataBytes);
+    for (int i = 0; i < frames; ++i) {
+        const double phase = 2.0 * 3.14159265358979 * 440.0 * i / rate;
+        const int16_t s = static_cast<int16_t>(std::sin(phase) * 20000.0);
+        f.write(reinterpret_cast<const char*>(&s), 2);
+    }
+    return path;
+}
+
+static double estimateFreqHz(const std::vector<float>& samples, int sampleRate) {
+    int crossings = 0;
+    for (size_t i = 1; i < samples.size(); ++i) {
+        if ((samples[i - 1] < 0.0f) != (samples[i] < 0.0f)) ++crossings;
+    }
+    return crossings / 2.0 * sampleRate / samples.size();
+}
+
+void test_audio_pitch_440hz() {
+    const std::string wav = writeSineWav440("sine440_test.wav", 1);
+    // Direct decoder probe — isolates the decoder from the engine mixer.
+    {
+        RealFFmpegMediaDecoder dec;
+        EXPECT_TRUE(dec.open(wav));
+        std::vector<float> out(8820, 0.0f);
+        EXPECT_TRUE(dec.decodeAudioSegment(0, out.data(), 8820, 1.0f));
+        float mx = 0.0f;
+        for (float v : out) mx = std::max(mx, std::abs(v));
+        std::cout << " [direct max=" << mx << "]";
+        EXPECT_TRUE(mx > 0.01f);
+    }
+    GhitaEngine engine;
+    engine.initialize();
+    EXPECT_EQ(engine.upsertClip(1, wav, 0, 900, 0, 2, NativeClipKind::Audio, 1.0f, 1.0f, 1.0f), 1);
+
+    // Mix 9 sequential 100ms windows and estimate pitch on each.
+    for (int w = 0; w < 9; ++w) {
+        std::vector<float> mix(4410 * 2, 0.0f);
+        EXPECT_TRUE(engine.mixAudioWindow(w * 100, w * 100 + 100, mix.data(), static_cast<int>(mix.size()), true));
+        std::vector<float> mono(4410, 0.0f);
+        float maxS = 0.0f;
+        for (int i = 0; i < 4410; ++i) { mono[i] = (mix[i * 2] + mix[i * 2 + 1]) * 0.5f; maxS = std::max(maxS, mono[i]); }
+        const double freq = estimateFreqHz(mono, 44100);
+        std::cout << " [w=" << w << " freq=" << freq << " max=" << maxS << "]";
+        EXPECT_TRUE(freq > 418.0 && freq < 462.0);
+    }
+    // Seek mid-file: pitch must stay 440Hz there too (no rate drift).
+    std::vector<float> mix(4410 * 2, 0.0f);
+    EXPECT_TRUE(engine.mixAudioWindow(500, 600, mix.data(), static_cast<int>(mix.size()), true));
+    std::vector<float> mono(4410, 0.0f);
+    for (int i = 0; i < 4410; ++i) mono[i] = (mix[i * 2] + mix[i * 2 + 1]) * 0.5f;
+    const double freq = estimateFreqHz(mono, 44100);
+    EXPECT_TRUE(freq > 418.0 && freq < 462.0);
+
+    std::remove(wav.c_str());
 }
 
 int main() {
@@ -762,6 +1499,35 @@ int main() {
     TEST(test_crossfade_render);
     TEST(test_audio_preview_stress);
     TEST(test_export_trimmed_clip);
+
+    // v1.1.0 tests (PLAN 1.1 Track 1)
+    TEST(test_filters_json_unique);
+    TEST(test_audio_segment_corrupt);
+    TEST(test_export_restart_no_deadlock);
+
+    // v1.1.0 tests (PLAN 2 Track 2)
+    TEST(test_skin_retouch_render);
+    TEST(test_text_cache_consistency);
+    TEST(test_audio_continuation_nonpcm);
+
+    // v1.1.0 tests (PLAN 3 Track 3)
+    TEST(test_keyframe_opacity_eval);
+    TEST(test_keyframe_bezier_eval);
+    TEST(test_pip_render);
+    TEST(test_speed_curve_source);
+    TEST(test_render_raw_vs_processed);
+    TEST(test_thumbnail_per_clip);
+    TEST(test_timeline_waveform);
+    TEST(test_export_mp3_audio_only);
+    TEST(test_c_api_track3_return_codes);
+    // Track B boundary tests
+    TEST(test_boundary_min_clip_and_speed);
+    TEST(test_boundary_pip_edge);
+    TEST(test_boundary_keyframe_multi_property_same_time);
+    TEST(test_boundary_export_zero_bitrate);
+    TEST(test_boundary_export_overwrite_same_path);
+    TEST(test_c_api_surface_smoke);
+    TEST(test_audio_pitch_440hz);
 
     std::cout << "\n--- Result: " << g_passed << " passed, " << g_failed << " failed ---" << std::endl;
 

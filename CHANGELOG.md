@@ -1,5 +1,169 @@
 # Ghita Edit — Changelog
 
+## v1.1.1 (2026-08-10) — Hotfix: import treo · tài nguyên · play tại 0 · âm rè/tua nhanh
+
+> Bản vá dựa trên feedback thực tế (PLAN_REVIEW fixes). Không commit/push.
+
+### 🐛 #1 — Import video treo/lag (UI bị đóng băng khi load)
+- **Nguyên nhân:** probe thời lượng media gọi FFmpeg (mở file + scan stream) ĐỒNG BỘ trên UI thread — file chậm/network bị đứng hình 100ms-2s.
+- **Sửa:** `EngineService.probeDurationAsync` — probe trong **isolate riêng** với engine context tạm (create→load→getDuration→destroy); `importMedia` dùng kết quả async không chặn UI.
+
+### 🐛 #2 — Tốn tài nguyên khi idle
+- **Sửa:** tick preview khi **paused & idle giờ short-circuit trước mọi FFI** (so sánh snapshot cached) — editor dừng gần như 0 CPU ngoài timer; playback vẫn 33ms đầy đủ. Kết hợp với gating notify (P2.10) và cache-hit khi dừng.
+
+### 🐛 #4 — Play tại vạch 0 "không chạy", phải kéo thanh mới chạy
+- **Nguyên nhân:** engine advance vị trí NẰM TRONG renderFrameRgba; khi frame tại 0 được cache (scrub về 0 → pause), tick liên tục trúng cache-hit và KHÔNG gọi render → playhead đứng yên mãi.
+- **Sửa:** cache chỉ được serving khi **KHÔNG playing** — play luôn gọi native render. Regression: `play from 0 advances even when frame 0 is cached` + smoke `play-from-0 pos=623ms/600ms`.
+
+### 🐛 #5 — Âm thanh rè / không chuẩn / như bị tua nhanh (WAV)
+- **Nguyên nhân (root cause):** refactor P2.7 chuyển PCM reader sang persistent handle nhưng **quên xóa `f.close()` cuối `pcmCacheAudio`** → mọi `readPcmFromCache` đọc stream ĐÃ ĐÓNG (gcount==0) → trả **silence** → âm WAV mất/ngắt quãng.
+- **Sửa:** bỏ `f.close()` (handle đóng ở `destroyFFmpegContexts`). Self-test mới `test_audio_pitch_440hz` — sinh WAV 440Hz, mix 10 chunk, đo **zero-crossing pitch: 435-440Hz mọi window** (không tua nhanh), seek giữa file vẫn 440Hz.
+
+### 📊 Verify
+- `flutter test`: **143/143 PASS** (thêm 1 regression) · `flutter analyze`: 0 issues
+- Native self-test: **55/55 PASS** (thêm pitch test) · Export matrix: PASSED
+- Version: **1.1.1+0** đồng bộ (Dart/pubspec/CMake/C API/README)
+
+
+
+## v1.1.0 (2026-08-10) — Track 1-3: Bug Ẩn · Tối ưu Tài Nguyên · Độ Chính Xác (PLAN_1.1.0)
+
+> Bản cập nhật theo PLAN_1.1.0 với 3 track: CORRECTNESS (bug ẩn), RESOURCE (hiệu năng),
+> ACCURACY (tính năng thật). Mọi tính năng quảng cáo ở v1.0.0 giờ đều hoạt động thật —
+> hoặc được gỡ/gắn nhãn trung thực.
+
+### ✨ Tính năng thật (Track 3 — ACCURACY)
+
+> Các claim v1.0.0 sau đây ĐÃ ĐƯỢC KIỂM CHỨNG là chưa thật khi phát hành (xem Phụ lục
+> PLAN_1.1.0) — giờ đã hiện thực hóa hoàn toàn:
+
+- **Keyframe animation THẬT** — engine đánh giá keyframe khi render (property: opacity,
+  position offset, scale, filter intensity) với interpolation Linear/Step/**Bezier cubic
+  thật** (control points qua binary search x-bezier); `set_keyframe_bezier` v1.0.0 là hàm giả
+  (chỉ thêm keyframe rác) — đã sửa thành setter cps thật; `setClipKeyframeInterpolation`
+  no-op — giờ lưu thật
+- **PiP (picture-in-picture) THẬT** — clip có geometry x/y/w/h (fraction) + scale/offset
+  keyframe; `render_pip` v1.0.0 chỉ trả `hasClip` — giờ là setter thật vào compositor
+- **Speed Ramping THẬT** — `curve_speed.dart` (dead code v1.0.0, `evaluateSpeedAt` không ai
+  gọi) giờ wire vào Inspector: preset → điểm curve → engine tích phân ∫speed(t)dt cho
+  source mapping render + audio
+- **Split view before/after THẬT** — `render_frame_at_ex(apply_fx)` render frame gốc
+  (không filter/cc) cho nửa trái; v1.0.0 hiển thị CÙNG ảnh 2 bên
+- **Thumbnail Media Bin THẬT** — engine decode frame THEO CLIP (`getClipThumbnail`,
+  source-mapped); v1.0.0 `get_thumbnail` bỏ qua clip_id (render cả timeline) và Dart chưa
+  wire — giờ async load + cache path-keyed
+- **Waveform timline THẬT** — `getTimelineWaveform` peak qua mix pipeline thật (trim/move/
+  speed/multi-clip phản ánh); DAW panel waveform từng vẽ PATTERN GIẢ (`i % 7`) — giờ dùng
+  dữ liệu thật
+
+### 🔊 DAW / Photo Studio trung thực (Track 3)
+- **DAW "EXPORT MASTERED AUDIO" từng là nút GIẢ** (chỉ snackbar) — giờ export MP3 thật qua
+  engine (kèm fix bug ẩn: guard `width<=0` chặn mọi MP3 export — preset MP3 chưa bao giờ
+  chạy được dù changelog v1.0.0 tuyên bố hoạt động)
+- **Photo "EXPORT HIGH-RES IMAGE" từng là nút GIẢ** — giờ render frame thật + export PNG
+  thật; canvas trung tâm hiển thị ảnh thật thay icon placeholder
+- **Bass/Treble EQ chưa wire** — slider vô hiệu hóa + nhãn trung thực ("EQ not wired yet");
+  DAW **presets dropdown** (chọn không làm gì) — vô hiệu hóa trung thực
+- **"Archive (ProRes)" từng xuất H.264** — engine giờ tra cứu encoder prores thật
+  (yuv422p10le) và fail rõ khi thiếu; preset đổi nhãn trung thực "Archive (H.264)"
+- **GIF export GỠ KHỎI UI** — claim v1.0.0 "GIF animated thật" không hoạt động (encoder
+  chỉ nhận pal8 — không có palette quantization); export matrix SKIP trung thực
+- **Sticker Scale/Rotation GỠ TRUNG THỰC** — v1.0.0: mutate không undo + không ảnh hưởng
+  render → slider disabled kèm nhãn
+- **Transitions Slide/Wipe/Zoom/Dissolve/Radial GỠ KHỎI DROPDOWN** — v1.0.0 claim "5
+  transition thật" nhưng compositor chỉ render FadeIn/FadeOut/Crossfade → chỉ còn 4 loại thật
+
+### 🧪 P3.12: Export matrix + UI honesty checklist (mới)
+- **`scripts/verify_export_matrix.sh`** — 6 định dạng (MP4/H.264, MP4/H.265, MP4/VP9, GIF,
+  MP3, MOV/H.264) xuất qua engine và **ffprobe verify** (codec/streams/duration/size):
+  **5 PASS + 1 SKIP (gif) = PASSED**; gắn vào CI job windows smoke (ci.yml)
+- **`docs/ui_honesty_checklist.md`** — rà toàn bộ nút/switch/slider: 50 ✓ thật, 5 ⛔ disabled
+  trung thực, 5 ❌ đã gỡ — **0 item giả**
+- Fix bug ẩn khi chạy matrix: **GIF includeAudio → header fail** ("gif muxer does not
+  support any stream of type audio") — engine tự bỏ audio cho gif
+
+### 🐛 Bug ẩn (Track 1 — chi tiết Phụ lục A)
+- Null-deref + spam stderr trong `decodeAudioSegment`; filter JSON trùng id 19; **import →
+  engine giữ 10s → export ra đúng 10 giây** (resync sau probe); trim trái tạo duration ≤ 0;
+  reset/apply filter không undo + không sync engine; nhãn filter 11-22 sai ("unsupported");
+  **Glitch filter OOB** (index `row[]` bằng chỉ số buffer — crash dưới bounds-check);
+  self-test probe `good()` sai cho file thiếu; version drift v1.0.1-1.0.3 chưa ghi nhận
+
+### ⚡ Hiệu năng & tài nguyên (Track 2 — chi tiết Phụ lục B)
+- Frame cache 50→24 + **bỏ memcpy trên cache hit** (alias an toàn); thumbnail cache 100→48
+- Compositor **O(n²)→O(n)**: clips sort theo startMs, quét 1 lần tìm clip phủ
+- **SkinRetouch SAT integral image** (O(n·r²)→O(n), uint32)
+- Audio: continuation path non-PCM (hết seek mỗi 100ms), PCM file handle persistent,
+  member buffers (0 alloc steady-state); GDI text bitmap cache; notify gating preview tick
+- **Benchmark (đo thật)**: preview 20-clip 68→131 FPS (1.9x), 10 text clip 282→1316 FPS
+  (4.7x), export 1080p skin 16.1s→10.2s, RSS 224→221MB
+
+### 🔢 Version & CI
+- Bump **1.1.0+0** đồng bộ: `version.dart` / `pubspec.yaml` / `CMakeLists.txt` /
+  `ghita_c_api.cpp` / `README.md`
+- CI `check-version-consistency` thêm gate: CHANGELOG có entry khớp version hiện tại
+- Ghi nhận các fix **v1.0.1 / v1.0.2 / v1.0.3** đã nằm trong code từ sau 1.0.0 (entry bên dưới)
+
+### 📊 Metrics
+- `flutter analyze --fatal-infos`: 0 issue
+- `flutter test`: **112/112 PASS** (+5 regression Track 3: JSON round-trip keyframes/pip/
+  speedCurve, legacy load defaults, speed-curve command undo, pip command undo+coalesce,
+  preset curve ranges)
+- Native self-test: **47/47 PASS** (+11 Track 2/3: skin render, text cache, audio
+  continuation, keyframe opacity/bezier eval, PiP render, speed-curve source, raw vs
+  processed, per-clip thumbnail, timeline waveform, MP3 export verify bằng avformat)
+- Version đồng bộ: v1.1.0+0 (Dart / CMake / C API / README / CI changelog gate)
+
+## v1.0.3 (2026-08-08) — Ổn định phát lại & làm rõ âm thanh
+
+> Bản vá phát hành nội bộ (version chưa bump khi đó — đã được ghi nhận lại ở v1.1.0).
+
+- 🎯 **Playback tick self-heal** — một lỗi thoáng qua không còn giết chết vòng lặp preview
+  ("bấm Play không chạy" — play/seek tự khởi động lại tick loop)
+- 🔊 **Noise suppression ("làm rõ âm thanh")** — toggle DAW giờ wire vào engine (DC blocker
+  ~85Hz áp dụng cho preview mix; export không đổi) — `set_noise_suppress`
+- ⏩ **Playback rate áp dụng thật** — clock render nhân `m_playbackRate`; audio thread advance
+  theo rate (hết lag âm thanh ở 2x-4x)
+- 🖼 **Still-image cache** — ảnh PNG/JPEG (demuxer không seek được) decode 1 lần, mọi vị trí
+  render dùng lại; fresh demuxer open cho image2 pipe (hết ảnh đen)
+- 🔊 **Sửa "rè" âm thanh** — mixing format đếm FRAME (2 float) không còn lệch nửa window;
+  PCM/WAV đọc trực tiếp từ file (RIFF data chunk) — hết EOF-cut ~50%
+
+## v1.0.2 (2026-08-06) — Chất lượng phát lại & bộ nhớ
+
+> Bản vá phát hành nội bộ (version chưa bump khi đó — đã được ghi nhận lại ở v1.1.0).
+
+- 🖼 **Preview decode guard** — snapshot frame ổn định + in-flight guard + watchdog (hết nhiễu
+  frame xé, hết decode chồng lấp); `frameGeneration` monotonic (bỏ decode thừa khi frame
+  không đổi)
+- 📊 **Waveform cache bounded** — giới hạn 12 entry (hết tăng vô hạn khi đổi zoom lâu)
+- 🔊 **Audio decode chất lượng** — `avformat_seek_file` + flush mỗi window (WAV hết "rè"),
+  drain swr cuối chunk (hết mất âm sau ~5.4s), volume không nhân 2 lần, seek fail → fail
+  thật thay vì sai vị trí
+- 🧹 **Fix leak** — `m_mixSwrCtx` chưa bao giờ free (mỗi reopen decoder leak 1 SwrContext);
+  metadata media cũ reset khi mở file mới (MP3 báo duration file cũ)
+- ⚙️ **Export** — audio window tính từ sample count (hết silence tuần hoàn 29 mẫu); MP3 path
+  thật sự chạy được; trailer fail = báo lỗi (không báo thành công file cụt)
+- 🎨 **UI** — trim handle luôn hiển thị, body nhường 6px (kéo được từ biên); mini-map repaint
+  theo clip; RepaintBoundary cách ly panel; Media Bin tap chọn thay import trùng
+
+## v1.0.1 (2026-08-05) — Ổn định khởi tạo & undo/redo
+
+> Bản vá phát hành nội bộ (version chưa bump khi đó — đã được ghi nhận lại ở v1.1.0).
+
+- 🚦 **Khởi tạo an toàn** — guard `initialize()` song song (hết leak context thứ 2); calloc
+  null-check (hết preview chết âm thầm); loading shell không kẹt vĩnh viễn khi thiếu DLL
+- ↩️ **Undo/redo đúng mô tả** — capture description TRƯỚC khi undo/redo (hết hiển thị sai item)
+- 🧹 **Selection sạch** — `selectRange` validate id trước khi deselect; `pruneSelection` sau
+  xóa track/clip (hết "N selected" ảo)
+- 💾 **Autosave an toàn** — guard chống chồng lấp save >60s; dispose engine trước
+  `super.dispose()`
+- 🔌 **FFI phòng thủ** — binding v0.8.0 nullable + stub fallback (DLL cũ không còn tắt cả
+  engine); `_tryLookup` bắt mọi exception
+- ✂️ **Split đúng speed** — mapping source theo playback speed (2x split ra 2 nửa partition
+  đúng); trim guard firstOrNull (hết crash khi clip bị xóa giữa chừng); `_resolveOverlaps`
+  cascade (hết clip chồng nhau sau insert)
+
 ## v1.0.0 (2026-08-04) — Production Release: Real Animation, Export Formats & Feature Completeness
 
 ### 🎯 Mục tiêu

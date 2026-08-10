@@ -8,7 +8,7 @@ struct GhitaEngineContext {
 };
 
 // Static string is safe to return because it lives for the process lifetime
-static const char VERSION_STRING[] = "Ghita Core Engine v1.0.0 (C++/Flutter)";
+static const char VERSION_STRING[] = "Ghita Core Engine v1.1.1 (C++/Flutter)";
 
 // Thread-local buffer for JSON return values (FFI-safe)
 static thread_local std::string t_jsonBuffer;
@@ -358,23 +358,102 @@ GHITA_API void ghita_engine_apply_color_correction(GhitaEngineContext* ctx, int 
 GHITA_API int ghita_engine_set_keyframe_bezier(GhitaEngineContext* ctx, int clip_id, int keyframe_index,
                                                 float cp1x, float cp1y, float cp2x, float cp2y) {
     if (!ctx) return -1;
-    return ctx->engine.addClipKeyframe(clip_id, keyframe_index * 1000, cp1y) ? 0 : -1;
+    // v1.1.0 (PLAN 3.3): REAL bezier setter — the v1.0.0 implementation
+    // called addClipKeyframe(clip_id, keyframe_index*1000, cp1y), discarding
+    // the control points and injecting a junk keyframe.
+    return ctx->engine.setKeyframeBezierEx(clip_id, keyframe_index, cp1x, cp1y, cp2x, cp2y);
+}
+
+// ========== v1.1.0 New API (PLAN 3: Accuracy) ==========
+
+GHITA_API int ghita_engine_add_keyframe_ex(GhitaEngineContext* ctx, int clip_id, int64_t time_ms,
+                                           float value, int property, int interpolation,
+                                           float cp1x, float cp1y, float cp2x, float cp2y) {
+    if (!ctx) return -1;
+    if (property < 0 || property > 4 || interpolation < 0 || interpolation > 2) return -1;
+    return ctx->engine.addClipKeyframeEx(clip_id, time_ms, value, property, interpolation,
+                                         cp1x, cp1y, cp2x, cp2y);
+}
+
+GHITA_API int ghita_engine_get_clip_keyframe_count(GhitaEngineContext* ctx, int clip_id) {
+    if (!ctx) return -1;
+    return ctx->engine.getClipKeyframeCount(clip_id);
+}
+
+GHITA_API int ghita_engine_set_clip_pip(GhitaEngineContext* ctx, int clip_id,
+                                        float x, float y, float w, float h, float rotation) {
+    if (!ctx) return -1;
+    PipGeometry pip;
+    pip.x = x;
+    pip.y = y;
+    pip.w = w;
+    pip.h = h;
+    pip.rotation = rotation;
+    return ctx->engine.setClipPip(clip_id, pip);
+}
+
+GHITA_API int ghita_engine_add_speed_ramp_point(GhitaEngineContext* ctx, int clip_id,
+                                                float t, float speed) {
+    if (!ctx) return -1;
+    std::vector<SpeedRampPoint> curve;
+    // Rebuild from existing points (small N — the Dart side replaces the
+    // whole curve per preset selection).
+    {
+        // Fetch current curve via the engine (needs the lock — reuse the
+        // setter path: collect from a getter would require new API; simplest
+        // is appending via a dedicated engine method).
+    }
+    return ctx->engine.addSpeedRampPoint(clip_id, t, speed);
+}
+
+GHITA_API int ghita_engine_clear_speed_curve(GhitaEngineContext* ctx, int clip_id) {
+    if (!ctx) return -1;
+    return ctx->engine.setClipSpeedCurve(clip_id, std::vector<SpeedRampPoint>{});
 }
 
 GHITA_API bool ghita_engine_render_pip(GhitaEngineContext* ctx, int overlay_clip_id,
                                        float x, float y, float width, float height, float rotation) {
     if (!ctx) return false;
-    return ctx->engine.hasClip(overlay_clip_id);
+    // v1.1.0 (PLAN_REVIEW B.2): REAL — the v1.0.0 stub returned hasClip()
+    // and discarded the geometry; the Track-3 setter (setClipPip) existed but
+    // this export kept the fake body. Now it mirrors the same geometry into
+    // the compositor and reports whether the clip accepted it.
+    PipGeometry pip;
+    pip.x = x;
+    pip.y = y;
+    pip.w = width;
+    pip.h = height;
+    pip.rotation = rotation;
+    return ctx->engine.setClipPip(overlay_clip_id, pip) == 0;
 }
 
 GHITA_API uint8_t* ghita_engine_get_thumbnail(GhitaEngineContext* ctx, int clip_id, int time_ms, int width, int height) {
     if (!ctx || width <= 0 || height <= 0) return nullptr;
+    // v1.1.0 (PLAN 3.6): REAL per-clip thumbnail — decode the frame of THE
+    // CLIP (source-mapped), not the whole timeline at time_ms (the old code
+    // called renderFrameAt which ignores clip_id entirely → thumbnails of
+    // the wrong clip whenever another clip covered that timeline position).
     static thread_local std::vector<uint8_t> t_thumbBuf;
-    t_thumbBuf.resize(width * height * 4);
-    if (ctx->engine.renderFrameAt(t_thumbBuf.data(), width, height, time_ms)) {
+    t_thumbBuf.resize(static_cast<size_t>(width) * height * 4);
+    if (ctx->engine.getClipThumbnail(t_thumbBuf.data(), width, height, clip_id, time_ms)) {
         return t_thumbBuf.data();
     }
     return nullptr;
+}
+
+// v1.1.0 (PLAN 3.5): Raw (effects-free) render at an explicit position.
+GHITA_API bool ghita_engine_render_frame_at_ex(GhitaEngineContext* ctx, uint8_t* out_buffer,
+                                               int width, int height, int64_t position_ms,
+                                               int apply_fx) {
+    if (!ctx || !out_buffer) return false;
+    return ctx->engine.renderFrameAtEx(out_buffer, width, height, position_ms, apply_fx != 0);
+}
+
+// v1.1.0 (PLAN 3.7): Real timeline waveform (mix pipeline peaks).
+GHITA_API bool ghita_engine_get_timeline_waveform(GhitaEngineContext* ctx, float* out_samples,
+                                                  int sample_count, int track_index) {
+    if (!ctx || !out_samples || sample_count <= 0) return false;
+    return ctx->engine.getTimelineWaveform(out_samples, sample_count, track_index);
 }
 
 GHITA_API void ghita_engine_set_filter_preset(GhitaEngineContext* ctx, int clip_id, int filter_type, float intensity) {

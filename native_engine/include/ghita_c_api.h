@@ -231,6 +231,42 @@ GHITA_API bool ghita_engine_get_audio_waveform_peaks(GhitaEngineContext* ctx, fl
  *  single loadMedia() decoder, so it cannot report a synthetic fallback. */
 GHITA_API bool ghita_engine_mix_audio_window(GhitaEngineContext* ctx, int64_t start_ms, int64_t end_ms, float* out_samples, int sample_count);
 
+// ========== v1.1.0 New API (PLAN 3: Accuracy) ==========
+
+/** @brief Keyframe-aware insertion. 0 on success, -1 on error.
+ *  property: 0=opacity, 1=position offset (fraction of frame), 2=scale,
+ *  3=rotation (stored), 4=filter intensity. interpolation: 0=linear, 1=step,
+ *  2=bezier (control points normalized to the keyframe segment). */
+GHITA_API int ghita_engine_add_keyframe_ex(GhitaEngineContext* ctx, int clip_id, int64_t time_ms,
+                                           float value, int property, int interpolation,
+                                           float cp1x, float cp1y, float cp2x, float cp2y);
+
+/** @brief Number of keyframes on a clip (-1 when the clip does not exist). */
+GHITA_API int ghita_engine_get_clip_keyframe_count(GhitaEngineContext* ctx, int clip_id);
+
+/** @brief Sets picture-in-picture geometry (fractions of the frame). */
+GHITA_API int ghita_engine_set_clip_pip(GhitaEngineContext* ctx, int clip_id,
+                                        float x, float y, float w, float h, float rotation);
+
+/** @brief Appends a speed-ramp point (t normalized 0..1). */
+GHITA_API int ghita_engine_add_speed_ramp_point(GhitaEngineContext* ctx, int clip_id,
+                                                float t, float speed);
+
+/** @brief Clears the speed-ramp curve of a clip. */
+GHITA_API int ghita_engine_clear_speed_curve(GhitaEngineContext* ctx, int clip_id);
+
+/** @brief v1.1.0 (PLAN 3.5): Renders at an explicit position, optionally
+ *  WITHOUT the effects (per-clip filter/cc + global filter) — the raw side
+ *  of split view. apply_fx: 1 = normal, 0 = raw. */
+GHITA_API bool ghita_engine_render_frame_at_ex(GhitaEngineContext* ctx, uint8_t* out_buffer,
+                                               int width, int height, int64_t position_ms,
+                                               int apply_fx);
+
+/** @brief v1.1.0 (PLAN 3.7): Timeline waveform peaks (real mix pipeline).
+ *  Returns true when any window produced audio. */
+GHITA_API bool ghita_engine_get_timeline_waveform(GhitaEngineContext* ctx, float* out_samples,
+                                                  int sample_count, int track_index);
+
 #ifdef __cplusplus
 }
 #endif

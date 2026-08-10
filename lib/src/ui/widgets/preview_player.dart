@@ -22,6 +22,10 @@ class PreviewPlayer extends StatefulWidget {
 
 class _PreviewPlayerState extends State<PreviewPlayer> {
   ui.Image? _currentFrameImage;
+  // v1.1.0 (PLAN 3.5): RAW (effects-free) frame for the split-view "before"
+  // side — previously both halves showed the SAME processed image, so the
+  // before/after comparison was fake.
+  ui.Image? _rawFrameImage;
 
   // v0.7.0: Split view
   bool _splitView = false;
@@ -48,6 +52,8 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
     widget.controller.removeListener(_onControllerUpdate);
     _miniControlsTimer?.cancel();
     _currentFrameImage?.dispose();
+    // v1.1.0 (PLAN 3.5): Dispose the raw split-view image too.
+    _rawFrameImage?.dispose();
     super.dispose();
   }
 
@@ -124,6 +130,37 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
           _currentFrameImage = image;
           _lastDecodedGeneration = targetGen;
         });
+        // v1.1.0 (PLAN 3.5): Render the raw (effects-free) side for split
+        // view — a real before/after comparison.
+        _maybeLoadRawFrame();
+      },
+    );
+  }
+
+  // v1.1.0 (PLAN 3.5): Decode the raw frame (no per-clip filter/cc, no
+  // global filter) at the current position for the split-view left side.
+  bool _rawDecodeInFlight = false;
+  void _maybeLoadRawFrame() {
+    if (!_splitView || !mounted || _rawDecodeInFlight) return;
+    _rawDecodeInFlight = true;
+    final ctrl = widget.controller;
+    final raw = ctrl.engineService.renderRawFrameAt(ctrl.positionMs);
+    _rawDecodeInFlight = false;
+    if (raw == null || !mounted) return;
+    ui.decodeImageFromPixels(
+      raw,
+      EngineService.renderWidth,
+      EngineService.renderHeight,
+      ui.PixelFormat.rgba8888,
+      (ui.Image image) {
+        if (!mounted) {
+          image.dispose();
+          return;
+        }
+        setState(() {
+          _rawFrameImage?.dispose();
+          _rawFrameImage = image;
+        });
       },
     );
   }
@@ -179,6 +216,10 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                                     fit: StackFit.expand,
                                     children: [
                                       // v0.7.0: Split view
+                                      // v1.1.0 (PLAN 3.5): REAL before/after —
+                                      // left = raw (no FX), right = processed.
+                                      // The old code showed the SAME image on
+                                      // both sides.
                                       if (_splitView)
                                         Row(
                                           children: [
@@ -186,7 +227,7 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                                             Expanded(
                                               flex: (_splitPosition * 100).toInt(),
                                               child: RawImage(
-                                                image: _currentFrameImage,
+                                                image: _rawFrameImage ?? _currentFrameImage,
                                                 fit: BoxFit.contain,
                                               ),
                                             ),

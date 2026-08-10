@@ -424,7 +424,20 @@ class _EditorViewState extends State<EditorView> {
                                     ),
                                   ),
                                   const SizedBox(width: 10),
-                                  _buildEngineStatusBadge(),
+                                  // v1.1.0 (PLAN_REVIEW A.2): removed the
+                                  // DUPLICATED engine badge — the full badge
+                                  // already lives in the top header; the
+                                  // status bar shows a compact one-line state.
+                                  Text(
+                                    _controller.isEngineReady ? 'FFI Active' : 'Demo Mode',
+                                    style: TextStyle(
+                                      color: _controller.isEngineReady
+                                          ? AppTheme.success
+                                          : AppTheme.warning,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
