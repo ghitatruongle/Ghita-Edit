@@ -39,6 +39,9 @@ flutter_*.log
 .history/
 migrate_working_dir/
 /noibo/
+PLAN_*.md
+PLAN_REVIEW_*.md
+docs/
 assets/logos/
 assets/logo_concept*.png
 *.ghita
@@ -120,6 +123,14 @@ coverage/
 /android/app/profile/
 /android/app/release/
 /android/app/src/main/jniLibs/
+**/android/app/build/
+/android/app/build/
+
+# Mobile Build Outputs (APK, AAB, iOS, macOS bundles)
+*.apk
+*.aab
+*.ipa
+*.app
 
 # Android Signing Credentials & Keystores (Never commit to Git)
 key.properties
@@ -139,7 +150,10 @@ key.properties
 **/ios/DerivedData/
 **/ios/Pods/
 **/ios/.symlinks/
+**/ios/Flutter/ephemeral/
 **/macos/Pods/
+**/macos/Flutter/ephemeral/
+**/linux/flutter/ephemeral/
 
 # ------------------------------------------------------------------------------
 # 8. C++20 Native Engine (CMake, MSVC, NDK, GCC, Clang Build Outputs)
@@ -190,9 +204,13 @@ MinSizeRel/
 
 # Output Executables & Shared Dynamic Libraries
 *.so
+*.so.*
 *.dll
 *.dylib
 *.exe
+
+# Debug Symbols
+*.dSYM/
 
 # ------------------------------------------------------------------------------
 # 9. Exported Media Test Files (Generated during export & render tests)

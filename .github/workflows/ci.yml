@@ -12,7 +12,7 @@ jobs:
     name: Version Consistency Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check version.dart matches pubspec.yaml
         run: |
@@ -64,7 +64,7 @@ jobs:
     name: Flutter Linting & Test Suite
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Flutter SDK
         uses: subosito/flutter-action@v2
@@ -96,7 +96,7 @@ jobs:
     name: Build C++ Native Engine (Windows MSVC)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Configure CMake
         run: cmake -B native_engine/build -S native_engine -DCMAKE_BUILD_TYPE=Release
@@ -115,7 +115,7 @@ jobs:
     # run the script locally (or on a runner with FFmpeg) for the full path.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Flutter SDK
         uses: subosito/flutter-action@v2
@@ -155,7 +155,7 @@ jobs:
     name: Build C++ Native Engine (Linux GCC)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install FFmpeg (Linux)
         run: sudo apt-get update && sudo apt-get install -y libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
@@ -170,7 +170,7 @@ jobs:
     name: Build C++ Native Engine (macOS)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install FFmpeg (Homebrew)
         # v1.0.0d (CI fix): the macOS runner ships an untrusted 'aws/tap',
