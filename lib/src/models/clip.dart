@@ -159,6 +159,18 @@ class Clip {
   int transitionType;
   int transitionDurationMs;
 
+  /// v1.5.0 T3 (#4): blend mode — 0 Normal, 1 Multiply, 2 Screen, 3 Overlay, 4 Add.
+  int blendMode;
+
+  /// v1.5.0 T3 (#5): geometric mask — 0 none, 1 rect, 2 ellipse, 3 diamond,
+  /// 4 star, 5 heart, 6 cinematic bars (with feather/stroke).
+  int maskType;
+  double maskFeather;
+  double maskStroke;
+
+  /// v1.5.0 T3 (#7): pitch-preserving playback when speed != 1.
+  bool maintainPitch;
+
   // v0.7.0: Color getter/setter helpers (convert from int ARGB)
   Color get textColor => Color(textColorValue);
   set textColor(Color c) => textColorValue = _clipColorArgb(c);
@@ -212,6 +224,11 @@ class Clip {
     this.isLocked = false,
     this.transitionType = 0,
     this.transitionDurationMs = 500,
+    this.blendMode = 0,
+    this.maskType = 0,
+    this.maskFeather = 0.0,
+    this.maskStroke = 0.0,
+    this.maintainPitch = false,
     this.keyframes = const [],
     this.speedCurve = const [],
     this.pipX = 0.0,
@@ -281,6 +298,12 @@ class Clip {
     // v0.7.8: transition
     int? transitionType,
     int? transitionDurationMs,
+    // v1.5.0 T3: blend mode / mask / maintain-pitch
+    int? blendMode,
+    int? maskType,
+    double? maskFeather,
+    double? maskStroke,
+    bool? maintainPitch,
     // v1.1.0 (PLAN 3): keyframes / pip / speed curve
     List<KeyframeData>? keyframes,
     List<SpeedRampPoint>? speedCurve,
@@ -333,6 +356,11 @@ class Clip {
       colorSaturation: colorSaturation ?? this.colorSaturation,
       transitionType: transitionType ?? this.transitionType,
       transitionDurationMs: transitionDurationMs ?? this.transitionDurationMs,
+      blendMode: blendMode ?? this.blendMode,
+      maskType: maskType ?? this.maskType,
+      maskFeather: maskFeather ?? this.maskFeather,
+      maskStroke: maskStroke ?? this.maskStroke,
+      maintainPitch: maintainPitch ?? this.maintainPitch,
       keyframes: keyframes ?? this.keyframes,
       speedCurve: speedCurve ?? this.speedCurve,
       pipX: pipX ?? this.pipX,
@@ -441,6 +469,11 @@ class Clip {
         // v0.7.8: transition
         'transitionType': transitionType,
         'transitionDurationMs': transitionDurationMs,
+        'blendMode': blendMode,
+        'maskType': maskType,
+        'maskFeather': maskFeather,
+        'maskStroke': maskStroke,
+        'maintainPitch': maintainPitch,
         // v1.1.0 (PLAN 3): keyframes / pip / speed curve (optional fields)
         'keyframes': keyframes.map((k) => k.toJson()).toList(),
         'speedCurve': speedCurve.map((p) => p.toJson()).toList(),
@@ -504,6 +537,11 @@ class Clip {
         // v0.7.8: transition
         transitionType: json['transitionType'] as int? ?? 0,
         transitionDurationMs: json['transitionDurationMs'] as int? ?? 500,
+        blendMode: json['blendMode'] as int? ?? 0,
+        maskType: json['maskType'] as int? ?? 0,
+        maskFeather: (json['maskFeather'] as num?)?.toDouble() ?? 0.0,
+        maskStroke: (json['maskStroke'] as num?)?.toDouble() ?? 0.0,
+        maintainPitch: json['maintainPitch'] as bool? ?? false,
         // v1.1.0 (PLAN 3): optional fields with safe defaults — old project
         // files without them load unchanged.
         keyframes: (json['keyframes'] as List<dynamic>?)

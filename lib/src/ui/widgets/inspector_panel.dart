@@ -5,6 +5,7 @@ import '../../models/clip.dart';
 import '../../models/curve_speed.dart';
 import '../../models/project.dart';
 import '../theme/app_theme.dart';
+import 't3_widgets.dart';
 
 // ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
 
@@ -81,6 +82,11 @@ class InspectorPanel extends StatelessWidget {
             // Clip Transform Card
             _buildClipTransformCard(selectedClip),
             const SizedBox(height: 10),
+
+            // v1.5.0 T3 (#1): keyframe graph editor.
+            if (selectedClip.keyframes.isNotEmpty || selectedClip.type != ClipType.audio)
+              KeyframeGraphCard(controller: controller, clip: selectedClip),
+            const SizedBox(height: 10),
           ],
 
           // Project Info
@@ -144,7 +150,16 @@ class InspectorPanel extends StatelessWidget {
   // ============================================================
 
   List<Widget> _buildRichTextEditor(Clip clip, EditorController controller) {
-    final fonts = ['Segoe UI', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Verdana', 'Courier New', 'Impact', 'Comic Sans MS', 'Trebuchet MS', 'Tahoma', 'Palatino'];
+    // v1.5.0 T3 (#8): curated font picker list (system + web-safe families).
+    final fonts = [
+      'Segoe UI', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia',
+      'Verdana', 'Courier New', 'Impact', 'Comic Sans MS', 'Trebuchet MS',
+      'Tahoma', 'Palatino', 'Cambria', 'Calibri', 'Consolas', 'Franklin Gothic',
+      'Gabriola', 'Lucida Console', 'Lucida Sans', 'Monotype Corsiva',
+      'MS Gothic', 'Rockwell', 'Book Antiqua', 'Century Gothic', 'Copperplate',
+      'Garamond', 'Optima', 'Papyrus', 'Segoe Script', 'Segoe UI Light',
+      'Segoe UI Semibold', 'Sitka Text', 'Tekton Pro', 'Tw Cen MT',
+    ];
     final alignments = [
       {'icon': Icons.format_align_left_rounded, 'value': 0},
       {'icon': Icons.format_align_center_rounded, 'value': 1},
@@ -746,6 +761,94 @@ Row(
           _sliderRow('Volume', '${(clip.volume * 100).toInt()}%', clip.volume, 0.0, 2.0, AppTheme.clipAudio, (val) {
             controller.setClipVolume(clip.id, val);
           }, onChangedStart: (_) => controller.beginPropertyGesture()),
+
+          // v1.5.0 T3 (#18): number field with scrub + math expressions.
+          NumberFieldWithScrub(
+            label: 'Speed',
+            value: clip.speed,
+            min: 0.25,
+            max: 4.0,
+            onChanged: (val) => controller.setClipSpeed(clip.id, val),
+            onChangedStart: () => controller.beginPropertyGesture(),
+          ),
+
+          // v1.5.0 T3 (#4): blend mode.
+          Row(
+            children: [
+              const SizedBox(width: 50, child: Text('Blend', style: TextStyle(color: AppTheme.textMuted, fontSize: 10))),
+              Expanded(
+                child: DropdownButton<int>(
+                  value: clip.blendMode,
+                  isExpanded: true,
+                  isDense: true,
+                  underline: const SizedBox.shrink(),
+                  items: const [
+                    DropdownMenuItem(value: 0, child: Text('Normal', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 1, child: Text('Multiply', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 2, child: Text('Screen', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 3, child: Text('Overlay', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 4, child: Text('Add', style: TextStyle(fontSize: 11))),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) controller.setClipBlendMode(clip.id, v);
+                  },
+                ),
+              ),
+            ],
+          ),
+
+          // v1.5.0 T3 (#5): geometric mask + feather/stroke.
+          Row(
+            children: [
+              const SizedBox(width: 50, child: Text('Mask', style: TextStyle(color: AppTheme.textMuted, fontSize: 10))),
+              Expanded(
+                child: DropdownButton<int>(
+                  value: clip.maskType,
+                  isExpanded: true,
+                  isDense: true,
+                  underline: const SizedBox.shrink(),
+                  items: const [
+                    DropdownMenuItem(value: 0, child: Text('None', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 1, child: Text('Rectangle', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 2, child: Text('Ellipse', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 3, child: Text('Diamond', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 4, child: Text('Star', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 5, child: Text('Heart', style: TextStyle(fontSize: 11))),
+                    DropdownMenuItem(value: 6, child: Text('Cinematic Bars', style: TextStyle(fontSize: 11))),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) {
+                      controller.setClipMask(clip.id,
+                          maskType: v,
+                          feather: clip.maskFeather,
+                          stroke: clip.maskStroke);
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+          if (clip.maskType != 0) ...[
+            _sliderRow('Feather', '${(clip.maskFeather * 100).toInt()}%', clip.maskFeather, 0.0, 1.0, AppTheme.primaryLight, (val) {
+              controller.setClipMask(clip.id, maskType: clip.maskType, feather: val, stroke: clip.maskStroke);
+            }, onChangedStart: (_) => controller.beginPropertyGesture()),
+            _sliderRow('Stroke', '${(clip.maskStroke * 100).toInt()}%', clip.maskStroke, 0.0, 1.0, AppTheme.accent, (val) {
+              controller.setClipMask(clip.id, maskType: clip.maskType, feather: clip.maskFeather, stroke: val);
+            }, onChangedStart: (_) => controller.beginPropertyGesture()),
+          ],
+
+          // v1.5.0 T3 (#7): pitch-preserving speed (plain Checkbox — a
+          // ListTile would trigger the "ink may be invisible" debug assertion
+          // inside the card's DecoratedBox).
+          Row(
+            children: [
+              Checkbox(
+                value: clip.maintainPitch,
+                onChanged: (v) => controller.setClipMaintainPitch(clip.id, v ?? false),
+              ),
+              const Text('Maintain Pitch', style: TextStyle(color: AppTheme.textMain, fontSize: 11)),
+            ],
+          ),
 
           // v1.1.0 (PLAN 3.11): Speed Ramp — CapCut-style curve presets wired
           // to the engine. curve_speed.dart was dead code in v1.0.0 (its

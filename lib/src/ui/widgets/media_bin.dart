@@ -160,6 +160,35 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
     }
   }
 
+  /// v1.5.0 T3 (#11): import an .srt/.vtt transcript as text clips.
+  Future<void> _openTranscriptPicker() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        dialogTitle: 'Import Transcript (.srt / .vtt)',
+        type: FileType.custom,
+        allowedExtensions: ['srt', 'vtt'],
+      );
+      if (result != null && mounted) {
+        final path = result.files.single.path;
+        if (path != null) {
+          final n = widget.controller.importTranscriptFromFile(path);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(n > 0 ? 'Imported $n caption(s)' : 'No cues found in transcript'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to import transcript: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -214,6 +243,18 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
                   icon: const Icon(Icons.add_rounded, size: 16),
                   label: const Text('Import', style: TextStyle(fontSize: 11)),
                   onPressed: _openFilePicker,
+                ),
+                // v1.5.0 T3 (#11): transcript (captions) import.
+                FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.card,
+                    foregroundColor: AppTheme.primaryLight,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm + 2)),
+                  ),
+                  icon: const Icon(Icons.subtitles_rounded, size: 16),
+                  label: const Text('Captions', style: TextStyle(fontSize: 11)),
+                  onPressed: _openTranscriptPicker,
                 ),
               ],
             ),

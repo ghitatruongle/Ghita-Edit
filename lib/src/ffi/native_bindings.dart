@@ -105,6 +105,146 @@ typedef DartGhitaEngineGetAudioWaveform = bool Function(Pointer<GhitaEngineConte
 typedef CGhitaEngineSetNoiseSuppress = Void Function(Pointer<GhitaEngineContext> ctx, Int32 enabled);
 typedef DartGhitaEngineSetNoiseSuppress = void Function(Pointer<GhitaEngineContext> ctx, int enabled);
 
+// ========== v1.5.0 T3 (Video Features) ==========
+
+typedef CGhitaEngineSetClipBlendMode = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Int32 blendMode);
+typedef DartGhitaEngineSetClipBlendMode = int Function(Pointer<GhitaEngineContext> ctx, int clipId, int blendMode);
+
+typedef CGhitaEngineSetClipMask = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Int32 maskType, Float feather, Float stroke);
+typedef DartGhitaEngineSetClipMask = int Function(Pointer<GhitaEngineContext> ctx, int clipId, int maskType, double feather, double stroke);
+
+typedef CGhitaEngineSetClipMaintainPitch = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Int32 enabled);
+typedef DartGhitaEngineSetClipMaintainPitch = int Function(Pointer<GhitaEngineContext> ctx, int clipId, int enabled);
+
+typedef CGhitaEngineSetClipFont = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Pointer<Utf8> family);
+typedef DartGhitaEngineSetClipFont = int Function(Pointer<GhitaEngineContext> ctx, int clipId, Pointer<Utf8> family);
+
+typedef CGhitaEngineSetCanvasBackground = Void Function(Pointer<GhitaEngineContext> ctx, Int32 kind, Uint32 color, Uint32 color2);
+typedef DartGhitaEngineSetCanvasBackground = void Function(Pointer<GhitaEngineContext> ctx, int kind, int color, int color2);
+
+typedef CGhitaEngineAddBookmark = Int32 Function(Pointer<GhitaEngineContext> ctx, Int64 timeMs, Uint32 color, Pointer<Utf8> note);
+typedef DartGhitaEngineAddBookmark = int Function(Pointer<GhitaEngineContext> ctx, int timeMs, int color, Pointer<Utf8> note);
+
+typedef CGhitaEngineRemoveBookmark = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 id);
+typedef DartGhitaEngineRemoveBookmark = int Function(Pointer<GhitaEngineContext> ctx, int id);
+
+typedef CGhitaEngineGetBookmarkCount = Int32 Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineGetBookmarkCount = int Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineGetBookmarksJson = Pointer<Utf8> Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineGetBookmarksJson = Pointer<Utf8> Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineCopyKeyframes = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 srcClip, Int32 dstClip);
+typedef DartGhitaEngineCopyKeyframes = int Function(Pointer<GhitaEngineContext> ctx, int srcClip, int dstClip);
+
+typedef CGhitaEngineImportTranscript = Int32 Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> path, Int32 trackIndex);
+typedef DartGhitaEngineImportTranscript = int Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> path, int trackIndex);
+
+// ========== v1.5.0 T4: Audio Features — defensive lookups (older DLLs degrade). ==========
+
+typedef CGhitaEngineAddAudioEffect = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 effectType, Float p0, Float p1, Float p2, Float p3);
+typedef DartGhitaEngineAddAudioEffect = int Function(Pointer<GhitaEngineContext> ctx, int effectType, double p0, double p1, double p2, double p3);
+
+typedef CGhitaEngineRemoveAudioEffect = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 index);
+typedef DartGhitaEngineRemoveAudioEffect = int Function(Pointer<GhitaEngineContext> ctx, int index);
+
+typedef CGhitaEngineClearAudioEffects = Void Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineClearAudioEffects = void Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineGetGainReductionDb = Float Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineGetGainReductionDb = double Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineGetSpectrogram = Bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Float> outMags, Int32 columns, Int32 bins, Int32 trackIndex);
+typedef DartGhitaEngineGetSpectrogram = bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Float> outMags, int columns, int bins, int trackIndex);
+
+typedef CGhitaEngineAddSpectralEdit = Int32 Function(Pointer<GhitaEngineContext> ctx, Int64 startMs, Int64 endMs, Float loHz, Float hiHz, Float gainDb);
+typedef DartGhitaEngineAddSpectralEdit = int Function(Pointer<GhitaEngineContext> ctx, int startMs, int endMs, double loHz, double hiHz, double gainDb);
+
+typedef CGhitaEngineClearSpectralEdits = Void Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineClearSpectralEdits = void Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineGetTimelineRms = Bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Float> out, Int32 count, Int32 trackIndex);
+typedef DartGhitaEngineGetTimelineRms = bool Function(Pointer<GhitaEngineContext> ctx, Pointer<Float> out, int count, int trackIndex);
+
+typedef CGhitaEngineDetectTempo = Int32 Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineDetectTempo = int Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineSetTimeSignature = Void Function(Pointer<GhitaEngineContext> ctx, Int32 num, Int32 den);
+typedef DartGhitaEngineSetTimeSignature = void Function(Pointer<GhitaEngineContext> ctx, int num, int den);
+
+typedef CGhitaEngineGetBeatTimes = Int32 Function(Pointer<GhitaEngineContext> ctx, Pointer<Int64> outMs, Int32 maxCount);
+typedef DartGhitaEngineGetBeatTimes = int Function(Pointer<GhitaEngineContext> ctx, Pointer<Int64> outMs, int maxCount);
+
+typedef CGhitaEngineSetLoopRegion = Void Function(Pointer<GhitaEngineContext> ctx, Int64 startMs, Int64 endMs, Int32 enabled);
+typedef DartGhitaEngineSetLoopRegion = void Function(Pointer<GhitaEngineContext> ctx, int startMs, int endMs, int enabled);
+
+typedef CGhitaEngineSetClipPitch = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Float semitones);
+typedef DartGhitaEngineSetClipPitch = int Function(Pointer<GhitaEngineContext> ctx, int clipId, double semitones);
+
+typedef CGhitaEngineSetPreviewPitchPreserve = Void Function(Pointer<GhitaEngineContext> ctx, Int32 enabled);
+typedef DartGhitaEngineSetPreviewPitchPreserve = void Function(Pointer<GhitaEngineContext> ctx, int enabled);
+
+typedef CGhitaEngineStartRecording = Int32 Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> outPath, Int32 mode, Int64 preRollMs, Int64 delayMs, Int64 durationMs);
+typedef DartGhitaEngineStartRecording = int Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> outPath, int mode, int preRollMs, int delayMs, int durationMs);
+
+typedef CGhitaEngineStopRecording = Int64 Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineStopRecording = int Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineIsRecording = Bool Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineIsRecording = bool Function(Pointer<GhitaEngineContext> ctx);
+
+typedef CGhitaEngineExportLabels = Int32 Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> path, Int32 format);
+typedef DartGhitaEngineExportLabels = int Function(Pointer<GhitaEngineContext> ctx, Pointer<Utf8> path, int format);
+
+// ========== v1.5.0 T5: SQLite Project Database — defensive lookups (sqlite feature). ==========
+
+typedef CGhitaProjectDbSave = Int32 Function(Pointer<Utf8> dbPath, Pointer<Utf8> name, Pointer<Utf8> jsonData);
+typedef DartGhitaProjectDbSave = int Function(Pointer<Utf8> dbPath, Pointer<Utf8> name, Pointer<Utf8> jsonData);
+
+typedef CGhitaProjectDbLoad = Pointer<Utf8> Function(Pointer<Utf8> dbPath, Pointer<Utf8> name);
+typedef DartGhitaProjectDbLoad = Pointer<Utf8> Function(Pointer<Utf8> dbPath, Pointer<Utf8> name);
+
+typedef CGhitaProjectDbList = Pointer<Utf8> Function(Pointer<Utf8> dbPath);
+typedef DartGhitaProjectDbList = Pointer<Utf8> Function(Pointer<Utf8> dbPath);
+
+typedef CGhitaProjectDbDelete = Int32 Function(Pointer<Utf8> dbPath, Pointer<Utf8> name);
+typedef DartGhitaProjectDbDelete = int Function(Pointer<Utf8> dbPath, Pointer<Utf8> name);
+
+typedef CGhitaProjectDbLibraryAdd = Int32 Function(Pointer<Utf8> dbPath, Pointer<Utf8> path, Pointer<Utf8> hash, Pointer<Utf8> metadataJson);
+typedef DartGhitaProjectDbLibraryAdd = int Function(Pointer<Utf8> dbPath, Pointer<Utf8> path, Pointer<Utf8> hash, Pointer<Utf8> metadataJson);
+
+typedef CGhitaProjectDbLibrarySearch = Pointer<Utf8> Function(Pointer<Utf8> dbPath, Pointer<Utf8> query);
+typedef DartGhitaProjectDbLibrarySearch = Pointer<Utf8> Function(Pointer<Utf8> dbPath, Pointer<Utf8> query);
+
+typedef CGhitaProjectDbLibraryUpdateRating = Int32 Function(Pointer<Utf8> dbPath, Int64 id, Int32 rating);
+typedef DartGhitaProjectDbLibraryUpdateRating = int Function(Pointer<Utf8> dbPath, int id, int rating);
+
+typedef CGhitaProjectDbLibraryUpdateTags = Int32 Function(Pointer<Utf8> dbPath, Int64 id, Pointer<Utf8> tags);
+typedef DartGhitaProjectDbLibraryUpdateTags = int Function(Pointer<Utf8> dbPath, int id, Pointer<Utf8> tags);
+
+// ========== v1.5.0 T6: Selection Tools — defensive lookups. ==========
+
+typedef CGhitaEngineSetSelectionRect = Int32 Function(Int32 x, Int32 y, Int32 w, Int32 h, Int32 op);
+typedef DartGhitaEngineSetSelectionRect = int Function(int x, int y, int w, int h, int op);
+
+typedef CGhitaEngineSetSelectionEllipse = Int32 Function(Int32 cx, Int32 cy, Int32 rx, Int32 ry, Int32 op);
+typedef DartGhitaEngineSetSelectionEllipse = int Function(int cx, int cy, int rx, int ry, int op);
+
+typedef CGhitaEngineSetSelectionLasso = Int32 Function(Pointer<Int32> points, Int32 count, Int32 op);
+typedef DartGhitaEngineSetSelectionLasso = int Function(Pointer<Int32> points, int count, int op);
+
+typedef CGhitaEngineSetSelectionMagicWand = Int32 Function(Pointer<Uint8> imageData, Int32 width, Int32 height, Int32 seedX, Int32 seedY, Float tolerance, Int32 op);
+typedef DartGhitaEngineSetSelectionMagicWand = int Function(Pointer<Uint8> imageData, int width, int height, int seedX, int seedY, double tolerance, int op);
+
+typedef CGhitaEngineModifyMask = Int32 Function(Int32 op);
+typedef DartGhitaEngineModifyMask = int Function(int op);
+
+typedef CGhitaEngineGetMaskBuffer = Int32 Function(Pointer<Uint8> outBuf, Int32 maxSize);
+typedef DartGhitaEngineGetMaskBuffer = int Function(Pointer<Uint8> outBuf, int maxSize);
+
+typedef CGhitaEngineClearSelection = Void Function();
+typedef DartGhitaEngineClearSelection = void Function();
+
 // ========== v1.1.0 New API (PLAN 3: Accuracy) ==========
 
 // Keyframe-aware insertion (property/interpolation/bezier aware).
@@ -436,6 +576,58 @@ class GhitaNativeBindings {
   DartGhitaEngineRenderFrameAtEx? renderFrameAtEx;
   DartGhitaEngineGetTimelineWaveform? getTimelineWaveform;
 
+  // v1.5.0 T3: Video Features — nullable (additive, older DLLs degrade).
+  DartGhitaEngineSetClipBlendMode? setClipBlendMode;
+  DartGhitaEngineSetClipMask? setClipMask;
+  DartGhitaEngineSetClipMaintainPitch? setClipMaintainPitch;
+  DartGhitaEngineSetClipFont? setClipFont;
+  DartGhitaEngineSetCanvasBackground? setCanvasBackground;
+  DartGhitaEngineAddBookmark? addBookmark;
+  DartGhitaEngineRemoveBookmark? removeBookmark;
+  DartGhitaEngineGetBookmarkCount? getBookmarkCount;
+  DartGhitaEngineGetBookmarksJson? getBookmarksJson;
+  DartGhitaEngineCopyKeyframes? copyKeyframes;
+  DartGhitaEngineImportTranscript? importTranscript;
+
+  // v1.5.0 T4: Audio Features — defensive lookups (older DLLs degrade).
+  DartGhitaEngineAddAudioEffect? addAudioEffect;
+  DartGhitaEngineRemoveAudioEffect? removeAudioEffect;
+  DartGhitaEngineClearAudioEffects? clearAudioEffects;
+  DartGhitaEngineGetGainReductionDb? getGainReductionDb;
+  DartGhitaEngineGetSpectrogram? getSpectrogram;
+  DartGhitaEngineAddSpectralEdit? addSpectralEdit;
+  DartGhitaEngineClearSpectralEdits? clearSpectralEdits;
+  DartGhitaEngineGetTimelineRms? getTimelineRms;
+  DartGhitaEngineDetectTempo? detectTempo;
+  DartGhitaEngineSetTimeSignature? setTimeSignature;
+  DartGhitaEngineGetBeatTimes? getBeatTimes;
+  DartGhitaEngineSetLoopRegion? setLoopRegion;
+  DartGhitaEngineSetClipPitch? setClipPitch;
+  DartGhitaEngineSetPreviewPitchPreserve? setPreviewPitchPreserve;
+  DartGhitaEngineStartRecording? startRecording;
+  DartGhitaEngineStopRecording? stopRecording;
+  DartGhitaEngineIsRecording? isRecording;
+  DartGhitaEngineExportLabels? exportLabels;
+
+  // ========== v1.5.0 T5: SQLite Project Database — defensive lookups (sqlite feature). ==========
+  DartGhitaProjectDbSave? projectDbSave;
+  DartGhitaProjectDbLoad? projectDbLoad;
+  DartGhitaProjectDbList? projectDbList;
+  DartGhitaProjectDbDelete? projectDbDelete;
+  DartGhitaProjectDbLibraryAdd? projectDbLibraryAdd;
+  DartGhitaProjectDbLibrarySearch? projectDbLibrarySearch;
+  DartGhitaProjectDbLibraryUpdateRating? projectDbLibraryUpdateRating;
+  DartGhitaProjectDbLibraryUpdateTags? projectDbLibraryUpdateTags;
+
+  // ========== v1.5.0 T6: Selection Tools — defensive lookups. ==========
+  DartGhitaEngineSetSelectionRect? setSelectionRect;
+  DartGhitaEngineSetSelectionEllipse? setSelectionEllipse;
+  DartGhitaEngineSetSelectionLasso? setSelectionLasso;
+  DartGhitaEngineSetSelectionMagicWand? setSelectionMagicWand;
+  DartGhitaEngineModifyMask? modifyMask;
+  DartGhitaEngineGetMaskBuffer? getMaskBuffer;
+  DartGhitaEngineClearSelection? clearSelection;
+
   GhitaNativeBindings._internal() {
     _loadLibrary();
   }
@@ -607,6 +799,58 @@ class GhitaNativeBindings {
     clearSpeedCurve = _tryLookup('ghita_engine_clear_speed_curve', () => _lib.lookupFunction<CGhitaEngineClearSpeedCurve, DartGhitaEngineClearSpeedCurve>('ghita_engine_clear_speed_curve'));
     renderFrameAtEx = _tryLookup('ghita_engine_render_frame_at_ex', () => _lib.lookupFunction<CGhitaEngineRenderFrameAtEx, DartGhitaEngineRenderFrameAtEx>('ghita_engine_render_frame_at_ex'));
     getTimelineWaveform = _tryLookup('ghita_engine_get_timeline_waveform', () => _lib.lookupFunction<CGhitaEngineGetTimelineWaveform, DartGhitaEngineGetTimelineWaveform>('ghita_engine_get_timeline_waveform'));
+
+    // v1.5.0 T3: Video Features — defensive lookups (older DLLs degrade).
+    setClipBlendMode = _tryLookup('ghita_engine_set_clip_blend_mode', () => _lib.lookupFunction<CGhitaEngineSetClipBlendMode, DartGhitaEngineSetClipBlendMode>('ghita_engine_set_clip_blend_mode'));
+    setClipMask = _tryLookup('ghita_engine_set_clip_mask', () => _lib.lookupFunction<CGhitaEngineSetClipMask, DartGhitaEngineSetClipMask>('ghita_engine_set_clip_mask'));
+    setClipMaintainPitch = _tryLookup('ghita_engine_set_clip_maintain_pitch', () => _lib.lookupFunction<CGhitaEngineSetClipMaintainPitch, DartGhitaEngineSetClipMaintainPitch>('ghita_engine_set_clip_maintain_pitch'));
+    setClipFont = _tryLookup('ghita_engine_set_clip_font', () => _lib.lookupFunction<CGhitaEngineSetClipFont, DartGhitaEngineSetClipFont>('ghita_engine_set_clip_font'));
+    setCanvasBackground = _tryLookup('ghita_engine_set_canvas_background', () => _lib.lookupFunction<CGhitaEngineSetCanvasBackground, DartGhitaEngineSetCanvasBackground>('ghita_engine_set_canvas_background'));
+    addBookmark = _tryLookup('ghita_engine_add_bookmark', () => _lib.lookupFunction<CGhitaEngineAddBookmark, DartGhitaEngineAddBookmark>('ghita_engine_add_bookmark'));
+    removeBookmark = _tryLookup('ghita_engine_remove_bookmark', () => _lib.lookupFunction<CGhitaEngineRemoveBookmark, DartGhitaEngineRemoveBookmark>('ghita_engine_remove_bookmark'));
+    getBookmarkCount = _tryLookup('ghita_engine_get_bookmark_count', () => _lib.lookupFunction<CGhitaEngineGetBookmarkCount, DartGhitaEngineGetBookmarkCount>('ghita_engine_get_bookmark_count'));
+    getBookmarksJson = _tryLookup('ghita_engine_get_bookmarks_json', () => _lib.lookupFunction<CGhitaEngineGetBookmarksJson, DartGhitaEngineGetBookmarksJson>('ghita_engine_get_bookmarks_json'));
+    copyKeyframes = _tryLookup('ghita_engine_copy_keyframes', () => _lib.lookupFunction<CGhitaEngineCopyKeyframes, DartGhitaEngineCopyKeyframes>('ghita_engine_copy_keyframes'));
+    importTranscript = _tryLookup('ghita_engine_import_transcript', () => _lib.lookupFunction<CGhitaEngineImportTranscript, DartGhitaEngineImportTranscript>('ghita_engine_import_transcript'));
+
+    // v1.5.0 T4: Audio Features — defensive lookups (older DLLs degrade).
+    addAudioEffect = _tryLookup('ghita_engine_add_audio_effect', () => _lib.lookupFunction<CGhitaEngineAddAudioEffect, DartGhitaEngineAddAudioEffect>('ghita_engine_add_audio_effect'));
+    removeAudioEffect = _tryLookup('ghita_engine_remove_audio_effect', () => _lib.lookupFunction<CGhitaEngineRemoveAudioEffect, DartGhitaEngineRemoveAudioEffect>('ghita_engine_remove_audio_effect'));
+    clearAudioEffects = _tryLookup('ghita_engine_clear_audio_effects', () => _lib.lookupFunction<CGhitaEngineClearAudioEffects, DartGhitaEngineClearAudioEffects>('ghita_engine_clear_audio_effects'));
+    getGainReductionDb = _tryLookup('ghita_engine_get_gain_reduction_db', () => _lib.lookupFunction<CGhitaEngineGetGainReductionDb, DartGhitaEngineGetGainReductionDb>('ghita_engine_get_gain_reduction_db'));
+    getSpectrogram = _tryLookup('ghita_engine_get_spectrogram', () => _lib.lookupFunction<CGhitaEngineGetSpectrogram, DartGhitaEngineGetSpectrogram>('ghita_engine_get_spectrogram'));
+    addSpectralEdit = _tryLookup('ghita_engine_add_spectral_edit', () => _lib.lookupFunction<CGhitaEngineAddSpectralEdit, DartGhitaEngineAddSpectralEdit>('ghita_engine_add_spectral_edit'));
+    clearSpectralEdits = _tryLookup('ghita_engine_clear_spectral_edits', () => _lib.lookupFunction<CGhitaEngineClearSpectralEdits, DartGhitaEngineClearSpectralEdits>('ghita_engine_clear_spectral_edits'));
+    getTimelineRms = _tryLookup('ghita_engine_get_timeline_rms', () => _lib.lookupFunction<CGhitaEngineGetTimelineRms, DartGhitaEngineGetTimelineRms>('ghita_engine_get_timeline_rms'));
+    detectTempo = _tryLookup('ghita_engine_detect_tempo', () => _lib.lookupFunction<CGhitaEngineDetectTempo, DartGhitaEngineDetectTempo>('ghita_engine_detect_tempo'));
+    setTimeSignature = _tryLookup('ghita_engine_set_time_signature', () => _lib.lookupFunction<CGhitaEngineSetTimeSignature, DartGhitaEngineSetTimeSignature>('ghita_engine_set_time_signature'));
+    getBeatTimes = _tryLookup('ghita_engine_get_beat_times', () => _lib.lookupFunction<CGhitaEngineGetBeatTimes, DartGhitaEngineGetBeatTimes>('ghita_engine_get_beat_times'));
+    setLoopRegion = _tryLookup('ghita_engine_set_loop_region', () => _lib.lookupFunction<CGhitaEngineSetLoopRegion, DartGhitaEngineSetLoopRegion>('ghita_engine_set_loop_region'));
+    setClipPitch = _tryLookup('ghita_engine_set_clip_pitch', () => _lib.lookupFunction<CGhitaEngineSetClipPitch, DartGhitaEngineSetClipPitch>('ghita_engine_set_clip_pitch'));
+    setPreviewPitchPreserve = _tryLookup('ghita_engine_set_preview_pitch_preserve', () => _lib.lookupFunction<CGhitaEngineSetPreviewPitchPreserve, DartGhitaEngineSetPreviewPitchPreserve>('ghita_engine_set_preview_pitch_preserve'));
+    startRecording = _tryLookup('ghita_engine_start_recording', () => _lib.lookupFunction<CGhitaEngineStartRecording, DartGhitaEngineStartRecording>('ghita_engine_start_recording'));
+    stopRecording = _tryLookup('ghita_engine_stop_recording', () => _lib.lookupFunction<CGhitaEngineStopRecording, DartGhitaEngineStopRecording>('ghita_engine_stop_recording'));
+    isRecording = _tryLookup('ghita_engine_is_recording', () => _lib.lookupFunction<CGhitaEngineIsRecording, DartGhitaEngineIsRecording>('ghita_engine_is_recording'));
+    exportLabels = _tryLookup('ghita_engine_export_labels', () => _lib.lookupFunction<CGhitaEngineExportLabels, DartGhitaEngineExportLabels>('ghita_engine_export_labels'));
+
+    // ========== v1.5.0 T5: SQLite Project Database — defensive lookups (sqlite feature). ==========
+    projectDbSave = _tryLookup('ghita_project_db_save', () => _lib.lookupFunction<CGhitaProjectDbSave, DartGhitaProjectDbSave>('ghita_project_db_save'));
+    projectDbLoad = _tryLookup('ghita_project_db_load', () => _lib.lookupFunction<CGhitaProjectDbLoad, DartGhitaProjectDbLoad>('ghita_project_db_load'));
+    projectDbList = _tryLookup('ghita_project_db_list', () => _lib.lookupFunction<CGhitaProjectDbList, DartGhitaProjectDbList>('ghita_project_db_list'));
+    projectDbDelete = _tryLookup('ghita_project_db_delete', () => _lib.lookupFunction<CGhitaProjectDbDelete, DartGhitaProjectDbDelete>('ghita_project_db_delete'));
+    projectDbLibraryAdd = _tryLookup('ghita_project_db_library_add', () => _lib.lookupFunction<CGhitaProjectDbLibraryAdd, DartGhitaProjectDbLibraryAdd>('ghita_project_db_library_add'));
+    projectDbLibrarySearch = _tryLookup('ghita_project_db_library_search', () => _lib.lookupFunction<CGhitaProjectDbLibrarySearch, DartGhitaProjectDbLibrarySearch>('ghita_project_db_library_search'));
+    projectDbLibraryUpdateRating = _tryLookup('ghita_project_db_library_update_rating', () => _lib.lookupFunction<CGhitaProjectDbLibraryUpdateRating, DartGhitaProjectDbLibraryUpdateRating>('ghita_project_db_library_update_rating'));
+    projectDbLibraryUpdateTags = _tryLookup('ghita_project_db_library_update_tags', () => _lib.lookupFunction<CGhitaProjectDbLibraryUpdateTags, DartGhitaProjectDbLibraryUpdateTags>('ghita_project_db_library_update_tags'));
+
+    // ========== v1.5.0 T6: Selection Tools — defensive lookups. ==========
+    setSelectionRect = _tryLookup('ghita_engine_set_selection_rect', () => _lib.lookupFunction<CGhitaEngineSetSelectionRect, DartGhitaEngineSetSelectionRect>('ghita_engine_set_selection_rect'));
+    setSelectionEllipse = _tryLookup('ghita_engine_set_selection_ellipse', () => _lib.lookupFunction<CGhitaEngineSetSelectionEllipse, DartGhitaEngineSetSelectionEllipse>('ghita_engine_set_selection_ellipse'));
+    setSelectionLasso = _tryLookup('ghita_engine_set_selection_lasso', () => _lib.lookupFunction<CGhitaEngineSetSelectionLasso, DartGhitaEngineSetSelectionLasso>('ghita_engine_set_selection_lasso'));
+    setSelectionMagicWand = _tryLookup('ghita_engine_set_selection_magic_wand', () => _lib.lookupFunction<CGhitaEngineSetSelectionMagicWand, DartGhitaEngineSetSelectionMagicWand>('ghita_engine_set_selection_magic_wand'));
+    modifyMask = _tryLookup('ghita_engine_modify_mask', () => _lib.lookupFunction<CGhitaEngineModifyMask, DartGhitaEngineModifyMask>('ghita_engine_modify_mask'));
+    getMaskBuffer = _tryLookup('ghita_engine_get_mask_buffer', () => _lib.lookupFunction<CGhitaEngineGetMaskBuffer, DartGhitaEngineGetMaskBuffer>('ghita_engine_get_mask_buffer'));
+    clearSelection = _tryLookup('ghita_engine_clear_selection', () => _lib.lookupFunction<CGhitaEngineClearSelection, DartGhitaEngineClearSelection>('ghita_engine_clear_selection'));
   }
 
   // v1.0.1: Stub implementations for v0.8.0 bindings that may be absent

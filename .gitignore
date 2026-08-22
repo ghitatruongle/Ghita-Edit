@@ -276,3 +276,10 @@ dist/
 
 # Third-party local data (FreeBun desktop DB etc.)
 .freebuff/
+
+# ------------------------------------------------------------------------------
+# 12. Reference Projects (downloaded for learning purposes, not part of repo)
+# ------------------------------------------------------------------------------
+refer_project/
+
+**/target/

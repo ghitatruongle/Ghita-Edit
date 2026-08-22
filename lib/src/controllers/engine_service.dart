@@ -368,6 +368,296 @@ class EngineService extends ChangeNotifier {
     }
   }
 
+  // ========== v1.5.0 T3: Video Features ==========
+
+  /// v1.5.0 T3 (#4): blend mode (0 Normal, 1 Multiply, 2 Screen, 3 Overlay, 4 Add).
+  bool setClipBlendMode(int clipId, int blendMode) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.setClipBlendMode;
+    if (!isReady || fn == null || clipId <= 0) return false;
+    try {
+      return fn(_ctx!, clipId, blendMode) == 0;
+    } catch (e) {
+      debugPrint('[EngineService] setClipBlendMode failed: $e');
+      return false;
+    }
+  }
+
+  /// v1.5.0 T3 (#5): geometric mask (0 none, 1 rect, 2 ellipse, 3 diamond,
+  /// 4 star, 5 heart, 6 cinematic bars) with feather/stroke.
+  bool setClipMask(int clipId, int maskType, double feather, double stroke) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.setClipMask;
+    if (!isReady || fn == null || clipId <= 0) return false;
+    try {
+      return fn(_ctx!, clipId, maskType, feather, stroke) == 0;
+    } catch (e) {
+      debugPrint('[EngineService] setClipMask failed: $e');
+      return false;
+    }
+  }
+
+  /// v1.5.0 T3 (#7): pitch-preserving speed.
+  bool setClipMaintainPitch(int clipId, bool enabled) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.setClipMaintainPitch;
+    if (!isReady || fn == null || clipId <= 0) return false;
+    try {
+      return fn(_ctx!, clipId, enabled ? 1 : 0) == 0;
+    } catch (e) {
+      debugPrint('[EngineService] setClipMaintainPitch failed: $e');
+      return false;
+    }
+  }
+
+  /// v1.5.0 T3 (#8): text clip font family (GDI).
+  bool setClipFont(int clipId, String family) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.setClipFont;
+    if (!isReady || fn == null || clipId <= 0) return false;
+    try {
+      final ptr = family.toNativeUtf8();
+      try {
+        return fn(_ctx!, clipId, ptr) == 0;
+      } finally {
+        calloc.free(ptr);
+      }
+    } catch (e) {
+      debugPrint('[EngineService] setClipFont failed: $e');
+      return false;
+    }
+  }
+
+  /// v1.5.0 T3 (#9): canvas background (0 solid, 1 gradient, 2 blur).
+  void setCanvasBackground(int kind, int color, int color2) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.setCanvasBackground;
+    if (!isReady || fn == null) return;
+    try {
+      fn(_ctx!, kind, color, color2);
+    } catch (e) {
+      debugPrint('[EngineService] setCanvasBackground failed: $e');
+    }
+  }
+
+  /// v1.5.0 T3 (#10): bookmark markers on the ruler.
+  int addBookmark(int timeMs, int color, String note) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.addBookmark;
+    if (!isReady || fn == null) return -1;
+    try {
+      final ptr = note.toNativeUtf8();
+      try {
+        return fn(_ctx!, timeMs, color, ptr);
+      } finally {
+        calloc.free(ptr);
+      }
+    } catch (e) {
+      debugPrint('[EngineService] addBookmark failed: $e');
+      return -1;
+    }
+  }
+
+  bool removeBookmark(int id) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.removeBookmark;
+    if (!isReady || fn == null) return false;
+    try {
+      return fn(_ctx!, id) == 0;
+    } catch (e) {
+      debugPrint('[EngineService] removeBookmark failed: $e');
+      return false;
+    }
+  }
+
+  /// v1.5.0 T3 (#2): clone all keyframes of [srcClip] onto [dstClip].
+  bool copyKeyframes(int srcClip, int dstClip) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.copyKeyframes;
+    if (!isReady || fn == null || srcClip <= 0 || dstClip <= 0) return false;
+    try {
+      return fn(_ctx!, srcClip, dstClip) == 0;
+    } catch (e) {
+      debugPrint('[EngineService] copyKeyframes failed: $e');
+      return false;
+    }
+  }
+
+  /// v1.5.0 T3 (#11): parse an .srt/.vtt transcript into text clips.
+  int importTranscript(String path, int trackIndex) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.importTranscript;
+    if (!isReady || fn == null) return 0;
+    try {
+      final ptr = path.toNativeUtf8();
+      try {
+        return fn(_ctx!, ptr, trackIndex);
+      } finally {
+        calloc.free(ptr);
+      }
+    } catch (e) {
+      debugPrint('[EngineService] importTranscript failed: $e');
+      return 0;
+    }
+  }
+
+  // ========== v1.5.0 T4: Audio Features ==========
+
+  int addAudioEffect(int effectType, double p0, double p1, double p2, double p3) {
+    _checkDisposed();
+    final fn = _bindings?.addAudioEffect;
+    if (!isReady || fn == null) return -1;
+    try { return fn(_ctx!, effectType, p0, p1, p2, p3); } catch (e) { return -1; }
+  }
+
+  int removeAudioEffect(int index) {
+    _checkDisposed();
+    final fn = _bindings?.removeAudioEffect;
+    if (!isReady || fn == null) return -1;
+    try { return fn(_ctx!, index); } catch (e) { return -1; }
+  }
+
+  void clearAudioEffects() {
+    _checkDisposed();
+    final fn = _bindings?.clearAudioEffects;
+    if (!isReady || fn == null) return;
+    try { fn(_ctx!); } catch (_) {}
+  }
+
+  double getGainReductionDb() {
+    _checkDisposed();
+    final fn = _bindings?.getGainReductionDb;
+    if (!isReady || fn == null) return 0.0;
+    try { return fn(_ctx!); } catch (_) { return 0.0; }
+  }
+
+  List<double> getSpectrogram(int columns, int bins, int trackIndex) {
+    _checkDisposed();
+    final fn = _bindings?.getSpectrogram;
+    if (!isReady || fn == null || columns <= 0 || bins <= 0) return const [];
+    final count = columns * bins;
+    final buf = calloc<Float>(count);
+    try {
+      if (fn(_ctx!, buf, columns, bins, trackIndex)) {
+        return List.generate(count, (i) => buf[i]);
+      }
+      return const [];
+    } catch (_) { return const []; } finally { calloc.free(buf); }
+  }
+
+  int addSpectralEdit(int startMs, int endMs, double loHz, double hiHz, double gainDb) {
+    _checkDisposed();
+    final fn = _bindings?.addSpectralEdit;
+    if (!isReady || fn == null) return -1;
+    try { return fn(_ctx!, startMs, endMs, loHz, hiHz, gainDb); } catch (e) { return -1; }
+  }
+
+  void clearSpectralEdits() {
+    _checkDisposed();
+    final fn = _bindings?.clearSpectralEdits;
+    if (!isReady || fn == null) return;
+    try { fn(_ctx!); } catch (_) {}
+  }
+
+  List<double> getTimelineRms(int count, int trackIndex) {
+    _checkDisposed();
+    final fn = _bindings?.getTimelineRms;
+    if (!isReady || fn == null || count <= 0) return const [];
+    final buf = calloc<Float>(count);
+    try {
+      if (fn(_ctx!, buf, count, trackIndex)) {
+        return List.generate(count, (i) => buf[i]);
+      }
+      return const [];
+    } catch (_) { return const []; } finally { calloc.free(buf); }
+  }
+
+  int detectTempo() {
+    _checkDisposed();
+    final fn = _bindings?.detectTempo;
+    if (!isReady || fn == null) return 0;
+    try { return fn(_ctx!); } catch (_) { return 0; }
+  }
+
+  void setTimeSignature(int num, int den) {
+    _checkDisposed();
+    final fn = _bindings?.setTimeSignature;
+    if (!isReady || fn == null) return;
+    try { fn(_ctx!, num, den); } catch (_) {}
+  }
+
+  List<int> getBeatTimes(int maxCount) {
+    _checkDisposed();
+    final fn = _bindings?.getBeatTimes;
+    if (!isReady || fn == null || maxCount <= 0) return const [];
+    final buf = calloc<Int64>(maxCount);
+    try {
+      final n = fn(_ctx!, buf, maxCount);
+      if (n > 0) return List.generate(n, (i) => buf[i].toInt());
+      return const [];
+    } catch (_) { return const []; } finally { calloc.free(buf); }
+  }
+
+  void setLoopRegion(int startMs, int endMs, bool enabled) {
+    _checkDisposed();
+    final fn = _bindings?.setLoopRegion;
+    if (!isReady || fn == null) return;
+    try { fn(_ctx!, startMs, endMs, enabled ? 1 : 0); } catch (_) {}
+  }
+
+  int setClipPitch(int clipId, double semitones) {
+    _checkDisposed();
+    final fn = _bindings?.setClipPitch;
+    if (!isReady || fn == null) return -1;
+    try { return fn(_ctx!, clipId, semitones); } catch (e) { return -1; }
+  }
+
+  void setPreviewPitchPreserve(bool enabled) {
+    _checkDisposed();
+    final fn = _bindings?.setPreviewPitchPreserve;
+    if (!isReady || fn == null) return;
+    try { fn(_ctx!, enabled ? 1 : 0); } catch (_) {}
+  }
+
+  int startRecording(String outPath, int mode, int preRollMs, int delayMs, int durationMs) {
+    _checkDisposed();
+    final fn = _bindings?.startRecording;
+    if (!isReady || fn == null) return -1;
+    final ptr = outPath.toNativeUtf8();
+    try { return fn(_ctx!, ptr, mode, preRollMs, delayMs, durationMs); } catch (e) { return -1; } finally { calloc.free(ptr); }
+  }
+
+  int stopRecording() {
+    _checkDisposed();
+    final fn = _bindings?.stopRecording;
+    if (!isReady || fn == null) return 0;
+    try { return fn(_ctx!).toInt(); } catch (_) { return 0; }
+  }
+
+  bool isRecording() {
+    _checkDisposed();
+    final fn = _bindings?.isRecording;
+    if (!isReady || fn == null) return false;
+    try { return fn(_ctx!); } catch (_) { return false; }
+  }
+
+  int exportLabels(String path, int format) {
+    _checkDisposed();
+    final fn = _bindings?.exportLabels;
+    if (!isReady || fn == null) return -1;
+    final ptr = path.toNativeUtf8();
+    try { return fn(_ctx!, ptr, format); } catch (e) { return -1; } finally { calloc.free(ptr); }
+  }
+
   /// v1.1.0 (PLAN 3.11): Clear the speed-ramp curve of a clip.
   void clearSpeedCurve(int clipId) {
     _checkDisposed();

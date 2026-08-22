@@ -130,6 +130,27 @@ class _TimelinePanelState extends State<TimelinePanel> {
     _snapEngine = SnapEngine(mode: _snapMode);
   }
 
+  // v1.5.0 T3 (#10/#13): ruler toggles — double-tap = bookmark, long-press = guide.
+  void _toggleBookmarkAt(double dx, EditorController ctrl, double pxPerSec) {
+    final ms = (dx / pxPerSec * 1000).round();
+    final near = ctrl.bookmarks.where((b) => (b.timeMs - ms).abs() < 150).toList();
+    if (near.isNotEmpty) {
+      ctrl.removeBookmark(near.first.id);
+    } else {
+      ctrl.addBookmark(ms);
+    }
+  }
+
+  void _toggleGuideAt(double dx, EditorController ctrl, double pxPerSec) {
+    final ms = (dx / pxPerSec * 1000).round();
+    final near = ctrl.guideMs.where((g) => (g - ms).abs() < 150).toList();
+    if (near.isNotEmpty) {
+      ctrl.removeGuide(near.first);
+    } else {
+      ctrl.addGuide(ms);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ctrl = widget.controller;
@@ -218,12 +239,22 @@ class _TimelinePanelState extends State<TimelinePanel> {
                                 Container(
                                   height: _rulerHeight,
                                   color: AppTheme.surface,
-                                  child: CustomPaint(
-                                    size: Size(timelineWidth, _rulerHeight),
-                                    painter: TimelineRulerPainter(
-                                      pxPerSec: pxPerSec,
-                                      totalDurationSec: totalDurationSec,
-                                      snapEngine: _snapEngine,
+                                  child: GestureDetector(
+                                    // v1.5.0 T3: double-tap toggles a bookmark
+                                    // at that time; long-press toggles a guide.
+                                    onDoubleTapDown: (d) => _toggleBookmarkAt(d.localPosition.dx, ctrl, pxPerSec),
+                                    onLongPressStart: (d) => _toggleGuideAt(d.localPosition.dx, ctrl, pxPerSec),
+                                    child: CustomPaint(
+                                      size: Size(timelineWidth, _rulerHeight),
+                                      painter: TimelineRulerPainter(
+                                        pxPerSec: pxPerSec,
+                                        totalDurationSec: totalDurationSec,
+                                        snapEngine: _snapEngine,
+                                        bookmarks: ctrl.bookmarks
+                                            .map((b) => (b.timeMs, b.color))
+                                            .toList(),
+                                        guides: ctrl.guideMs,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -233,6 +264,16 @@ class _TimelinePanelState extends State<TimelinePanel> {
                                   child: _buildTrackLane(track, ctrl, pxPerSec),
                                 )),
                               ],
+                            ),
+
+                            // v1.5.0 T3 (#13): vertical guides across the lanes.
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: GuidesPainter(
+                                      guides: ctrl.guideMs, pxPerSec: pxPerSec),
+                                ),
+                              ),
                             ),
 
                             // Marquee selection rectangle
@@ -1043,6 +1084,23 @@ class _TimelinePanelState extends State<TimelinePanel> {
                           ),
                       ],
                     ),
+                    // v1.5.0 T3 (#3): keyframe lane strip at the bottom of the clip.
+                    if (clip.keyframes.isNotEmpty && widthPx > 16)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 1,
+                        height: 5,
+                        child: CustomPaint(
+                          painter: KeyframeLanePainter(
+                            keyframeTimesMs: [
+                              for (final k in clip.keyframes) k.timeMs,
+                            ],
+                            clipStartMs: clip.timelineStartMs,
+                            clipDurationMs: clip.durationMs,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -1178,12 +1236,84 @@ class _TrimHandle extends StatelessWidget {
 // Timeline Ruler Painter — v0.7.0 Enhanced
 // ============================================================
 
+/// v1.5.0 T3 (#3): keyframe diamonds along the bottom of a clip row.
+class KeyframeLanePainter extends CustomPainter {
+  final List<int> keyframeTimesMs;
+  final int clipStartMs;
+  final int clipDurationMs;
+
+  KeyframeLanePainter({
+    required this.keyframeTimesMs,
+    required this.clipStartMs,
+    required this.clipDurationMs,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = AppTheme.accent;
+    for (final ms in keyframeTimesMs) {
+      final t = (ms - clipStartMs) / clipDurationMs;
+      if (t < -0.01 || t > 1.01) continue;
+      final x = t * size.width;
+      final path = Path()
+        ..moveTo(x, 0)
+        ..lineTo(x + 3, 2.5)
+        ..lineTo(x, 5)
+        ..lineTo(x - 3, 2.5)
+        ..close();
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant KeyframeLanePainter oldDelegate) {
+    return oldDelegate.keyframeTimesMs != keyframeTimesMs ||
+        oldDelegate.clipDurationMs != clipDurationMs;
+  }
+}
+
+/// v1.5.0 T3 (#13): full-height vertical guide lines over the lanes.
+class GuidesPainter extends CustomPainter {
+  final List<int> guides;
+  final double pxPerSec;
+
+  GuidesPainter({required this.guides, required this.pxPerSec});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = AppTheme.accent.withValues(alpha: 0.45)
+      ..strokeWidth = 1.5;
+    for (final ms in guides) {
+      final x = ms / 1000.0 * pxPerSec;
+      if (x < 0 || x > size.width) continue;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant GuidesPainter oldDelegate) {
+    return oldDelegate.guides != guides || oldDelegate.pxPerSec != pxPerSec;
+  }
+}
+
 class TimelineRulerPainter extends CustomPainter {
   final double pxPerSec;
   final double totalDurationSec;
   final SnapEngine? snapEngine;
 
-  TimelineRulerPainter({required this.pxPerSec, required this.totalDurationSec, this.snapEngine});
+  /// v1.5.0 T3 (#10): bookmark markers (timeMs, color) on the ruler.
+  final List<(int, int)> bookmarks;
+
+  /// v1.5.0 T3 (#13): vertical guide positions (timeMs).
+  final List<int> guides;
+
+  TimelineRulerPainter(
+      {required this.pxPerSec,
+      required this.totalDurationSec,
+      this.snapEngine,
+      this.bookmarks = const [],
+      this.guides = const []});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1192,6 +1322,31 @@ class TimelineRulerPainter extends CustomPainter {
       ..strokeWidth = 1.0;
 
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
+
+    // v1.5.0 T3 (#13): guides first (under the ticks).
+    for (final ms in guides) {
+      final x = ms / 1000.0 * pxPerSec;
+      if (x < 0 || x > size.width) continue;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height),
+          paint..color = AppTheme.accent.withValues(alpha: 0.35));
+    }
+
+    // v1.5.0 T3 (#10): bookmark markers (flag on the ruler).
+    for (final (ms, color) in bookmarks) {
+      final x = ms / 1000.0 * pxPerSec;
+      if (x < 0 || x > size.width) continue;
+      final flag = Paint()
+        ..color = Color(color).withValues(alpha: 0.9)
+        ..style = PaintingStyle.fill;
+      final path = Path()
+        ..moveTo(x - 4, 2)
+        ..lineTo(x + 4, 2)
+        ..lineTo(x + 4, 10)
+        ..lineTo(x, 8)
+        ..lineTo(x - 4, 10)
+        ..close();
+      canvas.drawPath(path, flag);
+    }
 
     int stepSec = 5;
     if (pxPerSec < 8) stepSec = 10;
@@ -1231,7 +1386,9 @@ class TimelineRulerPainter extends CustomPainter {
   bool shouldRepaint(covariant TimelineRulerPainter oldDelegate) {
     return oldDelegate.pxPerSec != pxPerSec ||
         oldDelegate.totalDurationSec != totalDurationSec ||
-        oldDelegate.snapEngine != snapEngine;
+        oldDelegate.snapEngine != snapEngine ||
+        oldDelegate.bookmarks != bookmarks ||
+        oldDelegate.guides != guides;
   }
 }
 

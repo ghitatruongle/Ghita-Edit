@@ -848,8 +848,103 @@ class _EditorViewState extends State<EditorView> {
         _showToast(_focusMode ? 'Focus mode on' : 'Focus mode off');
         return true;
       }
+      // v1.5.0 T3 (#18): action search palette (Ctrl+P).
+      if (key == LogicalKeyboardKey.keyP) {
+        _showActionSearch(context);
+        return true;
+      }
     }
     return _controller.handleKeyEvent(event);
+  }
+
+  // v1.5.0 T3 (#18): searchable action palette (Ctrl+P).
+  void _showActionSearch(BuildContext context) {
+    final ctrl = _controller;
+    final actions = <(String, IconData, VoidCallback)>[
+      ('Show Media Bin', Icons.add_rounded, () => setState(() => _mediaBinVisible = true)),
+      ('Undo', Icons.undo_rounded, ctrl.undo),
+      ('Redo', Icons.redo_rounded, ctrl.redo),
+      ('Copy Selected Clip', Icons.content_copy_rounded, ctrl.copySelectedClip),
+      ('Paste Clip', Icons.content_paste_rounded, ctrl.pasteClip),
+      ('Toggle Media Bin', Icons.video_library_rounded,
+          () => setState(() => _mediaBinVisible = !_mediaBinVisible)),
+      ('Toggle Inspector', Icons.tune_rounded,
+          () => setState(() => _inspectorVisible = !_inspectorVisible)),
+      ('Toggle Theme', Icons.wb_sunny_rounded, _toggleTheme),
+      ('Focus Mode', Icons.fullscreen_rounded,
+          () => setState(() => _focusMode = !_focusMode)),
+      ('Add Bookmark at Playhead', Icons.bookmark_add_rounded, () {
+        ctrl.addBookmark(ctrl.positionMs);
+      }),
+    ];
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        var query = '';
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            final results = actions
+                .where((a) =>
+                    a.$1.toLowerCase().contains(query.toLowerCase()))
+                .toList();
+            return AlertDialog(
+              backgroundColor: AppTheme.card,
+              title: const Text('Action Search',
+                  style: TextStyle(fontSize: 14, color: AppTheme.textMain)),
+              content: SizedBox(
+                width: 320,
+                height: 320,
+                child: Column(
+                  children: [
+                    TextField(
+                      autofocus: true,
+                      style: const TextStyle(
+                          color: AppTheme.textMain, fontSize: 12),
+                      decoration: InputDecoration(
+                        hintText: 'Type to filter actions…',
+                        hintStyle: const TextStyle(
+                            color: AppTheme.textMuted, fontSize: 12),
+                        prefixIcon: const Icon(Icons.search_rounded,
+                            size: 16, color: AppTheme.textMuted),
+                        isDense: true,
+                        border: OutlineInputBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusSm)),
+                      ),
+                      onChanged: (v) => setDialogState(() => query = v),
+                      onSubmitted: (_) {
+                        if (results.isNotEmpty) {
+                          Navigator.pop(dialogCtx);
+                          results.first.$3();
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: results.length,
+                        itemBuilder: (_, i) => ListTile(
+                          dense: true,
+                          leading: Icon(results[i].$2,
+                              size: 16, color: AppTheme.primaryLight),
+                          title: Text(results[i].$1,
+                              style: const TextStyle(
+                                  color: AppTheme.textMain, fontSize: 12)),
+                          onTap: () {
+                            Navigator.pop(dialogCtx);
+                            results[i].$3();
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   // v0.7.9: UX-04 — theme toggle with toast feedback (also used by the

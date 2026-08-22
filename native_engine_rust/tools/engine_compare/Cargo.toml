@@ -1,0 +1,9 @@
+[package]
+name = "engine_compare"
+version = "0.1.0"
+edition = "2021"
+description = "A/B harness — byte-level comparison of the Rust engine vs the C++ engine DLL (Track 1 acceptance: parity ≤ 1/255)"
+
+[dependencies]
+ghita_engine = { path = "../..", features = ["ffmpeg"] }
+libloading = "0.8"

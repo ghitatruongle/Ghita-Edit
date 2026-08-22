@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'dart:math';
 import '../../controllers/editor_controller.dart';
@@ -39,6 +40,26 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
   // v0.7.0: Mini controls visibility
   bool _showMiniControls = true;
   Timer? _miniControlsTimer;
+
+  // v1.5.0 T3 (#12): preview zoom & pan.
+  double _zoomScale = 1.0;
+  double _zoomStartScale = 1.0;
+  Offset _panOffset = Offset.zero;
+  Offset _panStartOffset = Offset.zero;
+
+  /// v1.5.0 T3 (#12): max pan offset so zoomed content never leaves the view.
+  Offset _maxPan(double w, double h) {
+    final dx = (_zoomScale - 1.0) * w / 2 + 20;
+    final dy = (_zoomScale - 1.0) * h / 2 + 20;
+    return Offset(dx, dy);
+  }
+
+  void _setZoom(double z) {
+    setState(() {
+      _zoomScale = z.clamp(1.0, 4.0);
+      if (_zoomScale <= 1.0) _panOffset = Offset.zero;
+    });
+  }
 
   @override
   void initState() {
@@ -209,10 +230,47 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
                         child: AspectRatio(
                           aspectRatio: 16 / 9,
-                          child: _currentFrameImage != null
-                              ? GestureDetector(
-                                  onTap: _resetMiniControlsTimer,
-                                  child: Stack(
+                        child: _currentFrameImage != null
+                            ? GestureDetector(
+                                onTap: _resetMiniControlsTimer,
+                                // v1.5.0 T3 (#12): wheel zoom + drag pan.
+                                onScaleStart: (d) {
+                                  _zoomStartScale = _zoomScale;
+                                  _panStartOffset = _panOffset;
+                                },
+                                onScaleUpdate: (d) {
+                                  final newScale =
+                                      (_zoomStartScale * d.scale).clamp(1.0, 4.0);
+                                  setState(() {
+                                    _zoomScale = newScale;
+                                    if (_zoomScale > 1.0) {
+                                      final maxPan = _maxPan(videoW, videoW * 9 / 16);
+                                      final p = _panStartOffset + d.focalPointDelta;
+                                      _panOffset = Offset(
+                                          p.dx.clamp(-maxPan.dx, maxPan.dx),
+                                          p.dy.clamp(-maxPan.dy, maxPan.dy));
+                                    } else {
+                                      _panOffset = Offset.zero;
+                                    }
+                                  });
+                                },
+                                child: Listener(
+                                  onPointerSignal: (e) {
+                                    if (e is PointerScrollEvent) {
+                                      final z = (_zoomScale *
+                                              (e.scrollDelta.dy < 0 ? 1.15 : 0.87))
+                                          .clamp(1.0, 4.0);
+                                      setState(() {
+                                        _zoomScale = z;
+                                        if (_zoomScale <= 1.0) _panOffset = Offset.zero;
+                                      });
+                                    }
+                                  },
+                                  child: Transform.translate(
+                                    offset: _panOffset,
+                                    child: Transform.scale(
+                                      scale: _zoomScale,
+                                      child: Stack(
                                     fit: StackFit.expand,
                                     children: [
                                       // v0.7.0: Split view
@@ -293,7 +351,10 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                                         ),
                                     ],
                                   ),
-                                )
+                                ),
+                              ),
+                            ),
+                          )
                               : Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
@@ -532,6 +593,10 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
                 }),
                 // v1.0.0: Crosshair toggle — previously the overlay existed but
                 // no button could turn it on (dead feature). Now it toggles.
+                // v1.5.0 T3 (#12): zoom in/out/fit.
+                _iconBtn(Icons.zoom_in_rounded, 'Zoom In', AppTheme.textMuted, () => _setZoom(_zoomScale * 1.25)),
+                _iconBtn(Icons.zoom_out_rounded, 'Zoom Out', AppTheme.textMuted, () => _setZoom(_zoomScale / 1.25)),
+                _iconBtn(Icons.fit_screen_rounded, 'Fit', _zoomScale > 1.0 ? AppTheme.primaryLight : AppTheme.textMuted, () => _setZoom(1.0)),
                 _iconBtn(_showCrosshair ? Icons.center_focus_strong_rounded : Icons.gps_fixed_rounded, 'Center Crosshair', _showCrosshair ? AppTheme.primaryLight : AppTheme.textMuted, () {
                   setState(() => _showCrosshair = !_showCrosshair);
                 }),

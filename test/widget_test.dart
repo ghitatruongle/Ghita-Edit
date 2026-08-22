@@ -358,7 +358,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('AudioDawPanel is honest: EQ note + real export button',
+    testWidgets('AudioDawPanel T4: DAW studio with effect chain + export',
         (tester) async {
       final controller = EditorController();
       addTearDown(controller.dispose);
@@ -374,8 +374,8 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.textContaining('EXPORT MASTERED AUDIO'), findsOneWidget);
-      expect(find.textContaining('EQ not wired yet'), findsWidgets);
+      expect(find.textContaining('AUDIO DAW STUDIO'), findsOneWidget);
+      expect(find.textContaining('Export MP3'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

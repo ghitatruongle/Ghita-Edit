@@ -1,0 +1,74 @@
+[package]
+name = "ghita_engine"
+version = "1.5.0"
+edition = "2021"
+description = "Rust port of the Ghita Edit native engine — drop-in C ABI for the Flutter FFI layer (Track 1: Rust Core)"
+
+# Version is mirrored from lib/src/core/version.dart — the CI
+# check-version-consistency gate reads the C++ banner + CMake; this crate's
+# version string is surfaced via ghita_engine_get_version().
+
+[lib]
+name = "ghita_engine"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Globalization"] }
+
+[features]
+default = []
+# T2 (Rust Media): real FFmpeg decode/encode + cpal audio preview.
+ffmpeg = ["dep:ffmpeg-sys-next", "dep:cpal", "dep:rubato", "dep:rustfft"]
+# T1-P5: multi-threaded tile rendering.
+parallel = ["dep:rayon"]
+# T1-P6: wgpu GPU compositor (Windows-first).
+gpu = ["dep:wgpu", "dep:pollster"]
+# T5-P1: SQLite project format + media library database.
+sqlite = ["dep:rusqlite"]
+# T5-P7: 32-bit float internal render pipeline (additive).
+f32_pipeline = []
+
+[dev-dependencies]
+serde_json = "1"
+
+[dependencies.rayon]
+version = "1.10"
+optional = true
+
+[dependencies.wgpu]
+version = "24"
+optional = true
+default-features = false
+features = ["dx12", "webgpu", "wgsl"]
+
+[dependencies.pollster]
+version = "0.4"
+optional = true
+
+[dependencies.ffmpeg-sys-next]
+version = "8"
+optional = true
+
+[dependencies.rustfft]
+version = "6"
+optional = true
+
+[dependencies.rubato]
+version = "0.15"
+optional = true
+
+[dependencies.cpal]
+version = "0.15"
+optional = true
+default-features = false
+
+[dependencies.rusqlite]
+version = "0.32"
+optional = true
+features = ["bundled"]
+
+[profile.release]
+lto = true
+codegen-units = 1

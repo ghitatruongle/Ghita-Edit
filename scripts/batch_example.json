@@ -1,0 +1,7 @@
+[
+  {"input": "project1.ghita", "output": "out1.mp4", "codec": "h264", "width": 1920, "height": 1080, "fps": 30},
+  {"input": "project2.ghita", "output": "out2.mp4", "codec": "h264", "width": 1280, "height": 720, "fps": 24}
+]
+
+</parameter>
+</invoke>

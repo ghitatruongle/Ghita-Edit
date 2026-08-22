@@ -1,0 +1,6 @@
+# Rust engine build environment.
+# FFMPEG_DIR feeds ffmpeg-sys-next's build script (link-time import libs from
+# the MinGW toolchain; runtime DLLs are the avcodec-62/... set beside the
+# engine, same as the C++ build). force=false → a caller-set FFMPEG_DIR wins.
+[env]
+FFMPEG_DIR = { value = "C:/msys64/mingw64", force = false }

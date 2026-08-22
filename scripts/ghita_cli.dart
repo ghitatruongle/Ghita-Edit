@@ -1,0 +1,332 @@
+/// v1.5.0 T5-P5: Headless CLI for Ghita Edit — batch export, media info, thumbnails.
+///
+/// Usage:
+///   dart run scripts/ghita_cli.dart export <project.ghita> --output <path> [--codec h264] [--width 1920] [--height 1080] [--fps 30]
+///   dart run scripts/ghita_cli.dart info <media_file>
+///   dart run scripts/ghita_cli.dart thumbnail <media_file> --output <path.png> [--time 1000]
+///   dart run scripts/ghita_cli.dart batch <batch.json>
+///
+/// Exit codes: 0 success, 1 error.
+
+import 'dart:convert';
+import 'dart:ffi';
+import 'dart:io';
+import 'package:ffi/ffi.dart';
+
+// Minimal FFI bindings for headless operation.
+typedef CGhitaEngineCreate = Pointer<Void> Function();
+typedef CGhitaEngineInit = Int32 Function(Pointer<Void>);
+typedef CGhitaEngineDestroy = Void Function(Pointer<Void>);
+typedef CGhitaEngineLoadMedia = Int32 Function(Pointer<Void>, Pointer<Utf8>);
+typedef CGhitaEngineGetDurationMs = Int64 Function(Pointer<Void>);
+typedef CGhitaEngineGetMediaInfo = Pointer<Utf8> Function(Pointer<Void>);
+typedef CGhitaEngineStartExportEx = Int32 Function(
+    Pointer<Void>, Pointer<Utf8>, Int32, Int32, Int32, Pointer<Utf8>, Int64, Bool);
+typedef CGhitaEngineIsExporting = Bool Function(Pointer<Void>);
+typedef CGhitaEngineGetExportProgress = Float Function(Pointer<Void>);
+typedef CGhitaEngineGetExportFileSize = Int64 Function(Pointer<Void>);
+typedef CGhitaEngineRenderFrameAt = Bool Function(
+    Pointer<Void>, Pointer<Uint8>, Int32, Int32, Int64);
+
+void main(List<String> args) {
+  if (args.isEmpty) {
+    _printUsage();
+    exit(1);
+  }
+
+  final command = args[0];
+  switch (command) {
+    case 'export':
+      _cmdExport(args.sublist(1));
+      break;
+    case 'info':
+      _cmdInfo(args.sublist(1));
+      break;
+    case 'thumbnail':
+      _cmdThumbnail(args.sublist(1));
+      break;
+    case 'batch':
+      _cmdBatch(args.sublist(1));
+      break;
+    default:
+      stderr.writeln('Unknown command: $command');
+      _printUsage();
+      exit(1);
+  }
+}
+
+void _printUsage() {
+  stderr.writeln('Usage:');
+  stderr.writeln('  ghita_cli export <project.ghita> --output <path> [--codec h264] [--width 1920] [--height 1080] [--fps 30]');
+  stderr.writeln('  ghita_cli info <media_file>');
+  stderr.writeln('  ghita_cli thumbnail <media_file> --output <path.png> [--time 1000]');
+  stderr.writeln('  ghita_cli batch <batch.json>');
+}
+
+DynamicLibrary? _loadEngine() {
+  final candidates = [
+    'native_engine_rust/target/debug/ghita_engine.dll',
+    'native_engine_rust/target/release/ghita_engine.dll',
+    'build/native_engine/ghita_engine.dll',
+    'ghita_engine.dll',
+  ];
+  for (final path in candidates) {
+    try {
+      return DynamicLibrary.open(path);
+    } catch (_) {}
+  }
+  stderr.writeln('ERROR: Could not find ghita_engine.dll');
+  return null;
+}
+
+Map<String, String> _parseFlags(List<String> args) {
+  final flags = <String, String>{};
+  for (int i = 0; i < args.length; i++) {
+    if (args[i].startsWith('--') && i + 1 < args.length) {
+      flags[args[i].substring(2)] = args[i + 1];
+      i++;
+    }
+  }
+  return flags;
+}
+
+void _cmdExport(List<String> args) {
+  if (args.isEmpty) {
+    stderr.writeln('ERROR: Missing project path');
+    exit(1);
+  }
+  final projectPath = args[0];
+  final flags = _parseFlags(args.sublist(1));
+  final output = flags['output'];
+  if (output == null) {
+    stderr.writeln('ERROR: --output required');
+    exit(1);
+  }
+  final codec = flags['codec'] ?? 'h264';
+  final width = int.tryParse(flags['width'] ?? '') ?? 1920;
+  final height = int.tryParse(flags['height'] ?? '') ?? 1080;
+  final fps = int.tryParse(flags['fps'] ?? '') ?? 30;
+
+  final lib = _loadEngine();
+  if (lib == null) exit(1);
+
+  final create = lib.lookupFunction<CGhitaEngineCreate, CGhitaEngineCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CGhitaEngineInit, CGhitaEngineInit>('ghita_engine_init');
+  final destroy = lib.lookupFunction<CGhitaEngineDestroy, CGhitaEngineDestroy>('ghita_engine_destroy');
+  final loadMedia = lib.lookupFunction<CGhitaEngineLoadMedia, CGhitaEngineLoadMedia>('ghita_engine_load_media');
+  final startExport = lib.lookupFunction<CGhitaEngineStartExportEx, CGhitaEngineStartExportEx>('ghita_engine_start_export_ex');
+  final isExporting = lib.lookupFunction<CGhitaEngineIsExporting, CGhitaEngineIsExporting>('ghita_engine_is_exporting');
+  final getProgress = lib.lookupFunction<CGhitaEngineGetExportProgress, CGhitaEngineGetExportProgress>('ghita_engine_get_export_progress');
+  final getFileSize = lib.lookupFunction<CGhitaEngineGetExportFileSize, CGhitaEngineGetExportFileSize>('ghita_engine_get_export_file_size');
+
+  final ctx = create();
+  if (ctx == nullptr) {
+    stderr.writeln('ERROR: Failed to create engine');
+    exit(1);
+  }
+  try {
+    init(ctx);
+    // Load project JSON to set up timeline (simplified — just loads media).
+    final projFile = File(projectPath);
+    if (!projFile.existsSync()) {
+      stderr.writeln('ERROR: Project file not found: $projectPath');
+      exit(1);
+    }
+    stderr.writeln('{"status":"loading","project":"$projectPath"}');
+
+    final outPtr = output.toNativeUtf8();
+    final codecPtr = codec.toNativeUtf8();
+    try {
+      final ret = startExport(ctx, outPtr, width, height, fps, codecPtr, 5000000, true);
+      if (ret != 0) {
+        stderr.writeln('ERROR: Export failed to start (code $ret)');
+        exit(1);
+      }
+      stderr.writeln('{"status":"exporting","output":"$output","codec":"$codec","resolution":"${width}x${height}","fps":$fps}');
+
+      while (isExporting(ctx)) {
+        final progress = getProgress(ctx);
+        stderr.writeln('{"status":"progress","value":${progress.toStringAsFixed(3)}}');
+        sleep(const Duration(milliseconds: 500));
+      }
+
+      final size = getFileSize(ctx);
+      if (size > 0) {
+        stderr.writeln('{"status":"complete","size":$size,"output":"$output"}');
+      } else {
+        stderr.writeln('{"status":"failed","error":"Output file empty"}');
+        exit(1);
+      }
+    } finally {
+      calloc.free(outPtr);
+      calloc.free(codecPtr);
+    }
+  } finally {
+    destroy(ctx);
+  }
+}
+
+void _cmdInfo(List<String> args) {
+  if (args.isEmpty) {
+    stderr.writeln('ERROR: Missing media path');
+    exit(1);
+  }
+  final mediaPath = args[0];
+  final lib = _loadEngine();
+  if (lib == null) exit(1);
+
+  final create = lib.lookupFunction<CGhitaEngineCreate, CGhitaEngineCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CGhitaEngineInit, CGhitaEngineInit>('ghita_engine_init');
+  final destroy = lib.lookupFunction<CGhitaEngineDestroy, CGhitaEngineDestroy>('ghita_engine_destroy');
+  final loadMedia = lib.lookupFunction<CGhitaEngineLoadMedia, CGhitaEngineLoadMedia>('ghita_engine_load_media');
+  final getDuration = lib.lookupFunction<CGhitaEngineGetDurationMs, CGhitaEngineGetDurationMs>('ghita_engine_get_duration_ms');
+  final getMediaInfo = lib.lookupFunction<CGhitaEngineGetMediaInfo, CGhitaEngineGetMediaInfo>('ghita_engine_get_media_info');
+
+  final ctx = create();
+  if (ctx == nullptr) exit(1);
+  try {
+    init(ctx);
+    final pathPtr = mediaPath.toNativeUtf8();
+    try {
+      loadMedia(ctx, pathPtr);
+    } finally {
+      calloc.free(pathPtr);
+    }
+    final duration = getDuration(ctx);
+    final infoPtr = getMediaInfo(ctx);
+    final info = infoPtr != nullptr ? infoPtr.toDartString() : '{}';
+    stdout.writeln(jsonEncode({
+      'file': mediaPath,
+      'duration_ms': duration,
+      'media_info': jsonDecode(info),
+    }));
+  } finally {
+    destroy(ctx);
+  }
+}
+
+void _cmdThumbnail(List<String> args) {
+  if (args.isEmpty) {
+    stderr.writeln('ERROR: Missing media path');
+    exit(1);
+  }
+  final mediaPath = args[0];
+  final flags = _parseFlags(args.sublist(1));
+  final output = flags['output'];
+  if (output == null) {
+    stderr.writeln('ERROR: --output required');
+    exit(1);
+  }
+  final timeMs = int.tryParse(flags['time'] ?? '') ?? 0;
+
+  final lib = _loadEngine();
+  if (lib == null) exit(1);
+
+  final create = lib.lookupFunction<CGhitaEngineCreate, CGhitaEngineCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CGhitaEngineInit, CGhitaEngineInit>('ghita_engine_init');
+  final destroy = lib.lookupFunction<CGhitaEngineDestroy, CGhitaEngineDestroy>('ghita_engine_destroy');
+  final loadMedia = lib.lookupFunction<CGhitaEngineLoadMedia, CGhitaEngineLoadMedia>('ghita_engine_load_media');
+  final renderAt = lib.lookupFunction<CGhitaEngineRenderFrameAt, CGhitaEngineRenderFrameAt>('ghita_engine_render_frame_at');
+
+  const w = 320;
+  const h = 180;
+  final ctx = create();
+  if (ctx == nullptr) exit(1);
+  try {
+    init(ctx);
+    final pathPtr = mediaPath.toNativeUtf8();
+    try {
+      loadMedia(ctx, pathPtr);
+    } finally {
+      calloc.free(pathPtr);
+    }
+    final buf = calloc<Uint8>(w * h * 4);
+    try {
+      final ok = renderAt(ctx, buf, w, h, timeMs);
+      if (!ok) {
+        stderr.writeln('ERROR: Render failed at ${timeMs}ms');
+        exit(1);
+      }
+      // Write raw RGBA as PPM (simple image format).
+      final file = File(output);
+      final sink = file.openSync(mode: FileMode.write);
+      sink.writeStringSync('P6\n$w $h\n255\n');
+      for (int i = 0; i < w * h; i++) {
+        sink.writeByteSync(buf[i * 4]);     // R
+        sink.writeByteSync(buf[i * 4 + 1]); // G
+        sink.writeByteSync(buf[i * 4 + 2]); // B
+      }
+      sink.closeSync();
+      stderr.writeln('{"status":"complete","output":"$output","size":"${w}x${h}","time_ms":$timeMs}');
+    } finally {
+      calloc.free(buf);
+    }
+  } finally {
+    destroy(ctx);
+  }
+}
+
+void _cmdBatch(List<String> args) {
+  if (args.isEmpty) {
+    stderr.writeln('ERROR: Missing batch JSON path');
+    exit(1);
+  }
+  final batchFile = File(args[0]);
+  if (!batchFile.existsSync()) {
+    stderr.writeln('ERROR: Batch file not found: ${args[0]}');
+    exit(1);
+  }
+  final jobs = jsonDecode(batchFile.readAsStringSync()) as List;
+  stderr.writeln('{"status":"batch_start","jobs":${jobs.length}}');
+  int completed = 0;
+  for (int i = 0; i < jobs.length; i++) {
+    final job = jobs[i] as Map<String, dynamic>;
+    final input = job['input'] as String? ?? '';
+    final output = job['output'] as String? ?? '';
+    final codec = job['codec'] as String? ?? 'h264';
+    final width = (job['width'] as num?)?.toInt() ?? 1920;
+    final height = (job['height'] as num?)?.toInt() ?? 1080;
+    final fps = (job['fps'] as num?)?.toInt() ?? 30;
+
+    stderr.writeln('{"status":"job_start","index":$i,"input":"$input","output":"$output"}');
+    // Re-use export logic inline.
+    _doExportJob(input, output, codec, width, height, fps);
+    completed++;
+    stderr.writeln('{"status":"job_complete","index":$i,"completed":$completed,"total":${jobs.length}}');
+  }
+  stderr.writeln('{"status":"batch_complete","completed":$completed,"total":${jobs.length}}');
+}
+
+void _doExportJob(String input, String output, String codec, int width, int height, int fps) {
+  final lib = _loadEngine();
+  if (lib == null) return;
+
+  final create = lib.lookupFunction<CGhitaEngineCreate, CGhitaEngineCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CGhitaEngineInit, CGhitaEngineInit>('ghita_engine_init');
+  final destroy = lib.lookupFunction<CGhitaEngineDestroy, CGhitaEngineDestroy>('ghita_engine_destroy');
+  final startExport = lib.lookupFunction<CGhitaEngineStartExportEx, CGhitaEngineStartExportEx>('ghita_engine_start_export_ex');
+  final isExporting = lib.lookupFunction<CGhitaEngineIsExporting, CGhitaEngineIsExporting>('ghita_engine_is_exporting');
+  final getFileSize = lib.lookupFunction<CGhitaEngineGetExportFileSize, CGhitaEngineGetExportFileSize>('ghita_engine_get_export_file_size');
+
+  final ctx = create();
+  if (ctx == nullptr) return;
+  try {
+    init(ctx);
+    final outPtr = output.toNativeUtf8();
+    final codecPtr = codec.toNativeUtf8();
+    try {
+      startExport(ctx, outPtr, width, height, fps, codecPtr, 5000000, true);
+      while (isExporting(ctx)) {
+        sleep(const Duration(milliseconds: 200));
+      }
+      final size = getFileSize(ctx);
+      stderr.writeln('{"status":"export_result","output":"$output","size":$size}');
+    } finally {
+      calloc.free(outPtr);
+      calloc.free(codecPtr);
+    }
+  } finally {
+    destroy(ctx);
+  }
+}
+

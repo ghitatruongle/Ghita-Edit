@@ -68,6 +68,17 @@ class EditorController extends ChangeNotifier {
   Clip? _clipboardClip;
   bool get hasClipboard => _clipboardClip != null;
 
+  // v1.5.0 T3 (#10): ruler bookmarks (mirrored to the engine).
+  final List<BookmarkModel> bookmarks = [];
+
+  // v1.5.0 T3 (#13): vertical guides on the timeline (ms).
+  final List<int> guideMs = [];
+
+  // v1.5.0 T3 (#9): canvas background state (0 solid, 1 gradient, 2 blur).
+  int canvasBgKind = 0;
+  int canvasBgColor = 0xFF000000;
+  int canvasBgColor2 = 0xFF000000;
+
   // --- Project Accessors ---
   List<Track> get tracks => project.tracks;
   Clip? get selectedClip => project.selectedClip;
@@ -288,6 +299,14 @@ class EditorController extends ChangeNotifier {
           engine.setClipFilter(nativeId, clip.filterType, clip.filterIntensity);
           engine.setClipTransition(
               nativeId, clip.transitionType, clip.transitionDurationMs);
+          // v1.5.0 T3: blend mode, geometric mask, maintain-pitch, font family.
+          engine.setClipBlendMode(nativeId, clip.blendMode);
+          engine.setClipMask(
+              nativeId, clip.maskType, clip.maskFeather, clip.maskStroke);
+          engine.setClipMaintainPitch(nativeId, clip.maintainPitch);
+          if (clip.textFont.isNotEmpty) {
+            engine.setClipFont(nativeId, clip.textFont);
+          }
           engine.setClipColorCorrection(
             clipId: nativeId,
             exposure: clip.colorExposure,
@@ -923,18 +942,205 @@ class EditorController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ========== UNDO / REDO ==========
+  // ========== v1.5.0 T3: VIDEO FEATURES ==========
 
-  // v1.1.0 (PLAN 3.11): Set a clip's speed-ramp curve — undoable via
-  // ChangeSpeedCurveCommand; the command listener re-syncs the engine.
-  void setClipSpeedCurve(String clipId, List<SpeedRampPoint> curve) {
+  /// Simple model mutation helper: find clip by id, apply, re-sync engine.
+  void _updateClip(String clipId, Clip Function(Clip) mutate) {
     if (_disposed) return;
-    commandHistory.execute(
-      ChangeSpeedCurveCommand(clipId: clipId, newCurve: curve),
-      project,
-    );
+    for (final track in project.tracks) {
+      final idx = track.clips.indexWhere((c) => c.id == clipId);
+      if (idx >= 0) {
+        track.clips[idx] = mutate(track.clips[idx]);
+        _markEngineSync();
+        notifyListeners();
+        return;
+      }
+    }
+  }
+
+  /// T3 (#4): blend mode — 0 Normal, 1 Multiply, 2 Screen, 3 Overlay, 4 Add.
+  void setClipBlendMode(String clipId, int mode) {
+    _updateClip(clipId, (c) => c.copyWith(blendMode: mode.clamp(0, 4)));
+  }
+
+  /// T3 (#5): geometric mask (0 none … 6 cinematic bars) + feather/stroke.
+  void setClipMask(String clipId,
+      {int maskType = 0, double feather = 0.0, double stroke = 0.0}) {
+    _updateClip(
+        clipId,
+        (c) => c.copyWith(
+            maskType: maskType.clamp(0, 6),
+            maskFeather: feather.clamp(0.0, 1.0),
+            maskStroke: stroke.clamp(0.0, 1.0)));
+  }
+
+  /// T3 (#7): pitch-preserving speed.
+  void setClipMaintainPitch(String clipId, bool enabled) {
+    _updateClip(clipId, (c) => c.copyWith(maintainPitch: enabled));
+  }
+
+  /// T3 (#8): text clip font family.
+  void setClipFontFamily(String clipId, String family) {
+    _updateClip(clipId, (c) => c.copyWith(textFont: family));
+  }
+
+  /// T3 (#1): insert/replace a keyframe on a clip (model + engine sync).
+  void upsertKeyframe(String clipId, KeyframeData kf) {
+    if (_disposed) return;
+    _updateClip(clipId, (c) {
+      final kfs = List<KeyframeData>.of(c.keyframes);
+      kfs.removeWhere((k) => k.timeMs == kf.timeMs && k.property == kf.property);
+      kfs.add(kf);
+      kfs.sort((a, b) {
+        if (a.timeMs != b.timeMs) return a.timeMs.compareTo(b.timeMs);
+        return a.property.compareTo(b.property);
+      });
+      return c.copyWith(keyframes: kfs);
+    });
+    final nativeId = nativeClipIdFor(clipId);
+    if (nativeId != null) {
+      _engine.addClipKeyframeEx(nativeId, kf.timeMs, kf.value, kf.property,
+          kf.interpolation, kf.cp1x, kf.cp1y, kf.cp2x, kf.cp2y);
+    }
+  }
+
+  /// T3 (#1): remove a keyframe (timeMs + property) from a clip.
+  void removeKeyframe(String clipId, int timeMs, int property) {
+    if (_disposed) return;
+    _updateClip(clipId, (c) => c.copyWith(
+        keyframes: c.keyframes
+            .where((k) => !(k.timeMs == timeMs && k.property == property))
+            .toList()));
+  }
+
+  /// T3 (#11): parse an .srt/.vtt file into text clips (model) and mirror
+  /// them into the engine; returns the number of cues imported.
+  int importTranscriptFromFile(String path, {int trackIndex = 0}) {
+    if (_disposed) return 0;
+    final data = File(path).readAsStringSync();
+    final cues = _parseTranscript(data);
+    if (cues.isEmpty) return 0;
+    for (final (start, dur, text) in cues) {
+      final clip = Clip(
+        id: Clip.nextId(),
+        sourceFilePath: '',
+        displayName: text.length > 18 ? '${text.substring(0, 15)}...' : text,
+        timelineStartMs: start,
+        durationMs: dur,
+        type: ClipType.text,
+        textContent: text,
+        textFontSize: 42,
+      );
+      project.tracks[trackIndex.clamp(0, project.tracks.length - 1)].clips
+          .add(clip);
+    }
+    _engine.importTranscript(path, trackIndex);
+    _markEngineSync();
+    notifyListeners();
+    return cues.length;
+  }
+
+  /// T3 (#11): minimal SRT/VTT parser — (startMs, durationMs, text).
+  List<(int, int, String)> _parseTranscript(String data) {
+    final cues = <(int, int, String)>[];
+    for (final block in data.split('\n\n')) {
+      final lines = block.split('\n');
+      String? timing;
+      final text = <String>[];
+      for (final line in lines) {
+        if (line.contains('-->')) {
+          timing = line;
+        } else if (line.trim().isNotEmpty && !RegExp(r'^\d+$').hasMatch(line.trim())) {
+          text.add(line.trim());
+        }
+      }
+      if (timing == null || text.isEmpty) continue;
+      final m = RegExp(r'([\d:.]+)\s*-->\s*([\d:.]+)').firstMatch(timing);
+      if (m == null) continue;
+      final start = _parseTimestamp(m.group(1)!);
+      final end = _parseTimestamp(m.group(2)!);
+      if (start >= 0 && end > start) {
+        cues.add((start, end - start, text.join(' ')));
+      }
+    }
+    return cues;
+  }
+
+  int _parseTimestamp(String t) {
+    final parts = t.split(':');
+    if (parts.isEmpty) return -1;
+    var ms = 0.0;
+    for (final p in parts) {
+      ms = ms * 60 + (double.tryParse(p) ?? 0);
+    }
+    return (ms * 1000).round();
+  }
+
+  /// T3 (#2): copy all keyframes from [srcClip] onto [dstClip] (both sides).
+  void copyKeyframes(String srcClip, String dstClip) {
+    if (_disposed) return;
+    Clip? src;
+    for (final track in project.tracks) {
+      for (final c in track.clips) {
+        if (c.id == srcClip) src = c;
+      }
+    }
+    if (src == null) return;
+    _updateClip(dstClip,
+        (c) => c.copyWith(keyframes: List.of(src!.keyframes)..sort((a, b) {
+              if (a.timeMs != b.timeMs) return a.timeMs.compareTo(b.timeMs);
+              return a.property.compareTo(b.property);
+            })));
+    final srcNative = nativeClipIdFor(srcClip);
+    final dstNative = nativeClipIdFor(dstClip);
+    if (srcNative != null && dstNative != null) {
+      _engine.copyKeyframes(srcNative, dstNative);
+    }
+  }
+
+  /// T3 (#9): canvas background — kind 0 solid, 1 gradient, 2 blur.
+  void setCanvasBackground(int kind, int color, {int color2 = 0xFF000000}) {
+    if (_disposed) return;
+    canvasBgKind = kind.clamp(0, 2);
+    canvasBgColor = color;
+    canvasBgColor2 = color2;
+    _engine.setCanvasBackground(canvasBgKind, canvasBgColor, canvasBgColor2);
+    _markEngineSync();
     notifyListeners();
   }
+
+  /// T3 (#10): bookmark at a timeline position (marker on the ruler).
+  void addBookmark(int timeMs, {int color = 0xFFFFC107, String note = ''}) {
+    if (_disposed) return;
+    final id = _engine.addBookmark(timeMs, color, note);
+    if (id < 0) return;
+    bookmarks.add(BookmarkModel(
+        id: id, timeMs: timeMs, color: color, note: note));
+    bookmarks.sort((a, b) => a.timeMs.compareTo(b.timeMs));
+    notifyListeners();
+  }
+
+  void removeBookmark(int id) {
+    if (_disposed) return;
+    _engine.removeBookmark(id);
+    bookmarks.removeWhere((b) => b.id == id);
+    notifyListeners();
+  }
+
+  /// T3 (#13): vertical guides (timeline ms).
+  void addGuide(int ms) {
+    if (_disposed) return;
+    guideMs.add(ms);
+    notifyListeners();
+  }
+
+  void removeGuide(int ms) {
+    if (_disposed) return;
+    guideMs.remove(ms);
+    notifyListeners();
+  }
+
+  // ========== UNDO / REDO ==========
 
   // v1.1.0 (PLAN 3.4): Set a clip's picture-in-picture geometry — undoable
   // (one entry per drag gesture via coalescing).
@@ -955,6 +1161,17 @@ class EditorController extends ChangeNotifier {
         newRotation: rotation,
         gestureId: _propertyGestureCounter,
       ),
+      project,
+    );
+    notifyListeners();
+  }
+
+  // v1.1.0 (PLAN 3.11): Set a clip's speed-ramp curve — undoable via
+  // ChangeSpeedCurveCommand; the command listener re-syncs the engine.
+  void setClipSpeedCurve(String clipId, List<SpeedRampPoint> curve) {
+    if (_disposed) return;
+    commandHistory.execute(
+      ChangeSpeedCurveCommand(clipId: clipId, newCurve: curve),
       project,
     );
     notifyListeners();
@@ -1288,3 +1505,13 @@ class EditorController extends ChangeNotifier {
   }
 }
 
+/// v1.5.0 T3 (#10): ruler bookmark (id mirrors the native engine id).
+class BookmarkModel {
+  BookmarkModel(
+      {required this.id, required this.timeMs, required this.color, required this.note});
+
+  final int id;
+  int timeMs;
+  int color;
+  String note;
+}

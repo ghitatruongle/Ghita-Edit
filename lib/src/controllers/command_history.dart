@@ -805,14 +805,31 @@ class RemoveTrackCommand extends EditCommand {
   }
 }
 
+/// Snapshot entry for compaction-based undo.
+class _SnapshotEntry {
+  final String projectJson;
+  final DateTime timestamp;
+  _SnapshotEntry(this.projectJson, this.timestamp);
+}
+
 /// Manages undo/redo history with a fixed capacity.
+/// v1.5.0 T5-P2: Expanded from 100 to 500 entries with periodic snapshot
+/// compaction. Every [snapshotInterval] non-coalesced commands, the current
+/// project state is serialized and older commands before the snapshot are
+/// pruned, keeping memory bounded while preserving deep undo depth.
 class CommandHistory extends ChangeNotifier {
   final List<EditCommand> _undoStack = [];
   final List<EditCommand> _redoStack = [];
   final int maxHistory;
   bool _disposed = false;
 
-  CommandHistory({this.maxHistory = 100});
+  /// Snapshot compaction interval (0 = disabled).
+  final int snapshotInterval;
+  int _commandsSinceSnapshot = 0;
+  final List<_SnapshotEntry> _snapshots = [];
+  static const int _maxSnapshots = 10;
+
+  CommandHistory({this.maxHistory = 500, this.snapshotInterval = 50});
 
   bool get canUndo => _undoStack.isNotEmpty;
   bool get canRedo => _redoStack.isNotEmpty;
@@ -848,9 +865,65 @@ class CommandHistory extends ChangeNotifier {
       _undoStack.removeAt(0);
     }
 
+    // v1.5.0 T5-P2: Periodic snapshot compaction.
+    if (snapshotInterval > 0 && key == null) {
+      _commandsSinceSnapshot++;
+      if (_commandsSinceSnapshot >= snapshotInterval) {
+        _takeSnapshot(project);
+        _commandsSinceSnapshot = 0;
+      }
+    }
+
     project.markModified();
     notifyListeners();
   }
+
+  /// Capture a compressed project snapshot and prune old undo entries.
+  void _takeSnapshot(Project project) {
+    try {
+      final json = project.toJsonString();
+      _snapshots.add(_SnapshotEntry(json, DateTime.now()));
+      if (_snapshots.length > _maxSnapshots) {
+        _snapshots.removeAt(0);
+      }
+      // Prune undo entries older than the snapshot — they can be recovered
+      // by restoring the snapshot instead of replaying individual commands.
+      final pruneCount = (_undoStack.length * 0.4).floor();
+      if (pruneCount > 0 && _undoStack.length > snapshotInterval) {
+        _undoStack.removeRange(0, pruneCount);
+      }
+    } catch (_) {
+      // Snapshot failure must never break the undo pipeline.
+    }
+  }
+
+  /// Restore the most recent snapshot into [project]. Returns true if a
+  /// snapshot was available and applied. Clears the undo/redo stacks since
+  /// the restored state may not align with the command history.
+  bool restoreLatestSnapshot(Project project) {
+    if (_snapshots.isEmpty) return false;
+    try {
+      final latest = _snapshots.last;
+      final restored = Project.fromJsonString(latest.projectJson);
+      project.tracks.clear();
+      for (final t in restored.tracks) {
+        project.addTrack(t);
+      }
+      project.name = restored.name;
+      project.outputWidth = restored.outputWidth;
+      project.outputHeight = restored.outputHeight;
+      project.outputFps = restored.outputFps;
+      _undoStack.clear();
+      _redoStack.clear();
+      project.markModified();
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  int get snapshotCount => _snapshots.length;
 
   /// Undo the last command.
   bool undo(Project project) {

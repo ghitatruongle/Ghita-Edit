@@ -191,3 +191,30 @@ jobs:
 
       - name: Run Native C++ Self Test
         run: ./native_engine/build/native_engine_test
+
+  rust-engine-test:
+    name: Rust Engine Test Suite
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install MSYS2 MinGW FFmpeg + Clang
+        uses: msys2/setup-msys2@v2
+        with:
+          install: mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-clang
+
+      - name: Run cargo test (default features)
+        working-directory: native_engine_rust
+        env:
+          LIBCLANG_PATH: C:/msys64/mingw64/bin
+        run: cargo test
+
+      - name: Run cargo test (all features)
+        working-directory: native_engine_rust
+        env:
+          LIBCLANG_PATH: C:/msys64/mingw64/bin
+          FFMPEG_DIR: C:/msys64/mingw64
+        run: cargo test --features "ffmpeg,parallel,f32_pipeline"

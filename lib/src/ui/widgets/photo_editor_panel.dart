@@ -7,6 +7,8 @@ import 'package:file_picker/file_picker.dart';
 import '../../controllers/editor_controller.dart';
 import '../../models/clip.dart';
 import '../theme/app_theme.dart';
+import '../../ffi/native_bindings.dart';
+
 
 /// Photoshop-style Pro Photo & Graphic Editor Studio Panel v1.0.0.
 class PhotoEditorPanel extends StatefulWidget {
@@ -34,6 +36,14 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
   // v1.0.1: Track which clip the local slider values belong to so we can
   // reset them when a different clip is selected.
   String? _activeClipId;
+
+  // v1.5.0 T6-P6: Photo tools state.
+  String _selectionTool = 'none';
+  bool _cloneMode = false;
+  bool _healMode = false;
+  bool _brushMode = false;
+  String _filmSim = 'none';
+
 
   // v1.1.0 (PLAN 3.9): Render the selected clip's frame at its timeline
   // position (with filters/cc applied) into the canvas — the v1.0.0 canvas
@@ -155,6 +165,24 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
     }
   }
 
+
+  Widget _toolBtn(String label, IconData icon, bool active, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Tooltip(
+        message: label,
+        child: IconButton(
+          onPressed: onTap,
+          icon: Icon(icon, size: 18, color: active ? AppTheme.primary : AppTheme.textMuted),
+          style: IconButton.styleFrom(
+            backgroundColor: active ? AppTheme.primary.withValues(alpha: 0.15) : null,
+            padding: const EdgeInsets.all(6),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final clips = widget.controller.project.allClips;
@@ -247,6 +275,64 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
           ),
 
           // Main Studio Body
+          // v1.5.0 T6-P6: Photo Tools Toolbar
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: const BoxDecoration(
+              color: AppTheme.surface,
+              border: Border(bottom: BorderSide(color: AppTheme.divider)),
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  const Text('Tools:', style: TextStyle(color: AppTheme.textMuted, fontSize: 10, fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 6),
+                  _toolBtn('Rect', Icons.crop_square_outlined, _selectionTool == 'rect', () {
+                    setState(() => _selectionTool = _selectionTool == 'rect' ? 'none' : 'rect');
+                    try { GhitaNativeBindings.instance.setSelectionRect?.call(0, 0, 100, 100, 0); } catch (_) {}
+                  }),
+                  _toolBtn('Ellipse', Icons.circle_outlined, _selectionTool == 'ellipse', () {
+                    setState(() => _selectionTool = _selectionTool == 'ellipse' ? 'none' : 'ellipse');
+                    try { GhitaNativeBindings.instance.setSelectionEllipse?.call(50, 50, 40, 40, 0); } catch (_) {}
+                  }),
+                  _toolBtn('Lasso', Icons.gesture_outlined, _selectionTool == 'lasso', () {
+                    setState(() => _selectionTool = _selectionTool == 'lasso' ? 'none' : 'lasso');
+                  }),
+                  _toolBtn('Wand', Icons.auto_fix_high_outlined, _selectionTool == 'wand', () {
+                    setState(() => _selectionTool = _selectionTool == 'wand' ? 'none' : 'wand');
+                  }),
+                  const SizedBox(width: 8),
+                  const SizedBox(width: 1, height: 20, child: ColoredBox(color: AppTheme.divider)),
+                  const SizedBox(width: 8),
+                  _toolBtn('Clone', Icons.copy_outlined, _cloneMode, () => setState(() => _cloneMode = !_cloneMode)),
+                  _toolBtn('Heal', Icons.healing_outlined, _healMode, () => setState(() => _healMode = !_healMode)),
+                  _toolBtn('Brush', Icons.brush_outlined, _brushMode, () => setState(() => _brushMode = !_brushMode)),
+                  const SizedBox(width: 8),
+                  const SizedBox(width: 1, height: 20, child: ColoredBox(color: AppTheme.divider)),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    height: 28,
+                    child: OutlinedButton.icon(
+                      onPressed: () { try { GhitaNativeBindings.instance.clearSelection?.call(); } catch (_) {} },
+                      icon: const Icon(Icons.clear, size: 14),
+                      label: const Text('Clear', style: TextStyle(fontSize: 10)),
+                      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), side: const BorderSide(color: AppTheme.divider)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  DropdownButton<String>(
+                    value: _filmSim,
+                    dropdownColor: AppTheme.surface,
+                    style: const TextStyle(color: AppTheme.textMain, fontSize: 10),
+                    underline: const SizedBox.shrink(),
+                    items: ['none','Portra','Velvia','Cinematic'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                    onChanged: (v) => setState(() => _filmSim = v ?? 'none'),
+                  ),
+                ],
+              ),
+            ),
+          ),
           Expanded(
             child: Row(
               children: [
