@@ -6,12 +6,12 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::dsp::AudioEffect;
 use crate::engine::GhitaEngine;
-use crate::fft_tools::{apply_spectral_edits, rms_windows, spectrogram, SpectralEdit};
+use crate::fft_tools::{apply_spectral_edits, spectrogram, SpectralEdit};
 
 /// Recording modes (stable ABI).
 pub const REC_MODE_NORMAL: i32 = 0;
@@ -58,6 +58,11 @@ pub struct T4State {
     pub preview_pitch_preserve: AtomicBool,
     pub time_signature: Mutex<(i32, i32)>,
     pub recording: Mutex<RecordingState>,
+    /// Stop signal + join handle for the input-capture thread. The thread
+    /// derefs a raw pointer to the engine, so Drop MUST join it before the
+    /// engine is freed (UAF guard).
+    pub capture_stop: Arc<AtomicBool>,
+    pub capture_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl Default for T4State {
@@ -70,6 +75,8 @@ impl Default for T4State {
             preview_pitch_preserve: AtomicBool::new(false),
             time_signature: Mutex::new((4, 4)),
             recording: Mutex::new(RecordingState::default()),
+            capture_stop: Arc::new(AtomicBool::new(false)),
+            capture_thread: Mutex::new(None),
         }
     }
 }
@@ -87,6 +94,24 @@ impl GhitaEngine {
         let mut fx = self.t4.effects.lock().unwrap();
         fx.push(AudioEffect::new(k, p));
         (fx.len() - 1) as i32
+    }
+
+    /// v1.5.0-T5 (P6): live-update one parameter of a chain entry — lets the
+    /// DAW UI edit effect parameters without remove/re-add (which would
+    /// shift every later index).
+    pub fn set_audio_effect_param(&self, index: i32, param: i32, value: f32) -> i32 {
+        // Reject negatives explicitly — index.max(0) would silently alias
+        // them onto the FIRST chain entry.
+        if index < 0 || !(0..4).contains(&param) {
+            return -1;
+        }
+        let mut fx = self.t4.effects.lock().unwrap();
+        let i = index as usize;
+        if i >= fx.len() {
+            return -1;
+        }
+        fx[i].p[param as usize] = value;
+        0
     }
 
     pub fn remove_audio_effect(&self, index: i32) -> i32 {
@@ -164,27 +189,18 @@ impl GhitaEngine {
     }
 
     /// Per-window RMS of a track (#5/opt — correctly scaled waveform).
+    /// v1.5.0 perf: served from the engine's cached single-pass stats instead
+    /// of re-mixing up to 256 windows (each an FFmpeg seek) per call.
     pub fn get_timeline_rms(&self, out: &mut [f32], count: usize, track: i32) -> bool {
         if count == 0 || out.len() < count {
             return false;
         }
-        let duration = self.get_duration_ms();
-        if duration <= 0 {
+        let Some((_peaks, rms)) = self.cached_timeline_audio_stats(count) else {
             return false;
-        }
-        let bucket = (duration / count as i64).max(1);
-        let mut audio: Vec<f32> = Vec::new();
-        for i in 0..count.min(256) {
-            let start = i as i64 * bucket;
-            let end = ((start + bucket).min(duration)).max(start + 1);
-            let mut w = vec![0.0f32; 441];
-            let n = w.len();
-            let _ = self.mix_audio_window(start, end, &mut w, n, false);
-            let _ = track;
-            audio.extend_from_slice(&w);
-        }
-        rms_windows(&audio, &mut out[..count]);
-        true
+        };
+        let _ = track;
+        out[..count].copy_from_slice(&rms[..count]);
+        rms.iter().any(|&v| v > 0.0)
     }
 
     /// Tempo detection (#31) — BPM × 10 as an integer (0 on failure).
@@ -338,15 +354,24 @@ impl GhitaEngine {
 
     fn spawn_input_capture(&self) {
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        // Join any previous capture thread first — restarting a session while
+        // the old thread is still draining its 50 ms poll loop would leave two
+        // threads polling the same engine.
+        self.join_input_capture();
+        // One permanent stop flag per engine: the previous holder was joined
+        // above, so re-arming it here is race-free.
+        self.t4.capture_stop.store(false, Ordering::Relaxed);
+        let stop_for_thread = self.t4.capture_stop.clone();
         // SAFETY: capture only touches atomics/mutexes (never the decoder),
-        // and the session lifetime is bounded by stop_recording/destroy —
-        // the same contract as the export/audio preview threads. The
-        // Send/Sync wrapper is sound for that subset of operations.
+        // and the session lifetime is bounded by the stop flag + join in
+        // join_input_capture (called from stop paths and Drop) — the engine
+        // can never be freed under a live callback. The Send/Sync wrapper is
+        // sound for that subset of operations.
         struct CapPtr(usize);
         unsafe impl Send for CapPtr {}
         unsafe impl Sync for CapPtr {}
         let this = CapPtr(self as *const GhitaEngine as usize);
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             let this = this; // CapPtr(usize) — 'static
             let host = cpal::default_host();
             let device = match host.default_input_device() {
@@ -396,7 +421,13 @@ impl GhitaEngine {
             if let Some(s) = stream {
                 let _ = s.play();
                 loop {
+                    if stop_for_thread.load(Ordering::Relaxed) {
+                        break;
+                    }
                     std::thread::sleep(Duration::from_millis(50));
+                    if stop_for_thread.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let mut rec = unsafe { (&*(this.0 as *const GhitaEngine)).t4.recording.lock().unwrap() };
                     if !rec.active {
                         break;
@@ -413,6 +444,17 @@ impl GhitaEngine {
                 unsafe { (&*(this.0 as *const GhitaEngine)).t4.recording.lock().unwrap() }.active = false;
             }
         });
+        *self.t4.capture_thread.lock().unwrap() = Some(handle);
+    }
+
+    /// Signals the input-capture thread to stop and joins it. Safe to call
+    /// repeatedly; blocks at most one poll interval (~50 ms). MUST run before
+    /// the engine is freed — the capture thread holds a raw pointer to it.
+    pub fn join_input_capture(&self) {
+        self.t4.capture_stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.t4.capture_thread.lock().unwrap().take() {
+            let _ = h.join();
+        }
     }
 
     fn capture_input(&self, data: &[f32], src_rate: u32, src_ch: usize) {
@@ -449,6 +491,10 @@ impl GhitaEngine {
     /// Stops the session, writes a 44.1 kHz stereo PCM16 WAV; returns the
     /// recorded duration in ms (0 when nothing was captured).
     pub fn stop_recording(&self) -> i64 {
+        // Signal the capture thread; it exits within one poll tick. The join
+        // itself happens in join_input_capture (new session / Drop) so stop
+        // stays non-blocking for the UI.
+        self.t4.capture_stop.store(true, Ordering::Relaxed);
         let (path, samples) = {
             let mut rec = self.t4.recording.lock().unwrap();
             rec.active = false;
@@ -546,5 +592,29 @@ fn fmt_ts(ms: i64, vtt: bool) -> String {
         format!("{h:02}:{m:02}:{s:02}.{msec:03}")
     } else {
         format!("{h:02}:{m:02}:{s:02},{msec:03}")
+    }
+}
+
+#[cfg(all(test, feature = "ffmpeg"))]
+mod tests {
+    use super::*;
+
+    // v1.5.0-T5 (P6): live effect-parameter editing.
+    #[test]
+    fn set_audio_effect_param_updates_and_validates() {
+        let e = crate::engine::GhitaEngine::new();
+        assert!(e.initialize());
+        let idx = e.add_audio_effect(0, [0.5, 0.5, 0.5, 0.5]);
+        assert!(idx >= 0);
+        // Valid entry/param pair applies cleanly.
+        assert_eq!(e.set_audio_effect_param(idx, 2, 0.8), 0);
+        // The chain may already hold default entries from initialize() —
+        // probe past its end for the out-of-range index case.
+        let end = e.t4.effects.lock().unwrap().len() as i32;
+        assert_eq!(e.set_audio_effect_param(end + 100000, 0, 0.5), -1);
+        assert_eq!(e.set_audio_effect_param(idx, 7, 0.5), -1);
+        assert_eq!(e.set_audio_effect_param(-1, 0, 0.5), -1);
+        // The original entry still responds (chain intact).
+        assert_eq!(e.set_audio_effect_param(idx, 0, 0.25), 0);
     }
 }

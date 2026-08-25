@@ -1,6 +1,22 @@
 # Changelog — Ghita Edit
 
-## v1.5.0 (2026-08-22)
+## v1.5.0 (2026-08-23 — bản final sau T1–T6 ổn định hóa)
+
+> **Công bố trung thực so với bản beta 2026-08-22:** GIF export và GEGL graph
+> pipeline đã bị XÓA (GIF: encoder pal8 limitation; graph: dead code chưa
+> từng wire); ProRes giữ ở engine nhưng không có preset UI. GPU wgpu chỉ
+> active trong build có feature `gpu` (mặc định tắt để đảm bảo parity);
+> telemetry `ghita_engine_gpu_stats` luôn available. f32 pipeline bị xóa
+> (drift + zero caller). Chi tiết đầy đủ: `docs/plan_v1.5.0_final.md`.
+
+### T6 — Chất lượng & tài liệu (bản này)
+- Undo consistency: blend/mask/pitch/font/keyframes/sticker qua command
+  history (ClipStateCommand); multi-delete = 1 lệnh undo (CompositeCommand);
+  text edit coalesce theo phiên focus; transition dropdown đủ 9 loại thật
+- SQLite dual-backend round-trip test (engine-gated, chạy trên CI Windows)
+- rust_engine_abi.md bổ sung symbol T2/T5; CHANGELOG khớp thực tế
+
+## v1.5.0-beta (2026-08-22)
 
 ### Track 1 — Rust Core Engine
 - Drop-in Rust replacement for C++ native engine (native_engine_rust/)

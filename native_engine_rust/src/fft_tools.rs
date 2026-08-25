@@ -3,10 +3,37 @@
 //! (#32). Built on rustfft with a Hann window STFT over the mix pipeline.
 
 use rustfft::num_complex::Complex;
-use rustfft::{FftPlanner, FftDirection};
+use rustfft::{Fft, FftPlanner, FftDirection};
+use std::sync::{Arc, OnceLock};
 
 pub const FFT_SIZE: usize = 1024;
 pub const HOP_SIZE: usize = 256;
+
+// v1.5.0-T4 (P5): the Hann window and FFT plans are pure functions of
+// FFT_SIZE — build them ONCE per process instead of on every mix window
+// while spectral edits/spectrogram calls are active.
+fn cached_window() -> &'static [f32] {
+    static WINDOW: OnceLock<Vec<f32>> = OnceLock::new();
+    WINDOW.get_or_init(|| hann(FFT_SIZE))
+}
+
+fn forward_plan() -> Arc<dyn Fft<f32>> {
+    static PLAN: OnceLock<Arc<dyn Fft<f32>>> = OnceLock::new();
+    PLAN.get_or_init(|| {
+        let mut planner = FftPlanner::<f32>::new();
+        planner.plan_fft_forward(FFT_SIZE)
+    })
+    .clone()
+}
+
+fn inverse_plan() -> Arc<dyn Fft<f32>> {
+    static PLAN: OnceLock<Arc<dyn Fft<f32>>> = OnceLock::new();
+    PLAN.get_or_init(|| {
+        let mut planner = FftPlanner::<f32>::new();
+        planner.plan_fft_inverse(FFT_SIZE)
+    })
+    .clone()
+}
 
 /// Computes a magnitude spectrogram: [columns × (bins)] row-major, each bin
 /// normalized to 0..1 (log scale). Audio is interleaved stereo — mono-mixed.
@@ -16,9 +43,8 @@ pub fn spectrogram(audio: &[f32], columns: usize, bins: usize) -> Vec<f32> {
         return out;
     }
     let frames = audio.len() / 2;
-    let window = hann(FFT_SIZE);
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(FFT_SIZE);
+    let window = cached_window();
+    let fft = forward_plan();
     let mut buf = vec![Complex { re: 0.0, im: 0.0 }; FFT_SIZE];
 
     let total_hops = (frames.saturating_sub(FFT_SIZE)) / HOP_SIZE + 1;
@@ -75,23 +101,30 @@ pub fn apply_spectral_edits(
     if active.is_empty() {
         return;
     }
-    let window = hann(FFT_SIZE);
-    let mut planner = FftPlanner::<f32>::new();
-    let fwd = planner.plan_fft_forward(FFT_SIZE);
-    let inv = planner.plan_fft_inverse(FFT_SIZE);
+    let window = cached_window();
+    let fwd = forward_plan();
+    let inv = inverse_plan();
     let bin_hz = sample_rate / FFT_SIZE as f32;
+
+    // v1.5.0-T4 (P5): two reusable STFT scratch buffers (was a fresh
+    // Vec<Complex> per channel per 256-sample hop inside the mix loop).
+    let mut buf_ch0 = vec![Complex { re: 0.0, im: 0.0 }; FFT_SIZE];
+    let mut buf_ch1 = vec![Complex { re: 0.0, im: 0.0 }; FFT_SIZE];
 
     let mut pos = 0usize;
     while pos + FFT_SIZE <= frames {
         let hop_ms = start_ms + (pos as f64 * 1000.0 / sample_rate as f64) as i64;
         // Per-channel STFT.
         for ch in 0..2 {
-            let mut buf = vec![Complex { re: 0.0, im: 0.0 }; FFT_SIZE];
+            let buf = match ch {
+                0 => &mut buf_ch0,
+                _ => &mut buf_ch1,
+            };
             for i in 0..FFT_SIZE {
                 let s = audio[(pos + i) * 2 + ch] * window[i];
                 buf[i] = Complex { re: s, im: 0.0 };
             }
-            fwd.process(&mut buf);
+            fwd.process(buf);
             let mut changed = false;
             for b in 0..FFT_SIZE / 2 {
                 let hz = b as f32 * bin_hz;
@@ -113,7 +146,7 @@ pub fn apply_spectral_edits(
                 }
             }
             if changed {
-                inv.process(&mut buf);
+                inv.process(buf);
                 let norm = 1.0 / FFT_SIZE as f32;
                 for i in 0..FFT_SIZE {
                     let out = (buf[i].re * norm * window[i]).clamp(-1.0, 1.0);

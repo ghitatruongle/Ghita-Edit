@@ -107,6 +107,19 @@ class EditorController extends ChangeNotifier {
     _engine.addListener(_onEngineTick);
   }
 
+  /// v1.5.0-T3 (P1): O(1) playhead stream. During PLAYBACK the engine emits
+  /// position-only ticks (~30fps); those update THIS notifier and skip the
+  /// full [notifyListeners] that used to rebuild every panel 30×/s. Leaf
+  /// consumers (timeline playhead, mini-map tick, status timecode) listen to
+  /// this instead.
+  final ValueNotifier<int> playheadMs = ValueNotifier<int>(0);
+
+  // Last-tick snapshot for position-only discrimination.
+  int _tickPosMs = -1;
+  int _tickDurMs = -1;
+  bool _tickPlaying = false;
+  int _tickGen = -1;
+
   void _onEngineTick() {
     if (_disposed) return;
     // v1.0.2: Sync the controller playhead from the engine tick. Previously
@@ -114,8 +127,40 @@ class EditorController extends ChangeNotifier {
     // user manually seeked, so the timeline playhead appeared frozen while
     // the engine position advanced (verified: engine reached 9907ms while
     // controller.positionMs remained 0).
-    _positionMs = _engine.positionMs;
+    _applyEngineTickSample(_engine.positionMs, _engine.durationMs,
+        _engine.isPlaying, _engine.frameGeneration);
+  }
+
+  /// v1.5.0-T3 (P1): position-only discrimination. A playback tick that only
+  /// moves the playhead updates the O(1) notifier and SKIPS the full-app
+  /// notifyListeners; duration/playing-state/frame-generation changes still
+  /// wake every panel.
+  void _applyEngineTickSample(int pos, int durMs, bool playing, int gen) {
+    _positionMs = pos;
+    playheadMs.value = pos;
+    if (pos == _tickPosMs &&
+        durMs == _tickDurMs &&
+        playing == _tickPlaying &&
+        gen == _tickGen) {
+      return;
+    }
+    _tickPosMs = pos;
+    _tickDurMs = durMs;
+    _tickPlaying = playing;
+    _tickGen = gen;
     notifyListeners();
+  }
+
+  /// Test hook for [_applyEngineTickSample] (the engine is not drivable in
+  /// widget tests).
+  @visibleForTesting
+  void debugApplyEngineTick(
+      {required int posMs,
+      int durationMs = -1,
+      bool playing = false,
+      int generation = -1}) {
+    if (_disposed) return;
+    _applyEngineTickSample(posMs, durationMs, playing, generation);
   }
 
   /// Initialize the native engine asynchronously.
@@ -127,7 +172,12 @@ class EditorController extends ChangeNotifier {
 
       // Check if engine is actually ready or if we're in demo mode
       if (!_engine.isNativeLibraryLoaded || !isEngineReady) {
-        _statusMessage = 'Native engine unavailable (Demo Mode - limited features)';
+        // v1.5.0-T2 (P2): Demo Mode must say WHY — a silent fallback used to
+        // hide stale/corrupt DLL deployments.
+        final reason = _engine.loadError;
+        _statusMessage = reason != null
+            ? 'Demo Mode — $reason'
+            : 'Native engine unavailable (Demo Mode - limited features)';
         // v0.7.8: Autosave must run in every mode — losing a project in
         // Demo Mode is just as bad as with the engine present
         _startAutoSave();
@@ -182,6 +232,10 @@ class EditorController extends ChangeNotifier {
     final clamped = positionMs.clamp(0, durationMs);
     _positionMs = clamped;
     project.playheadMs = clamped;
+    // v1.5.0-T6 debug fix: sync the O(1) playhead notifier — without an
+    // engine tick following (demo mode / pre-init), the timeline playhead,
+    // mini-map tick and status timecode froze at the old position.
+    playheadMs.value = clamped;
     if (_engine.isReady) {
       _engine.seek(clamped);
     }
@@ -231,6 +285,13 @@ class EditorController extends ChangeNotifier {
   final Map<String, int> _nativeClipIdMap = {};
   int _nextNativeClipId = 1;
 
+  /// v1.5.0-T3 (P3): last-synced property fingerprints per dart clip id
+  /// (group → fingerprint) and per track index — lets the deferred resync
+  /// skip every FFI setter whose inputs did not change. Cleared together
+  /// with the id map on project switch.
+  final Map<String, Map<String, String>> _syncedSignatures = {};
+  final Map<int, String> _syncedTrackSigs = {};
+
   // v0.8.0: Deferred engine sync — commands fire it once per event-loop turn
   // (a slider drag executing 60 commands/s results in one sync per frame).
   bool _engineSyncDirty = false;
@@ -265,13 +326,18 @@ class EditorController extends ChangeNotifier {
       final wantedDartIds = <String>{};
       var trackIndex = 0;
       for (final track in project.tracks) {
-        engine.setTrackState(
-          trackIndex,
-          muted: track.isMuted,
-          visible: track.isVisible,
-          volume: track.volume,
-        );
-        for (final clip in track.clips) {
+        // v1.5.0-T3 (P3): per-track state fingerprint — skip redundant calls.
+        final trackSig = 'muted=${track.isMuted},visible=${track.isVisible},vol=${track.volume}';
+        if (_syncedTrackSigs[trackIndex] != trackSig) {
+          engine.setTrackState(
+            trackIndex,
+            muted: track.isMuted,
+            visible: track.isVisible,
+            volume: track.volume,
+          );
+          _syncedTrackSigs[trackIndex] = trackSig;
+        }
+        for (final clip in project.tracks[trackIndex].clips) {
           wantedDartIds.add(clip.id);
           final nativeId =
               _nativeClipIdMap.putIfAbsent(clip.id, () => _nextNativeClipId++);
@@ -284,41 +350,99 @@ class EditorController extends ChangeNotifier {
             // Overlay clips render as video (track index provides the layer).
             ClipType.overlay => 0,
           };
-          engine.upsertClip(
-            clipId: nativeId,
-            filePath: clip.sourceFilePath,
-            startMs: clip.timelineStartMs,
-            durationMs: clip.durationMs,
-            sourceInMs: clip.sourceInMs,
-            trackIndex: trackIndex,
-            kind: kind,
-            volume: clip.volume,
-            opacity: clip.opacity,
-            speed: clip.speed,
-          );
-          engine.setClipFilter(nativeId, clip.filterType, clip.filterIntensity);
-          engine.setClipTransition(
-              nativeId, clip.transitionType, clip.transitionDurationMs);
-          // v1.5.0 T3: blend mode, geometric mask, maintain-pitch, font family.
-          engine.setClipBlendMode(nativeId, clip.blendMode);
-          engine.setClipMask(
-              nativeId, clip.maskType, clip.maskFeather, clip.maskStroke);
-          engine.setClipMaintainPitch(nativeId, clip.maintainPitch);
-          if (clip.textFont.isNotEmpty) {
+
+          // v1.5.0-T3 (P3): per-group property fingerprints — issue ONLY the
+          // setters whose inputs changed since the previous sync. A single
+          // opacity slider tick used to re-issue ~13 FFI calls × EVERY clip
+          // (plus clear/re-add of all keyframes and speed points).
+          var kfSig = '';
+          for (final kf in clip.keyframes) {
+            kfSig += '${kf.timeMs},${kf.value},${kf.property},${kf.interpolation},${kf.cp1x},${kf.cp1y},${kf.cp2x},${kf.cp2y};';
+          }
+          var scSig = '';
+          for (final p in clip.speedCurve) {
+            scSig += '${p.t},${p.speed};';
+          }
+          final pipActive = clip.pipW < 1.0 || clip.pipH < 1.0 ||
+              clip.pipX != 0.0 || clip.pipY != 0.0 || clip.pipRotation != 0.0;
+          final sigs = <String, String>{
+            'geometry':
+                '${clip.sourceFilePath}|${clip.timelineStartMs}|${clip.durationMs}|${clip.sourceInMs}|$trackIndex|$kind|${clip.volume}|${clip.opacity}|${clip.speed}',
+            'filter': '${clip.filterType}|${clip.filterIntensity}',
+            'transition': '${clip.transitionType}|${clip.transitionDurationMs}',
+            'blend': '${clip.blendMode}',
+            'mask': '${clip.maskType}|${clip.maskFeather}|${clip.maskStroke}',
+            'pitch': '${clip.maintainPitch}',
+            // v1.5.0-T5 (P5): sticker transform group.
+            'sticker': (clip.type == ClipType.sticker)
+                ? '${clip.stickerScale}|${clip.stickerRotation}'
+                : '',
+            'font': clip.textFont,
+            'color':
+                '${clip.colorExposure}|${clip.colorContrast}|${clip.colorSaturation}|${clip.colorTemperature}|${clip.colorTint}|${clip.colorVibrance}|${clip.colorHighlights}|${clip.colorShadows}',
+            'text': (clip.type == ClipType.text || clip.type == ClipType.sticker)
+                ? '${clip.textContent}|${clip.textFontSize}|${clip.textColorValue}'
+                : '',
+            'keyframes': kfSig,
+            'pip': '$pipActive|${clip.pipX}|${clip.pipY}|${clip.pipW}|${clip.pipH}|${clip.pipRotation}',
+            'speedCurve': scSig,
+          };
+          final prev = _syncedSignatures[clip.id];
+          bool changed(String group) => prev == null || prev[group] != sigs[group];
+
+          if (changed('geometry')) {
+            engine.upsertClip(
+              clipId: nativeId,
+              filePath: clip.sourceFilePath,
+              startMs: clip.timelineStartMs,
+              durationMs: clip.durationMs,
+              sourceInMs: clip.sourceInMs,
+              trackIndex: trackIndex,
+              kind: kind,
+              volume: clip.volume,
+              opacity: clip.opacity,
+              speed: clip.speed,
+            );
+          }
+          if (changed('filter')) {
+            engine.setClipFilter(nativeId, clip.filterType, clip.filterIntensity);
+          }
+          if (changed('transition')) {
+            engine.setClipTransition(
+                nativeId, clip.transitionType, clip.transitionDurationMs);
+          }
+          if (changed('blend')) {
+            engine.setClipBlendMode(nativeId, clip.blendMode);
+          }
+          if (changed('mask')) {
+            engine.setClipMask(
+                nativeId, clip.maskType, clip.maskFeather, clip.maskStroke);
+          }
+          if (changed('pitch')) {
+            engine.setClipMaintainPitch(nativeId, clip.maintainPitch);
+          }
+          // v1.5.0-T5 (P5): sticker transform group.
+          if (changed('sticker') && clip.type == ClipType.sticker) {
+            engine.setClipStickerTransformNative(
+                nativeId, clip.stickerScale, clip.stickerRotation);
+          }
+          if (changed('font') && clip.textFont.isNotEmpty) {
             engine.setClipFont(nativeId, clip.textFont);
           }
-          engine.setClipColorCorrection(
-            clipId: nativeId,
-            exposure: clip.colorExposure,
-            contrast: clip.colorContrast,
-            saturation: clip.colorSaturation,
-            temperature: clip.colorTemperature,
-            tint: clip.colorTint,
-            vibrance: clip.colorVibrance,
-            highlights: clip.colorHighlights,
-            shadows: clip.colorShadows,
-          );
-          if (clip.type == ClipType.text || clip.type == ClipType.sticker) {
+          if (changed('color')) {
+            engine.setClipColorCorrection(
+              clipId: nativeId,
+              exposure: clip.colorExposure,
+              contrast: clip.colorContrast,
+              saturation: clip.colorSaturation,
+              temperature: clip.colorTemperature,
+              tint: clip.colorTint,
+              vibrance: clip.colorVibrance,
+              highlights: clip.colorHighlights,
+              shadows: clip.colorShadows,
+            );
+          }
+          if (changed('text') && sigs['text']!.isNotEmpty) {
             engine.setClipText(
               clipId: nativeId,
               text: clip.textContent,
@@ -326,34 +450,39 @@ class EditorController extends ChangeNotifier {
               colorArgb: clip.textColorValue,
             );
           }
-          // v1.1.0 (PLAN 3.1/3.4/3.11): Sync keyframes, PiP geometry and the
-          // speed-ramp curve. Replaces the whole set (clear then add) so a
-          // removed keyframe/point cannot linger in the engine.
-          engine.clearClipKeyframes(nativeId);
-          for (final kf in clip.keyframes) {
-            engine.addClipKeyframeEx(
-              nativeId,
-              kf.timeMs,
-              kf.value,
-              kf.property,
-              kf.interpolation,
-              kf.cp1x,
-              kf.cp1y,
-              kf.cp2x,
-              kf.cp2y,
-            );
+          // v1.1.0 (PLAN 3.1/3.4/3.11): Replaces the whole set (clear then
+          // add) so a removed keyframe/point cannot linger in the engine.
+          if (changed('keyframes')) {
+            engine.clearClipKeyframes(nativeId);
+            for (final kf in clip.keyframes) {
+              engine.addClipKeyframeEx(
+                nativeId,
+                kf.timeMs,
+                kf.value,
+                kf.property,
+                kf.interpolation,
+                kf.cp1x,
+                kf.cp1y,
+                kf.cp2x,
+                kf.cp2y,
+              );
+            }
           }
-          if (clip.pipW < 1.0 || clip.pipH < 1.0 || clip.pipX != 0.0 ||
-              clip.pipY != 0.0 || clip.pipRotation != 0.0) {
-            engine.setClipPip(nativeId, clip.pipX, clip.pipY, clip.pipW,
-                clip.pipH, clip.pipRotation);
-          } else {
-            engine.setClipPip(nativeId, 0.0, 0.0, 1.0, 1.0, 0.0);
+          if (changed('pip')) {
+            if (pipActive) {
+              engine.setClipPip(nativeId, clip.pipX, clip.pipY, clip.pipW,
+                  clip.pipH, clip.pipRotation);
+            } else {
+              engine.setClipPip(nativeId, 0.0, 0.0, 1.0, 1.0, 0.0);
+            }
           }
-          engine.clearSpeedCurve(nativeId);
-          for (final p in clip.speedCurve) {
-            engine.addSpeedRampPoint(nativeId, p.t, p.speed);
+          if (changed('speedCurve')) {
+            engine.clearSpeedCurve(nativeId);
+            for (final p in clip.speedCurve) {
+              engine.addSpeedRampPoint(nativeId, p.t, p.speed);
+            }
           }
+          _syncedSignatures[clip.id] = sigs;
         }
         trackIndex++;
       }
@@ -362,9 +491,11 @@ class EditorController extends ChangeNotifier {
       for (final dartId in _nativeClipIdMap.keys.toList()) {
         if (!wantedDartIds.contains(dartId)) {
           final nativeId = _nativeClipIdMap.remove(dartId);
+          _syncedSignatures.remove(dartId);
           if (nativeId != null) engine.removeClip(nativeId);
         }
       }
+      _syncedTrackSigs.removeWhere((index, _) => index >= trackIndex);
     } catch (e, st) {
       debugPrint('[EditorController] syncTimelineToEngine failed: $e\n$st');
     }
@@ -537,6 +668,7 @@ class EditorController extends ChangeNotifier {
     if (project.selectedClipCount > 1) {
       // Multi-delete: delete all selected clips
       final selectedClips = project.selectedClips.toList();
+      final cmds = <EditCommand>[];
       if (selectedClips.isEmpty) {
         _statusMessage = 'No clips selected';
         notifyListeners();
@@ -545,8 +677,14 @@ class EditorController extends ChangeNotifier {
       for (final sel in selectedClips) {
         final track = project.trackForClip(sel.id);
         if (track == null) continue;
-        final cmd = DeleteClipCommand(trackId: track.id, clip: sel);
-        commandHistory.execute(cmd, project);
+        cmds.add(DeleteClipCommand(trackId: track.id, clip: sel));
+      }
+      if (cmds.isNotEmpty) {
+        // v1.5.0-T6 (P3): ONE undo entry for the whole multi-delete.
+        commandHistory.execute(
+          CompositeCommand(cmds, label: 'Delete ${selectedClips.length} clips'),
+          project,
+        );
       }
       // v0.7.8: Drop selection ids of deleted clips (stale selection caused
       // "N selected" with nothing selectable and phantom highlights).
@@ -626,6 +764,9 @@ class EditorController extends ChangeNotifier {
   // v0.7.8: Per-clip scalar properties with undo/redo support (one undo entry
   // per drag gesture thanks to command coalescing keyed by _propertyGesture).
   int _propertyGestureCounter = 0;
+
+  /// v1.5.0-T6 (P3): current gesture id for coalescing keys.
+  int get propertyGestureCount => _propertyGestureCounter;
 
   /// Call on slider drag start — a fresh gesture id breaks the coalescing
   /// chain, so two separate drags produce two undo entries.
@@ -778,6 +919,7 @@ class EditorController extends ChangeNotifier {
     double? fontSize,
     int? colorValue,
     bool? bold,
+    int? gestureId,
     bool? italic,
     bool? underline,
     double? strokeWidth,
@@ -793,6 +935,7 @@ class EditorController extends ChangeNotifier {
     commandHistory.execute(
       ChangeClipTextCommand(
         clipId: clipId,
+        gestureId: gestureId,
         newContent: content ?? clip.textContent,
         newFont: font ?? clip.textFont,
         newFontSize: fontSize ?? clip.textFontSize,
@@ -944,30 +1087,62 @@ class EditorController extends ChangeNotifier {
 
   // ========== v1.5.0 T3: VIDEO FEATURES ==========
 
-  /// Simple model mutation helper: find clip by id, apply, re-sync engine.
-  void _updateClip(String clipId, Clip Function(Clip) mutate) {
+  // v1.5.0-T6 (P3): _updateClip (direct, non-undoable mutation) was removed
+  // — every property edit now routes through _updateClipUndoable.
+
+  /// v1.5.0-T6 (P3): undoable variant of the old direct mutation — captures
+  /// before/after whole-clip snapshots into a [ClipStateCommand] so blend/
+  /// mask/pitch/font/keyframes/sticker edits are Ctrl+Z-able like every other
+  /// edit. The deferred fingerprint resync pushes changes to the engine.
+  void _updateClipUndoable(String clipId, String field, Clip Function(Clip) mutate,
+      {int? gestureId}) {
     if (_disposed) return;
+    Clip? target;
     for (final track in project.tracks) {
-      final idx = track.clips.indexWhere((c) => c.id == clipId);
-      if (idx >= 0) {
-        track.clips[idx] = mutate(track.clips[idx]);
-        _markEngineSync();
-        notifyListeners();
-        return;
+      final i = track.clips.indexWhere((c) => c.id == clipId);
+      if (i >= 0) {
+        target = track.clips[i];
+        break;
       }
     }
+    if (target == null) return;
+    final before = target.copyWith();
+    final after = mutate(before.copyWith());
+    commandHistory.execute(
+      ClipStateCommand(
+          clipId: clipId,
+          field: field,
+          afterValue: after,
+          gestureId: gestureId)
+        ..preloadBefore(before),
+      project,
+    );
+    _markEngineSync();
+    _engine.invalidateFrameCache();
+    notifyListeners();
+  }
+
+  /// v1.5.0-T5 (P5): sticker transform — scale about center + rotation.
+  /// Undoable via the state command; the deferred resync also carries the
+  /// fields in upserts.
+  void setClipStickerTransform(String clipId, double scale, double rotationDeg,
+      {int? gestureId}) {
+    _updateClipUndoable(clipId, 'sticker', (c) => c.copyWith(
+        stickerScale: scale.clamp(0.05, 8.0),
+        stickerRotation: rotationDeg), gestureId: gestureId);
   }
 
   /// T3 (#4): blend mode — 0 Normal, 1 Multiply, 2 Screen, 3 Overlay, 4 Add.
   void setClipBlendMode(String clipId, int mode) {
-    _updateClip(clipId, (c) => c.copyWith(blendMode: mode.clamp(0, 4)));
+    _updateClipUndoable(clipId, 'blend', (c) => c.copyWith(blendMode: mode.clamp(0, 4)));
   }
 
   /// T3 (#5): geometric mask (0 none … 6 cinematic bars) + feather/stroke.
   void setClipMask(String clipId,
       {int maskType = 0, double feather = 0.0, double stroke = 0.0}) {
-    _updateClip(
+    _updateClipUndoable(
         clipId,
+        'mask',
         (c) => c.copyWith(
             maskType: maskType.clamp(0, 6),
             maskFeather: feather.clamp(0.0, 1.0),
@@ -976,18 +1151,17 @@ class EditorController extends ChangeNotifier {
 
   /// T3 (#7): pitch-preserving speed.
   void setClipMaintainPitch(String clipId, bool enabled) {
-    _updateClip(clipId, (c) => c.copyWith(maintainPitch: enabled));
+    _updateClipUndoable(clipId, 'pitch', (c) => c.copyWith(maintainPitch: enabled));
   }
 
   /// T3 (#8): text clip font family.
   void setClipFontFamily(String clipId, String family) {
-    _updateClip(clipId, (c) => c.copyWith(textFont: family));
+    _updateClipUndoable(clipId, 'font', (c) => c.copyWith(textFont: family));
   }
 
-  /// T3 (#1): insert/replace a keyframe on a clip (model + engine sync).
+  /// T3 (#1): insert/replace a keyframe on a clip (model + undoable state).
   void upsertKeyframe(String clipId, KeyframeData kf) {
-    if (_disposed) return;
-    _updateClip(clipId, (c) {
+    _updateClipUndoable(clipId, 'keyframes', (c) {
       final kfs = List<KeyframeData>.of(c.keyframes);
       kfs.removeWhere((k) => k.timeMs == kf.timeMs && k.property == kf.property);
       kfs.add(kf);
@@ -996,30 +1170,31 @@ class EditorController extends ChangeNotifier {
         return a.property.compareTo(b.property);
       });
       return c.copyWith(keyframes: kfs);
-    });
-    final nativeId = nativeClipIdFor(clipId);
-    if (nativeId != null) {
-      _engine.addClipKeyframeEx(nativeId, kf.timeMs, kf.value, kf.property,
-          kf.interpolation, kf.cp1x, kf.cp1y, kf.cp2x, kf.cp2y);
-    }
+    }, gestureId: _propertyGestureCounter);
   }
 
   /// T3 (#1): remove a keyframe (timeMs + property) from a clip.
   void removeKeyframe(String clipId, int timeMs, int property) {
-    if (_disposed) return;
-    _updateClip(clipId, (c) => c.copyWith(
+    _updateClipUndoable(clipId, 'keyframes', (c) => c.copyWith(
         keyframes: c.keyframes
             .where((k) => !(k.timeMs == timeMs && k.property == property))
-            .toList()));
+            .toList()), gestureId: _propertyGestureCounter);
   }
 
   /// T3 (#11): parse an .srt/.vtt file into text clips (model) and mirror
   /// them into the engine; returns the number of cues imported.
-  int importTranscriptFromFile(String path, {int trackIndex = 0}) {
+  int importTranscriptFromFile(String path, {int? trackIndex}) {
     if (_disposed) return 0;
     final data = File(path).readAsStringSync();
-    final cues = _parseTranscript(data);
+    // Normalize CRLF/CR — Windows-saved .srt/.vtt never contain a bare
+    // "\n\n" block separator, so without this only the first cue imports.
+    final normalized = data.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    final cues = _parseTranscript(normalized);
     if (cues.isEmpty) return 0;
+    // Captions belong on an overlay track by default, not on top of video.
+    final idx = (trackIndex ??
+            project.tracks.indexWhere((t) => t.type == TrackType.overlay))
+        .clamp(0, project.tracks.length - 1);
     for (final (start, dur, text) in cues) {
       final clip = Clip(
         id: Clip.nextId(),
@@ -1031,10 +1206,10 @@ class EditorController extends ChangeNotifier {
         textContent: text,
         textFontSize: 42,
       );
-      project.tracks[trackIndex.clamp(0, project.tracks.length - 1)].clips
-          .add(clip);
+      project.tracks[idx].clips.add(clip);
     }
-    _engine.importTranscript(path, trackIndex);
+    // No direct engine import here — _markEngineSync upserts the model clips
+    // below; calling both created every caption twice in the engine.
     _markEngineSync();
     notifyListeners();
     return cues.length;
@@ -1055,7 +1230,8 @@ class EditorController extends ChangeNotifier {
         }
       }
       if (timing == null || text.isEmpty) continue;
-      final m = RegExp(r'([\d:.]+)\s*-->\s*([\d:.]+)').firstMatch(timing);
+      // `[\d:,]` keeps SRT's comma milliseconds ("00:00:01,500") intact.
+      final m = RegExp(r'([\d:,]+)\s*-->\s*([\d:,]+)').firstMatch(timing);
       if (m == null) continue;
       final start = _parseTimestamp(m.group(1)!);
       final end = _parseTimestamp(m.group(2)!);
@@ -1067,7 +1243,7 @@ class EditorController extends ChangeNotifier {
   }
 
   int _parseTimestamp(String t) {
-    final parts = t.split(':');
+    final parts = t.replaceAll(',', '.').split(':');
     if (parts.isEmpty) return -1;
     var ms = 0.0;
     for (final p in parts) {
@@ -1086,16 +1262,14 @@ class EditorController extends ChangeNotifier {
       }
     }
     if (src == null) return;
-    _updateClip(dstClip,
+    // v1.5.0-T6 (P3): undoable — the direct engine.copyKeyframes call is
+    // covered by the deferred keyframes fingerprint resync.
+    _updateClipUndoable(dstClip,
+        'keyframes',
         (c) => c.copyWith(keyframes: List.of(src!.keyframes)..sort((a, b) {
               if (a.timeMs != b.timeMs) return a.timeMs.compareTo(b.timeMs);
               return a.property.compareTo(b.property);
             })));
-    final srcNative = nativeClipIdFor(srcClip);
-    final dstNative = nativeClipIdFor(dstClip);
-    if (srcNative != null && dstNative != null) {
-      _engine.copyKeyframes(srcNative, dstNative);
-    }
   }
 
   /// T3 (#9): canvas background — kind 0 solid, 1 gradient, 2 blur.
@@ -1206,6 +1380,13 @@ class EditorController extends ChangeNotifier {
     if (_disposed) return;
     project = Project(name: 'Untitled Project');
     commandHistory.clear();
+    // v1.5.0-T1: bookmarks/guides/canvas background are project-scoped —
+    // switching projects must not leak them across.
+    bookmarks.clear();
+    guideMs.clear();
+    canvasBgKind = 0;
+    canvasBgColor = 0xFF000000;
+    canvasBgColor2 = 0xFF000000;
     _positionMs = 0;
     _isPlaying = false;
     _volume = 1.0;
@@ -1220,6 +1401,8 @@ class EditorController extends ChangeNotifier {
     _nativeClipIdMap.clear();
     _nextNativeClipId = 1;
     _engineSyncDirty = false;
+    _syncedSignatures.clear();
+    _syncedTrackSigs.clear();
     // v1.1.0 (PLAN 3.7): Waveform peaks are timeline-specific.
     _engine.clearTimelineWaveformCache();
     // v0.8.0: Drop all native clips — the new project starts empty.
@@ -1233,6 +1416,11 @@ class EditorController extends ChangeNotifier {
     final success = await projectService.saveProject(project, filePath);
     if (success) {
       _statusMessage = 'Project saved: ${project.name}';
+      // v1.5.0-T5 (P6): recovery file is now actually written on every save
+      // (the API existed with zero callers since v1.5.0-T5-P6 draft).
+      try {
+        await projectService.writeRecoveryFile(project, filePath);
+      } catch (_) {}
       notifyListeners();
     }
     return success;
@@ -1254,6 +1442,12 @@ class EditorController extends ChangeNotifier {
     if (loaded != null) {
       project = loaded;
       commandHistory.clear();
+      // v1.5.0-T1: bookmarks/guides/canvas background are project-scoped.
+      bookmarks.clear();
+      guideMs.clear();
+      canvasBgKind = 0;
+      canvasBgColor = 0xFF000000;
+      canvasBgColor2 = 0xFF000000;
       _positionMs = 0;
       _isPlaying = false;
       _volume = 1.0;
@@ -1267,6 +1461,8 @@ class EditorController extends ChangeNotifier {
       _nativeClipIdMap.clear();
       _nextNativeClipId = 1;
       _engineSyncDirty = false;
+      _syncedSignatures.clear();
+      _syncedTrackSigs.clear();
       // v1.1.0 (PLAN 3.7): Waveform peaks are timeline-specific.
       _engine.clearTimelineWaveformCache();
       // v0.8.0: Drop ALL native clips first — ids are reassigned from 1 on
@@ -1276,6 +1472,10 @@ class EditorController extends ChangeNotifier {
       if (_engine.isReady) _engine.clearClips();
       // v0.8.0: Rebuild the native timeline from the loaded project.
       syncTimelineToEngine();
+      // v1.5.0-T5 (P6): successful load clears the crash-recovery file.
+      try {
+        await projectService.clearRecovery(filePath);
+      } catch (_) {}
       _statusMessage = 'Loaded: ${project.name}';
       notifyListeners();
       return true;
@@ -1283,8 +1483,31 @@ class EditorController extends ChangeNotifier {
     return false;
   }
 
-  // ========== KEYBOARD SHORTCUTS ==========
+  /// v1.5.0-T5 (P6): restore the most recent periodic snapshot — wires the
+  /// previously-dead compaction restore path into the undo panel.
+  void restoreLatestSnapshot() {
+    if (_disposed) return;
+    final ok = commandHistory.restoreLatestSnapshot(project);
+    if (!ok) return;
+    // Native ids/fingerprints are stale after a wholesale track replacement.
+    _nativeClipIdMap.clear();
+    _nextNativeClipId = 1;
+    _syncedSignatures.clear();
+    _syncedTrackSigs.clear();
+    _engineSyncDirty = false;
+    _engine.clearTimelineWaveformCache();
+    _engine.invalidateFrameCache();
+    if (_engine.isReady) {
+      _engine.pause();
+      _engine.seek(0);
+      _engine.clearClips();
+    }
+    syncTimelineToEngine();
+    _statusMessage = 'Restored latest snapshot';
+    notifyListeners();
+  }
 
+  // ========== KEYBOARD SHORTCUTS ==========
   /// Handle keyboard event — returns true if consumed.
   bool handleKeyEvent(KeyEvent event) {
     if (_disposed) return false;
@@ -1450,8 +1673,16 @@ class EditorController extends ChangeNotifier {
     // move/trim/split/filter/property) — deferred once per event-loop turn.
     _markEngineSync();
     // v1.1.0 (PLAN 3.7): The timeline waveform reflects the actual timeline —
-    // any timeline mutation invalidates the cached peaks.
-    _engine.clearTimelineWaveformCache();
+    // structural mutations invalidate the cached peaks.
+    // v1.5.0-T3 (P2): PROPERTY-only commands (filter/opacity/volume/text
+    // slider ticks) no longer nuke the waveform caches on every coalesced
+    // tick — only structural commands change audio peaks.
+    if (commandHistory.lastChangeWasStructural) {
+      _engine.clearTimelineWaveformCache();
+    }
+    // v1.5.0-T1: the paused-frame cache key doesn't see per-clip/timeline
+    // state — without this, scrubbing after an edit served stale frames.
+    _engine.invalidateFrameCache();
   }
 
   void _startAutoSave() {
@@ -1498,6 +1729,7 @@ class EditorController extends ChangeNotifier {
     _engine.removeListener(_onEngineTick);
     commandHistory.removeListener(_onCommandHistoryChanged);
     commandHistory.dispose();
+    playheadMs.dispose();
     // v1.0.1: Dispose the engine BEFORE calling super.dispose() so any
     // final notifications from the engine are still delivered to listeners.
     _engine.dispose();

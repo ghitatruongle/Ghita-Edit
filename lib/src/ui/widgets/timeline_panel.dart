@@ -89,6 +89,23 @@ class _TimelinePanelState extends State<TimelinePanel> {
   int? _dragStartMs;
   final Map<String, int> _tempClipPositions = {};
 
+  // v1.5.0-T3 (P2): memoized ruler bookmark tuples — the old fresh-list-per-
+  // build made TimelineRulerPainter.shouldRepaint (identity compare) return
+  // true on EVERY tick even when nothing changed.
+  List<(int, int)>? _rulerBookmarksCache;
+  int? _rulerBookmarksVersion;
+
+  List<(int, int)> _rulerBookmarks(EditorController ctrl) {
+    final bms = ctrl.bookmarks;
+    final v = Object.hash(bms.length, identityHashCode(bms),
+        bms.isEmpty ? 0 : bms.last.timeMs);
+    if (_rulerBookmarksVersion != v || _rulerBookmarksCache == null) {
+      _rulerBookmarksVersion = v;
+      _rulerBookmarksCache = bms.map((b) => (b.timeMs, b.color)).toList();
+    }
+    return _rulerBookmarksCache!;
+  }
+
   // Trim dragging
   String? _trimmingClipId;
 
@@ -169,7 +186,8 @@ class _TimelinePanelState extends State<TimelinePanel> {
               builder: (context, constraints) {
                 final timelineWidth = max(constraints.maxWidth - _headerWidth, _headerWidth);
                 final pxPerSec = (timelineWidth / (totalDurationSec > 0 ? totalDurationSec : 60)) * _zoomScale;
-                final playheadX = currentPosSec * pxPerSec;
+                // v1.5.0-T3 (P1): playheadX moved into the position-notifier
+                // builder below — the outer body no longer depends on it.
                 final numTracks = ctrl.tracks.length;
                 _trackLaneHeight = numTracks > 0 ? (constraints.maxHeight - _rulerHeight) / numTracks : 40.0;
 
@@ -250,9 +268,7 @@ class _TimelinePanelState extends State<TimelinePanel> {
                                         pxPerSec: pxPerSec,
                                         totalDurationSec: totalDurationSec,
                                         snapEngine: _snapEngine,
-                                        bookmarks: ctrl.bookmarks
-                                            .map((b) => (b.timeMs, b.color))
-                                            .toList(),
+                                        bookmarks: _rulerBookmarks(ctrl),
                                         guides: ctrl.guideMs,
                                       ),
                                     ),
@@ -280,33 +296,42 @@ class _TimelinePanelState extends State<TimelinePanel> {
                             if (_marqueeActive && _marqueeStart != null && _marqueeEnd != null)
                               _buildMarqueeRect(),
 
-                            // Playhead
-                            Positioned(
-                              left: playheadX.clamp(0, timelineWidth),
-                              top: 0,
-                              bottom: 0,
-                              child: Container(
-                                width: 2,
-                                color: AppTheme.accent,
-                                child: Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
-                                    Positioned(
-                                      top: -2,
-                                      left: -5,
-                                      child: Container(
-                                        width: 12,
-                                        height: 12,
-                                        decoration: const BoxDecoration(
-                                          color: AppTheme.accent,
-                                          shape: BoxShape.circle,
-                                          boxShadow: [BoxShadow(color: AppTheme.accent, blurRadius: 6, spreadRadius: -2)],
+                            // Playhead — v1.5.0-T3 (P1): driven by the O(1)
+                            // position notifier so playback ticks move ONLY
+                            // this layer instead of rebuilding every lane.
+                            ValueListenableBuilder<int>(
+                              valueListenable: ctrl.playheadMs,
+                              builder: (context, posMs, _) {
+                                final x = ((posMs / 1000.0) * pxPerSec)
+                                    .clamp(0.0, timelineWidth);
+                                return Positioned(
+                                  left: x,
+                                  top: 0,
+                                  bottom: 0,
+                                  child: Container(
+                                    width: 2,
+                                    color: AppTheme.accent,
+                                    child: Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        Positioned(
+                                          top: -2,
+                                          left: -5,
+                                          child: Container(
+                                            width: 12,
+                                            height: 12,
+                                            decoration: const BoxDecoration(
+                                              color: AppTheme.accent,
+                                              shape: BoxShape.circle,
+                                              boxShadow: [BoxShadow(color: AppTheme.accent, blurRadius: 6, spreadRadius: -2)],
+                                            ),
+                                          ),
                                         ),
-                                      ),
+                                      ],
                                     ),
-                                  ],
-                                ),
-                              ),
+                                  ),
+                                );
+                              },
                             ),
 
                             // v0.7.0: Mini-map overview bar
@@ -339,6 +364,9 @@ class _TimelinePanelState extends State<TimelinePanel> {
     final totalDur = ctrl.durationMs / 1000.0;
     final scale = totalWidth / (totalDur * pxPerSec);
 
+    // v1.5.0-T3 (P1): the base minimap repaints only on structural changes
+    // (cheap numeric signature); the tick line is a separate overlay driven
+    // by the O(1) position notifier.
     return Container(
       width: totalWidth,
       height: 8,
@@ -347,14 +375,32 @@ class _TimelinePanelState extends State<TimelinePanel> {
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: AppTheme.divider, width: 0.5),
       ),
-      child: CustomPaint(
-        painter: MiniMapPainter(
-          tracks: ctrl.tracks,
-          totalWidth: totalWidth,
-          scale: scale,
-          playheadSec: ctrl.positionMs / 1000.0,
-          pxPerSec: pxPerSec,
-        ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(
+              painter: MiniMapPainter(
+                tracks: ctrl.tracks,
+                totalWidth: totalWidth,
+                scale: scale,
+                pxPerSec: pxPerSec,
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: ValueListenableBuilder<int>(
+                valueListenable: ctrl.playheadMs,
+                builder: (context, posMs, _) => CustomPaint(
+                  painter: _MiniPlayheadPainter(
+                    playheadSec: posMs / 1000.0,
+                    pxPerSec: pxPerSec,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -761,7 +807,10 @@ class _TimelinePanelState extends State<TimelinePanel> {
     final leftPx = (displayStartMs / 1000.0) * pxPerSec;
     final widthPx = (clip.durationMs / 1000.0) * pxPerSec;
     final clipColor = _colorForClipType(clip.type);
-    final isMultiSelected = ctrl.selectedClipCount > 1 && ctrl.selectedClips.any((c) => c.id == clip.id);
+    // v1.5.0-T3 (P4): O(1) membership — the old selectedClips.any() scan ran
+    // per clip per build (O(clips²) at 30fps during playback).
+    final isMultiSelected =
+        ctrl.selectedClipCount > 1 && ctrl.project.isClipSelected(clip.id);
 
     // v0.7.0: Group color
     final groupColor = clip.groupId != null ? AppTheme.success.withValues(alpha: 0.3) : null;
@@ -1078,6 +1127,9 @@ class _TimelinePanelState extends State<TimelinePanel> {
                               borderRadius: BorderRadius.circular(3),
                             ),
                             child: Text(
+                              // v1.5.0-T3 (P4): ordinal only computed for
+                              // actually-selected clips (rare) instead of a
+                              // linear indexOf per built widget.
                               '${ctrl.selectedClips.indexOf(clip) + 1}',
                               style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w700),
                             ),
@@ -1446,14 +1498,12 @@ class MiniMapPainter extends CustomPainter {
   final List<Track> tracks;
   final double totalWidth;
   final double scale;
-  final double playheadSec;
   final double pxPerSec;
 
   MiniMapPainter({
     required this.tracks,
     required this.totalWidth,
     required this.scale,
-    required this.playheadSec,
     required this.pxPerSec,
   });
 
@@ -1477,14 +1527,6 @@ class MiniMapPainter extends CustomPainter {
         );
       }
     }
-
-    // Playhead indicator
-    final playheadX = playheadSec * pxPerSec * scale;
-    canvas.drawLine(
-      Offset(playheadX.clamp(0, totalWidth), 0),
-      Offset(playheadX.clamp(0, totalWidth), size.height),
-      Paint()..color = AppTheme.accent..strokeWidth = 1.5,
-    );
   }
 
   Color _colorForTrackType(TrackType type) {
@@ -1498,26 +1540,53 @@ class MiniMapPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant MiniMapPainter oldDelegate) {
     if (oldDelegate.tracks != tracks ||
-        oldDelegate.playheadSec != playheadSec ||
         oldDelegate.pxPerSec != pxPerSec ||
         oldDelegate.scale != scale) {
       return true;
     }
     // v1.0.2: The tracks List instance never changes across clip moves/trims,
     // so the old identity check alone left the mini-map stale. Compare the
-    // actual clip positions (cheap at timeline scales).
-    return _clipSignature() != oldDelegate._clipSignature();
+    // actual clip layout.
+    // v1.5.0-T3 (P2): allocation-free numeric hash instead of building an
+    // O(clips) signature STRING on every comparison (~30fps during playback).
+    return _layoutHash() != oldDelegate._layoutHash();
   }
 
-  /// v1.0.2: Snapshot of every clip's id + start position — changes whenever
-  /// a clip is moved, trimmed, added or removed.
-  String _clipSignature() {
-    final buf = StringBuffer();
+  /// Order-sensitive numeric snapshot of clip starts + counts — changes when
+  /// a clip is moved, trimmed, added or removed (duration changes repaint via
+  /// the paint-time width; collisions are cosmetic-only at minimap scale).
+  int _layoutHash() {
+    var h = 0;
     for (final t in tracks) {
+      h = 0x1fffffff & (h * 31 + t.clips.length);
       for (final c in t.clips) {
-        buf.write('${c.id}:${c.timelineStartMs};');
+        h = 0x1fffffff & (h * 31 + c.timelineStartMs);
       }
     }
-    return buf.toString();
+    return h;
   }
+}
+
+/// v1.5.0-T3 (P2): tick line of the mini-map, split out of [MiniMapPainter]
+/// so playback no longer repaints the base layer every 33ms.
+class _MiniPlayheadPainter extends CustomPainter {
+  final double playheadSec;
+  final double pxPerSec;
+
+  _MiniPlayheadPainter({required this.playheadSec, required this.pxPerSec});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final playheadX = playheadSec * pxPerSec;
+    canvas.drawLine(
+      Offset(playheadX.clamp(0, size.width), 0),
+      Offset(playheadX.clamp(0, size.width), size.height),
+      Paint()..color = AppTheme.accent..strokeWidth = 1.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniPlayheadPainter oldDelegate) =>
+      oldDelegate.playheadSec != playheadSec ||
+      oldDelegate.pxPerSec != pxPerSec;
 }

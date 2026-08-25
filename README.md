@@ -1,6 +1,13 @@
-# Ghita Edit — v1.1.1+0 (Track 1-3 + Review: Bug Fixes, Resources, Accuracy)
+# Ghita Edit — v1.5.0 (Rust engine mặc định · ổn định hóa + hiệu năng)
 
-A cross-platform multimedia editor suite built with **Flutter** and a native **C++20 rendering engine** connected via Dart FFI.
+A cross-platform multimedia editor suite built with **Flutter** and a native engine connected via Dart FFI (Rust là engine shipping; C++ đóng băng làm A/B oracle).
+
+## Platform Status
+
+| Nền tảng | Trạng thái |
+|---|---|
+| Windows | ✅ Đầy đủ (engine Rust + FFmpeg) |
+| Android | ⚠️ Demo Mode — chưa có `.so` engine, xem [docs/android_status.md](docs/android_status.md) |
 
 ## Features
 
@@ -95,6 +102,13 @@ brew install ffmpeg pkg-config
 - **Runtime PATH order matters when running the engine tests manually**: put the FFmpeg bin dir first, e.g. `PATH="C:\Program Files\CodeBlocks\MinGW\bin;C:\msys64\mingw64\bin;%PATH%"`.
 
 ## Architecture
+
+> **v1.5.0-T5 (P1) — Engine freeze decision:** the C++20 engine
+> (`native_engine/`, 65 pre-v1.5 symbols) is **FROZEN as an A/B parity
+> oracle**: it still builds on CI and runs its self-test, but receives NO new
+> features. All v1.5+ functionality lives in the Rust engine
+> (`native_engine_rust/`, 110 exports), which is the shipping default.
+> Known divergences are documented in `docs/rust_engine_abi.md`.
 
 ```
 ┌─────────────────────────────────────┐

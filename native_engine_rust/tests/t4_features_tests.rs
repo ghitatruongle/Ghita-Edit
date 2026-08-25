@@ -24,7 +24,33 @@ fn rms(buf: &[f32]) -> f32 {
     (buf.iter().map(|v| v * v).sum::<f32>() / buf.len() as f32).sqrt()
 }
 
+/// The suite used to depend on an untracked ../test_sine.wav that only existed
+/// on dev machines (fresh checkouts / CI had none, so every setup_sine test
+/// failed). Generate it when missing: 2 s of near-full-scale 440 Hz stereo.
+///
+/// Tests run in parallel threads, so generation is serialized under a mutex:
+/// every caller goes through this gate BEFORE opening the media, so no thread
+/// can read a half-written file, and Windows refuses rename-over-open-file
+/// (os error 5) — direct write under the lock is the only safe form.
+fn ensure_sine_wav() {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LOCK.lock().unwrap();
+    if std::path::Path::new(MEDIA).exists() {
+        return;
+    }
+    const RATE: f32 = 44100.0;
+    let frames = RATE as usize * 2;
+    let mut samples = Vec::with_capacity(frames * 2);
+    for i in 0..frames {
+        let v = ((i as f32) * 440.0 * std::f32::consts::TAU / RATE).sin() * 0.9;
+        samples.push(v);
+        samples.push(v);
+    }
+    ghita_engine::audio_t4::write_wav_pcm16(MEDIA, &samples).expect("write test_sine.wav");
+}
+
 fn setup_sine(p: *mut GhitaEngineContext) {
+    ensure_sine_wav();
     let path = CString::new(MEDIA).unwrap();
     unsafe { ghita_engine_load_media(p, path.as_ptr()) };
     let path = CString::new(MEDIA).unwrap();
@@ -59,8 +85,11 @@ fn t4_effect_chain_compressor_changes_mix() {
     unsafe { ghita_engine_clear_audio_effects(p) };
     let mut clean = vec![0.0f32; 13230];
     assert!(unsafe { ghita_engine_mix_audio_window(p, 1000, 1300, clean.as_mut_ptr(), 13230) });
-    let clean_peak = rms(&clean[..clean.len()/2]);
-    assert!((clean_peak - base_peak).abs() < 0.05, "clear restores: {clean_peak} vs {base_peak}");
+    // Compare RMS to RMS — the old assert measured clean RMS against base
+    // PEAK, which only holds for a near-square source wave.
+    let clean_rms = rms(&clean[..clean.len() / 2]);
+    let base_rms = rms(&base[..base.len() / 2]);
+    assert!((clean_rms - base_rms).abs() < 0.05, "clear restores: {clean_rms} vs {base_rms}");
     unsafe { ghita_engine_destroy(p) };
 }
 

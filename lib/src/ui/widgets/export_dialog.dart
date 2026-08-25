@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -221,12 +222,10 @@ class _ExportDialogState extends State<ExportDialog> {
       if (preset != null) {
         if (preset.format == 'MP4') return 'mp4';
         if (preset.format == 'MOV') return 'mov';
-        if (preset.format == 'GIF') return 'gif';
         if (preset.format == 'MP3') return 'mp3';
       }
     }
     if (_selectedFormat == 'MOV') return 'mov';
-    if (_selectedFormat == 'GIF') return 'gif';
     if (_selectedFormat == 'MP3') return 'mp3';
     return 'mp4';
   }
@@ -242,7 +241,6 @@ class _ExportDialogState extends State<ExportDialog> {
           // v1.0.0: GIF/MP3 used to silently fall through to 'h264' —
           // sending H.264 bytes down a `.gif`/`.mp3` filename produced an
           // unusable file. Now they pass their intended codec through.
-          case 'GIF': return 'gif';
           case 'MP3': return 'mp3';
           default: return 'h264';
         }
@@ -252,7 +250,6 @@ class _ExportDialogState extends State<ExportDialog> {
       case 'H.265': return 'h265';
       case 'VP9': return 'vp9';
       case 'ProRes': return 'prores';
-      case 'GIF': return 'gif';
       case 'MP3': return 'mp3';
       default: return 'h264';
     }
@@ -414,7 +411,20 @@ class _ExportDialogState extends State<ExportDialog> {
       return;
     }
 
-    final outputPath = _outputPath ?? 'Videos/GhitaEdit_Export.$_formatExtension';
+    // v1.5.0-T1: a relative default resolved against the process CWD (e.g.
+    // Program Files) — exports without Browse silently failed or landed in
+    // system folders. Anchor the fallback next to the open project, else the
+    // user's home directory.
+    String outputPath = _outputPath ?? '';
+    if (outputPath.isEmpty) {
+      final projectPath = widget.controller.project.filePath;
+      final baseDir = projectPath.isNotEmpty
+          ? Directory(projectPath).parent.path
+          : (Platform.environment['USERPROFILE'] ??
+              Platform.environment['HOME'] ??
+              Directory.systemTemp.path);
+      outputPath = '$baseDir/GhitaEdit_Export.$_formatExtension';
+    }
 
     setState(() {
       _isExporting = true;
@@ -703,19 +713,16 @@ class _ExportDialogState extends State<ExportDialog> {
 
           // v0.7.0: Custom settings (shown when _customMode or any preset selected for detail)
           if (_customMode) ...[
-            if (_selectedFormat != 'GIF' && _selectedFormat != 'MP3') ...[
+            // v1.5.0-T5 (P5): dead GIF branches removed — 'GIF' can never be
+            // selected since the preset/format entries were removed (pal8
+            // encoder limitation, documented at the preset list).
+            if (_selectedFormat != 'MP3') ...[
               _buildDropdown('Resolution', _selectedRes,
                   ['720p (HD)', '1080p (Full HD)', '4K (Ultra HD)'], _onResolutionChanged, Icons.video_settings),
               const SizedBox(height: 10),
               _buildDropdown('Frame Rate', _selectedFps,
                   ['24 FPS', '30 FPS', '60 FPS'], _onFpsChanged, Icons.movie),
-            ] else if (_selectedFormat == 'GIF') ...[
-              _buildDropdown('GIF Size', _selectedRes,
-                  ['240p', '360p', '480p', '720p'], _onResolutionChanged, Icons.aspect_ratio),
-              const SizedBox(height: 10),
-              _buildDropdown('GIF FPS', _selectedFps,
-                  ['10 FPS', '15 FPS', '24 FPS'], _onFpsChanged, Icons.movie),
-            ] else if (_selectedFormat == 'MP3') ...[
+            ] else ...[
               _buildDropdown('Audio Bitrate', _selectedFps,
                   ['128 kbps', '192 kbps', '256 kbps', '320 kbps'], _onBitrateQualityChanged, Icons.audiotrack),
               const SizedBox(height: 10),
@@ -875,11 +882,8 @@ class _ExportDialogState extends State<ExportDialog> {
     if (val != null) {
       setState(() {
         _selectedFormat = val;
-        if (val == 'GIF') {
-          _selectedCodec = 'GIF';
-          _selectedRes = '480p';
-          _selectedFps = '15 FPS';
-        } else if (val == 'MP3') {
+        // v1.5.0-T5 (P5): dead GIF branch removed (format no longer offered).
+        if (val == 'MP3') {
           _selectedCodec = 'MP3';
           _selectedFps = '320 kbps';
         } else if (val == 'MOV') {

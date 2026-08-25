@@ -418,9 +418,15 @@ class _EditorViewState extends State<EditorView> {
                                       borderRadius: BorderRadius.circular(3),
                                       border: Border.all(color: AppTheme.divider),
                                     ),
-                                    child: Text(
-                                      formatTime(_controller.positionMs),
-                                      style: const TextStyle(color: AppTheme.textMain, fontSize: 10, fontFamily: 'monospace'),
+                                    // v1.5.0-T3 (P1): the timecode listens to
+                                    // the O(1) playhead notifier — playback
+                                    // ticks no longer rebuild the status bar.
+                                    child: ValueListenableBuilder<int>(
+                                      valueListenable: _controller.playheadMs,
+                                      builder: (context, posMs, _) => Text(
+                                        formatTime(posMs),
+                                        style: const TextStyle(color: AppTheme.textMain, fontSize: 10, fontFamily: 'monospace'),
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 10),
@@ -544,6 +550,9 @@ class _EditorViewState extends State<EditorView> {
             _MenuItem('Select All (Ctrl+A)', Icons.select_all_rounded, () {
               final count = _controller.project.allClips.length;
               _controller.project.selectAll();
+              // v1.5.0-T1: refresh selection-dependent UI immediately — the
+              // menu path used to leave highlights stale until the next event.
+              if (count > 0) _controller.notifyListeners();
               _showToast(count > 0 ? 'Selected $count clips' : 'No clips to select');
             }),
           ]),
@@ -1315,7 +1324,13 @@ class _EditorViewState extends State<EditorView> {
         allowedExtensions: ['ghita'],
       );
       if (result != null && mounted) {
-        final success = await _controller.loadProject(result.files.single.path!);
+        // v1.5.0-T1: path can be null on some platforms — never force-unwrap.
+        final path = result.files.single.path;
+        if (path == null || path.isEmpty) {
+          _showToast('Open cancelled — no file selected');
+          return;
+        }
+        final success = await _controller.loadProject(path);
         _showToast(success ? 'Project loaded' : 'Failed to load project', duration: const Duration(seconds: 3));
       }
     } catch (e) {
@@ -1342,12 +1357,15 @@ class _EditorViewState extends State<EditorView> {
 
   Future<String?> _pickSavePath() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      // v1.5.0-T1: pickFiles opens a LOAD dialog — creating a NEW .ghita file
+      // was impossible. saveFile is the actual Save As dialog on desktop.
+      final result = await FilePicker.platform.saveFile(
         dialogTitle: 'Save Project As',
+        fileName: 'untitled.ghita',
         type: FileType.custom,
         allowedExtensions: ['ghita'],
       );
-      return result?.files.single.path;
+      return result;
     } catch (e) {
       debugPrint('Save path selection error: $e');
       return null;

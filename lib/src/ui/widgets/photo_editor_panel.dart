@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:ffi/ffi.dart';
 import '../../controllers/editor_controller.dart';
 import '../../models/clip.dart';
 import '../theme/app_theme.dart';
@@ -43,6 +45,169 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
   bool _healMode = false;
   bool _brushMode = false;
   String _filmSim = 'none';
+
+  // v1.5.0-T5 (P6): lasso drag points in canvas space (x,y interleaved,
+  // canvas = the 560×360 preview).
+  final List<double> _lassoPts = [];
+
+  void _lassoStart(PointerDownEvent e) {
+    _lassoPts
+      ..clear()
+      ..addAll([e.localPosition.dx, e.localPosition.dy]);
+    setState(() {});
+  }
+
+  void _lassoMove(PointerMoveEvent e) {
+    if (_lassoPts.isEmpty) return;
+    setState(() => _lassoPts.addAll([e.localPosition.dx, e.localPosition.dy]));
+  }
+
+  void _lassoEnd(PointerUpEvent e) {
+    final n = _lassoPts.length ~/ 2;
+    if (n < 3) {
+      _lassoPts.clear();
+      return;
+    }
+    final b = GhitaNativeBindings.instance;
+    final xs = calloc<Int32>(n);
+    final ys = calloc<Int32>(n);
+    for (var i = 0; i < n; i++) {
+      xs[i] = _lassoPts[i * 2].round().clamp(0, 559);
+      ys[i] = _lassoPts[i * 2 + 1].round().clamp(0, 359);
+    }
+    try {
+      b.setSelectionLasso?.call(560, 360, xs, ys, n, 0);
+    } catch (_) {}
+    calloc.free(xs);
+    calloc.free(ys);
+    setState(() {});
+  }
+
+  void _wandTap(TapUpDetails d) {
+    final bytes = _previewBytes;
+    if (bytes == null || bytes.length < 560 * 360 * 4) return;
+    final p = calloc<Uint8>(bytes.length);
+    p.asTypedList(bytes.length).setAll(0, bytes);
+    try {
+      GhitaNativeBindings.instance.setSelectionMagicWand?.call(
+        560,
+        360,
+        d.localPosition.dx.round().clamp(0, 559),
+        d.localPosition.dy.round().clamp(0, 359),
+        32,
+        p,
+        0,
+      );
+    } catch (_) {} finally {
+      calloc.free(p);
+    }
+  }
+
+  // v1.5.0-T5 (P6): Clone/Heal/Brush — real paint-tool FFI on the preview
+  // buffer. Clone samples a source point on pointer-down, then paints with
+  // the preserved delta while dragging.
+  Offset? _cloneSample;
+  Offset? _clonePaintOrigin;
+  final List<Offset> _brushPts = [];
+
+  void _refreshPreviewBytes(Uint8List updated) {
+    setState(() => _previewBytes = Uint8List.fromList(updated));
+  }
+
+  void _withPreviewBuffer(void Function(Pointer<Uint8> buf) fn) {
+    final bytes = _previewBytes;
+    if (bytes == null || bytes.length < 560 * 360 * 4) return;
+    final p = calloc<Uint8>(bytes.length);
+    p.asTypedList(bytes.length).setAll(0, bytes);
+    try {
+      fn(p);
+      _refreshPreviewBytes(p.asTypedList(bytes.length));
+    } catch (_) {} finally {
+      calloc.free(p);
+    }
+  }
+
+  void _canvasPointerDown(PointerDownEvent e) {
+    final pos = e.localPosition;
+    if (_selectionTool == 'lasso') {
+      _lassoStart(e);
+    } else if (_cloneMode) {
+      _cloneSample = pos;
+      _clonePaintOrigin = pos;
+      _applyCloneAt(pos);
+    } else if (_healMode) {
+      _applyHealAt(pos);
+    } else if (_brushMode) {
+      _brushPts..clear()..add(pos);
+    }
+  }
+
+  void _canvasPointerMove(PointerMoveEvent e) {
+    final pos = e.localPosition;
+    if (_selectionTool == 'lasso') {
+      _lassoMove(e);
+    } else if (_cloneMode && _cloneSample != null && _clonePaintOrigin != null) {
+      _applyCloneAt(pos);
+    } else if (_healMode) {
+      _applyHealAt(pos);
+    } else if (_brushMode) {
+      _brushPts.add(pos);
+    }
+  }
+
+  void _canvasPointerUp(PointerUpEvent e) {
+    if (_selectionTool == 'lasso') {
+      _lassoEnd(e);
+      return;
+    }
+    if (_brushMode && _brushPts.isNotEmpty) {
+      _withPreviewBuffer((buf) {
+        final n = _brushPts.length;
+        final px = calloc<Float>(n);
+        final py = calloc<Float>(n);
+        for (var i = 0; i < n; i++) {
+          px[i] = _brushPts[i].dx.clamp(0, 559);
+          py[i] = _brushPts[i].dy.clamp(0, 359);
+        }
+        try {
+          // Accent-pink stroke matching the panel highlight color.
+          // v1.5.0-T6 debug fix: Rust packs color_rgba little-endian as
+          // [R,G,B,A] — pass (A<<24)|(B<<16)|(G<<8)|R so the stroke is
+          // #EC4899, not the R/B-swapped violet.
+          const strokeColor = 0xFF9948EC;
+          GhitaNativeBindings.instance.paintBrushStroke?.call(
+            buf, 560, 360, px, py, n, 28.0, 0.6, 0.7, strokeColor);
+        } catch (_) {} finally {
+          calloc.free(px);
+          calloc.free(py);
+        }
+      });
+      _brushPts.clear();
+    }
+  }
+
+  void _applyCloneAt(Offset dst) {
+    final sample = _cloneSample;
+    final origin = _clonePaintOrigin;
+    if (sample == null || origin == null) return;
+    final srcDx = (sample.dx - (origin.dx - dst.dx)).clamp(0.0, 559.0);
+    final srcDy = (sample.dy - (origin.dy - dst.dy)).clamp(0.0, 359.0);
+    _withPreviewBuffer((buf) {
+      GhitaNativeBindings.instance.paintClone?.call(
+        buf, 560, 360,
+        srcDx.round(), srcDy.round(),
+        dst.dx.round().clamp(0, 559), dst.dy.round().clamp(0, 359),
+        24, 0.9);
+    });
+  }
+
+  void _applyHealAt(Offset pos) {
+    _withPreviewBuffer((buf) {
+      GhitaNativeBindings.instance.paintHeal?.call(
+        buf, 560, 360,
+        pos.dx.round().clamp(0, 559), pos.dy.round().clamp(0, 359), 18);
+    });
+  }
 
 
   // v1.1.0 (PLAN 3.9): Render the selected clip's frame at its timeline
@@ -290,11 +455,11 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
                   const SizedBox(width: 6),
                   _toolBtn('Rect', Icons.crop_square_outlined, _selectionTool == 'rect', () {
                     setState(() => _selectionTool = _selectionTool == 'rect' ? 'none' : 'rect');
-                    try { GhitaNativeBindings.instance.setSelectionRect?.call(0, 0, 100, 100, 0); } catch (_) {}
+                    try { GhitaNativeBindings.instance.setSelectionRect?.call(560, 360, 0, 0, 100, 100, 0); } catch (_) {}
                   }),
                   _toolBtn('Ellipse', Icons.circle_outlined, _selectionTool == 'ellipse', () {
                     setState(() => _selectionTool = _selectionTool == 'ellipse' ? 'none' : 'ellipse');
-                    try { GhitaNativeBindings.instance.setSelectionEllipse?.call(50, 50, 40, 40, 0); } catch (_) {}
+                    try { GhitaNativeBindings.instance.setSelectionEllipse?.call(560, 360, 50, 50, 40, 40, 0); } catch (_) {}
                   }),
                   _toolBtn('Lasso', Icons.gesture_outlined, _selectionTool == 'lasso', () {
                     setState(() => _selectionTool = _selectionTool == 'lasso' ? 'none' : 'lasso');
@@ -423,10 +588,24 @@ class _PhotoEditorPanelState extends State<PhotoEditorPanel> {
                             // v1.0.0 canvas was a placeholder icon.
                             if (_previewBytes != null)
                               ClipRect(
-                                child: Image.memory(
-                                  _previewBytes!,
-                                  fit: BoxFit.contain,
-                                  gaplessPlayback: true,
+                                // v1.5.0-T5 (P6): lasso drag-capture and
+                                // magic-wand seeding now drive the REAL
+                                // engine selection FFI (fixed in T1-P1);
+                                // Clone/Heal/Brush drive the paint-tool FFI.
+                                child: Listener(
+                                  behavior: HitTestBehavior.translucent,
+                                  onPointerDown: _canvasPointerDown,
+                                  onPointerMove: _canvasPointerMove,
+                                  onPointerUp: _canvasPointerUp,
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.translucent,
+                                    onTapUp: _selectionTool == 'wand' ? _wandTap : null,
+                                    child: Image.memory(
+                                      _previewBytes!,
+                                      fit: BoxFit.contain,
+                                      gaplessPlayback: true,
+                                    ),
+                                  ),
                                 ),
                               )
                             else

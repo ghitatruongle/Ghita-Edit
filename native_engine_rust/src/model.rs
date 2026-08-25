@@ -304,6 +304,10 @@ pub struct NativeClip {
     pub mask_stroke: f32,
     pub maintain_pitch: bool,
     pub font_family: String,
+    /// v1.5.0-T5 (P5): sticker-only transform (scale about center + rotation
+    /// in degrees). Ignored for non-Sticker kinds.
+    pub sticker_scale: f32,
+    pub sticker_rotation: f32,
 }
 
 impl NativeClip {
@@ -336,6 +340,8 @@ impl NativeClip {
             mask_stroke: 0.0,
             maintain_pitch: false,
             font_family: String::new(),
+            sticker_scale: 1.0,
+            sticker_rotation: 0.0,
         }
     }
 }

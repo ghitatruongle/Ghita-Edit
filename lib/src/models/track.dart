@@ -139,7 +139,10 @@ class Track {
     final clip = clips.where((c) => c.id == clipId).firstOrNull;
     if (clip == null) return;
     final newDuration = newEndMs - clip.timelineStartMs;
-    if (newDuration <= 0) return;
+    // v1.5.0-T1: enforce the same kMinClipDurationMs floor as trimClipStart —
+    // a right-handle drag could still produce a degenerate clip that the
+    // engine rejects and export chokes on.
+    if (newDuration < kMinClipDurationMs) return;
 
     clip.durationMs = newDuration;
     clip.sourceOutMs = clip.sourceInMs + newDuration;

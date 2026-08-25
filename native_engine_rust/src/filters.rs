@@ -9,6 +9,117 @@
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+// ---------------------------------------------------------------------------
+// v1.5.0-T4 (P1): per-thread scratch pools. Heavy filters used to allocate a
+// fresh full-frame buffer (~8.3 MB @1080p) on EVERY frame, PER CLIP, causing
+// allocator jitter on the render path. Buffers are recycled thread-locally
+// (the serial render path runs on one thread; the rayon tile path re-enters
+// from worker threads, each with its own pool). Zero-init and capacity
+// semantics match `vec![0; n]` exactly, so outputs stay byte-equal.
+use std::cell::RefCell;
+
+thread_local! {
+    static SCRATCH_U8: RefCell<Vec<Vec<u8>>> = const { RefCell::new(Vec::new()) };
+    static SCRATCH_U32: RefCell<Vec<Vec<u32>>> = const { RefCell::new(Vec::new()) };
+}
+
+const SCRATCH_POOL_MAX: usize = 8;
+
+/// Recyclable zero-initialized byte buffer (Deref to `[u8]`).
+struct ScratchBytes(Vec<u8>);
+
+impl ScratchBytes {
+    fn new(len: usize) -> Self {
+        SCRATCH_U8.with(|pool| {
+            let mut pool = pool.borrow_mut();
+            while let Some(mut v) = pool.pop() {
+                if v.len() >= len {
+                    v.truncate(len);
+                    v.fill(0);
+                    return Self(v);
+                }
+            }
+            Self(vec![0u8; len])
+        })
+    }
+
+    /// Snapshot helper for filters that need an immutable copy of the frame.
+    fn snapshot_from(src: &[u8]) -> Self {
+        let mut s = Self::new(src.len());
+        s.copy_from_slice(src);
+        s
+    }
+}
+
+impl std::ops::Deref for ScratchBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ScratchBytes {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl Drop for ScratchBytes {
+    fn drop(&mut self) {
+        SCRATCH_U8.with(|pool| {
+            let mut pool = pool.borrow_mut();
+            if pool.len() < SCRATCH_POOL_MAX {
+                self.0.clear();
+                pool.push(std::mem::take(&mut self.0));
+            }
+        });
+    }
+}
+
+/// Recyclable zero-initialized u32 buffer (summed-area tables).
+struct ScratchU32(Vec<u32>);
+
+impl ScratchU32 {
+    fn new(len: usize) -> Self {
+        SCRATCH_U32.with(|pool| {
+            let mut pool = pool.borrow_mut();
+            while let Some(mut v) = pool.pop() {
+                if v.len() >= len {
+                    v.truncate(len);
+                    v.fill(0);
+                    return Self(v);
+                }
+            }
+            Self(vec![0u32; len])
+        })
+    }
+}
+
+impl std::ops::Deref for ScratchU32 {
+    type Target = [u32];
+    fn deref(&self) -> &[u32] {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ScratchU32 {
+    fn deref_mut(&mut self) -> &mut [u32] {
+        &mut self.0
+    }
+}
+
+impl Drop for ScratchU32 {
+    fn drop(&mut self) {
+        SCRATCH_U32.with(|pool| {
+            let mut pool = pool.borrow_mut();
+            if pool.len() < SCRATCH_POOL_MAX {
+                self.0.clear();
+                pool.push(std::mem::take(&mut self.0));
+            }
+        });
+    }
+}
+
 /// Deterministic pseudo-random in [0,1) from pixel coords — keeps effects
 /// stable across frames (no flicker) and thread-safe (no shared state).
 fn hash01(x: i32, y: i32) -> f32 {
@@ -78,7 +189,7 @@ fn apply_blur(buf: &mut [u8], width: usize, height: usize, intensity: f32) {
         *w /= sum;
     }
 
-    let mut tmp = vec![0u8; width * height * 4];
+    let mut tmp = ScratchBytes::new(width * height * 4);
 
     // Horizontal pass (clamp-to-edge)
     for y in 0..height {
@@ -125,7 +236,7 @@ fn apply_blur(buf: &mut [u8], width: usize, height: usize, intensity: f32) {
 }
 
 fn apply_edge_detect(buf: &mut [u8], width: usize, height: usize) {
-    let tmp = buf.to_vec();
+    let tmp = ScratchBytes::snapshot_from(buf);
     let sobel_x: [[i32; 3]; 3] = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]];
     let sobel_y: [[i32; 3]; 3] = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]];
 
@@ -255,7 +366,9 @@ fn apply_glitch(buf: &mut [u8], width: usize, height: usize, intensity: f32) {
         if hash01(y0 as i32, 0) < 0.35f32 * intensity {
             let shift = ((hash01(y0 as i32, 1) - 0.5f32) * width as f32 * 0.12f32 * intensity) as i32;
             if shift != 0 {
-                let mut row = vec![0u8; width * 4];
+                // v1.5.0-T4 (P1): one recycled row buffer per band (was a
+                // fresh vec per band inside the loop).
+                let mut row = ScratchBytes::new(width * 4);
                 for y in y0..y1 {
                     row[..].copy_from_slice(&buf[y * width * 4..(y + 1) * width * 4]);
                     for x in 0..width {
@@ -288,7 +401,7 @@ fn apply_glitch(buf: &mut [u8], width: usize, height: usize, intensity: f32) {
 
 fn apply_chromatic_aberration(buf: &mut [u8], width: usize, height: usize, intensity: f32) {
     let shift = ((4.0f32 * intensity) as i32).max(1) as usize;
-    let copy = buf.to_vec();
+    let copy = ScratchBytes::snapshot_from(buf);
     for y in 0..height {
         for x in 0..width {
             let dst = (y * width + x) * 4;
@@ -348,7 +461,7 @@ fn apply_sharpen(buf: &mut [u8], width: usize, height: usize, intensity: f32) {
     if width < 3 || height < 3 {
         return;
     }
-    let copy = buf.to_vec();
+    let copy = ScratchBytes::snapshot_from(buf);
     let amount = 0.35f32 + intensity * 0.65f32;
     for y in 1..height - 1 {
         for x in 1..width - 1 {
@@ -403,7 +516,7 @@ fn apply_background_blur(buf: &mut [u8], width: usize, height: usize, intensity:
     let cy = height as f32 * 0.5f32;
     let rx = width as f32 * 0.22f32;
     let ry = height as f32 * 0.30f32;
-    let copy = buf.to_vec();
+    let copy = ScratchBytes::snapshot_from(buf);
     for y in 0..height {
         for x in 0..width {
             let dx = (x as f32 - cx) / rx;
@@ -424,7 +537,7 @@ fn apply_skin_retouch(buf: &mut [u8], width: usize, height: usize, intensity: f3
     if intensity <= 0.001f32 {
         return;
     }
-    let copy = buf.to_vec();
+    let copy = ScratchBytes::snapshot_from(buf);
 
     let radius = ((intensity * 3.0f32) as i32).max(1) as usize;
     let smooth_factor = 0.45f32 * intensity;
@@ -432,9 +545,9 @@ fn apply_skin_retouch(buf: &mut [u8], width: usize, height: usize, intensity: f3
 
     let sat_w = width + 1;
     let sat_h = height + 1;
-    let mut sat_r = vec![0u32; sat_w * sat_h];
-    let mut sat_g = vec![0u32; sat_w * sat_h];
-    let mut sat_b = vec![0u32; sat_w * sat_h];
+    let mut sat_r = ScratchU32::new(sat_w * sat_h);
+    let mut sat_g = ScratchU32::new(sat_w * sat_h);
+    let mut sat_b = ScratchU32::new(sat_w * sat_h);
     for y in 0..height {
         let mut row_r = 0u32;
         let mut row_g = 0u32;
@@ -517,6 +630,27 @@ fn apply_chroma_key(buf: &mut [u8], intensity: f32) {
 /// Dispatches a filter type onto the buffer. Filter 10 (Mosaic) = Pixelate,
 /// mirroring the C++ dispatch. Returns true when a filter was applied.
 pub fn apply_filter_to_buffer(
+    buf: &mut [u8],
+    width: usize,
+    height: usize,
+    filter_type: i32,
+    filter_intensity: f32,
+) -> bool {
+    // v1.5.0-T5 (P3): production GPU dispatch — feature-gated so parity
+    // suites always run pure-CPU. Only full-size frames (≥512×256) go to the
+    // GPU; rayon tiles (32 rows) and tiny buffers stay on the CPU shaders.
+    #[cfg(feature = "gpu")]
+    {
+        if width * height >= 131_072
+            && crate::gpu::try_gpu(buf, width, height, filter_type, filter_intensity)
+        {
+            return true;
+        }
+    }
+    apply_filter_cpu(buf, width, height, filter_type, filter_intensity)
+}
+
+fn apply_filter_cpu(
     buf: &mut [u8],
     width: usize,
     height: usize,
@@ -641,15 +775,15 @@ pub fn apply_filter_parallel(
     filter_type: i32,
     intensity: f32,
 ) {
-    // Only truly per-pixel filters are tile-safe: their output for a row band
-    // does not depend on absolute pixel position or out-of-band neighbors.
-    // NOT row-local (fall back to serial): 5 blur (neighbors), 6 edge (3×3),
-    // 9/10 pixelate (block alignment), 11 VHS (y%3 phase), 12 glitch (bands),
-    // 13 chromatic aberration (x-shift), 14 vignette (absolute center),
-    // 15 film grain (hash01(x,y)), 16 light leak (absolute diagonal),
+    // Tile-safe filters: their output for a row band does not depend on
+    // pixels OUTSIDE that band. Per-pixel absolute-position math (vignette,
+    // grain, light leak) is tile-safe; VHS phase (y%3) and chromatic
+    // x-shift are row-local.
+    // NOT tile-safe (serial fallback): 5 blur (neighbors), 6 edge (3×3),
+    // 9/10 pixelate (block alignment across band edges), 12 glitch (bands),
     // 17 sharpen (3×3), 20 background blur (blur+ellipse), 21 skin retouch
     // (SAT box sums span the whole frame).
-    let row_local = matches!(filter_type, 1 | 2 | 3 | 4 | 7 | 8 | 18 | 19 | 22);
+    let row_local = matches!(filter_type, 1 | 2 | 3 | 4 | 7 | 8 | 11 | 13 | 14 | 15 | 16 | 18 | 19 | 22);
     if !row_local || height < 64 {
         apply_filter_to_buffer(buf, width, height, filter_type, intensity);
         return;
@@ -659,18 +793,27 @@ pub fn apply_filter_parallel(
     let tiles: Vec<(usize, usize)> = (0..height.div_ceil(tile_h))
         .map(|t| (t * tile_h, ((t + 1) * tile_h).min(height)))
         .collect();
-    let tmp: Vec<u8> = buf.to_vec();
-    let tmp_ref = &tmp;
     // SAFETY: `buf` outlives the scope (rayon::scope joins before returning);
-    // tiles are disjoint row ranges so each closure writes a distinct region.
+    // tiles are disjoint row ranges so each closure touches a distinct region
+    // (reads its own snapshot rows, writes its own output rows).
     let base = PtrSend(buf.as_mut_ptr());
     let base_ref = &base;
     rayon::scope(|s| {
         for (y0, y1) in tiles {
             s.spawn(move |_| {
-                let mut tile = tmp_ref[y0 * row_bytes..y1 * row_bytes].to_vec();
+                // v1.5.0-T4 (P2): copy ONLY this band into a recycled scratch
+                // buffer — the old path made a FULL-FRAME snapshot plus a
+                // per-tile Vec allocation on every frame.
+                let band_bytes = (y1 - y0) * row_bytes;
+                let mut tile = ScratchBytes::new(band_bytes);
+                let src = unsafe {
+                    std::slice::from_raw_parts(base_ref.add(y0 * row_bytes), band_bytes)
+                };
+                tile.copy_from_slice(src);
                 apply_filter_to_buffer(&mut tile, width, y1 - y0, filter_type, intensity);
-                let dst = unsafe { std::slice::from_raw_parts_mut(base_ref.add(y0 * row_bytes), (y1 - y0) * row_bytes) };
+                let dst = unsafe {
+                    std::slice::from_raw_parts_mut(base_ref.add(y0 * row_bytes), band_bytes)
+                };
                 dst.copy_from_slice(&tile);
             });
         }

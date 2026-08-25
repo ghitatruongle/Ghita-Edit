@@ -304,3 +304,56 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// v1.5.0-T5 (P3): production wiring — lazily-initialized shared context,
+// dispatch counters for fallback telemetry. Only compiled under the `gpu`
+// feature; the default/parity builds never touch wgpu.
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+
+static GPU_CTX: OnceLock<Option<Arc<GpuContext>>> = OnceLock::new();
+static GPU_FRAMES: AtomicU64 = AtomicU64::new(0);
+static CPU_FALLBACKS: AtomicU64 = AtomicU64::new(0);
+
+fn context() -> Option<&'static Arc<GpuContext>> {
+    GPU_CTX
+        .get_or_init(|| GpuContext::new().ok().map(Arc::new))
+        .as_ref()
+}
+
+/// Whether a GPU context is available (device probed once per process).
+pub fn gpu_available() -> bool {
+    context().is_some()
+}
+
+/// Adapter name when available, empty string otherwise.
+pub fn gpu_adapter_name() -> String {
+    context()
+        .map(|c| c.adapter_name())
+        .unwrap_or_else(|| String::new())
+}
+
+/// Dispatch counters: (gpu_frames, cpu_fallbacks).
+pub fn gpu_stats() -> (u64, u64) {
+    (
+        GPU_FRAMES.load(Ordering::Relaxed),
+        CPU_FALLBACKS.load(Ordering::Relaxed),
+    )
+}
+
+/// Production dispatch — returns TRUE when the filter ran on the GPU.
+/// Returns false (and counts a CPU fallback) for unsupported filters or
+/// when no adapter exists; the caller then runs the CPU shader path.
+pub fn try_gpu(buf: &mut [u8], width: usize, height: usize, filter_type: i32, intensity: f32) -> bool {
+    let ran = match context() {
+        Some(ctx) => ctx.apply_filter(buf, width, height, filter_type, intensity),
+        None => false,
+    };
+    if ran {
+        GPU_FRAMES.fetch_add(1, Ordering::Relaxed);
+    } else {
+        CPU_FALLBACKS.fetch_add(1, Ordering::Relaxed);
+    }
+    ran
+}

@@ -19,6 +19,9 @@ class EngineService extends ChangeNotifier {
 
   // Render frame buffer allocated via calloc.
   Pointer<Uint8>? _framePointer;
+  /// Current byte capacity of [_framePointer] — renderFrameAt may grow it
+  /// (grow-only) for larger explicit renders.
+  int _framePointerCapacity = 0;
   Uint8List? _frameBytes;
 
   Timer? _renderTimer;
@@ -95,10 +98,19 @@ class EngineService extends ChangeNotifier {
   bool _disposed = false;
   bool _nativeLibraryLoaded = false; // Track if native library was successfully loaded
 
+  /// v1.5.0-T2 (P2): WHY the bindings failed to load, when they did —
+  /// surfaced to the UI so a broken/stale DLL never degrades silently into
+  /// Demo Mode.
+  static String? lastBindingError;
+  String? get loadError => lastBindingError;
+
   static GhitaNativeBindings? _tryLoadBindings() {
     try {
       return GhitaNativeBindings.instance;
-    } catch (_) {
+    } catch (e) {
+      // v1.5.0-T2 (P2): never swallow this silently — record and report.
+      lastBindingError = '$e';
+      debugPrint('[EngineService] Binding load FAILED: $e');
       return null;
     }
   }
@@ -187,6 +199,7 @@ class EngineService extends ChangeNotifier {
         // Engine is "ready" but preview won't run. This is a degraded mode.
         return;
       }
+      _framePointerCapacity = renderWidth * renderHeight * 4;
       _frameBytes = Uint8List(renderWidth * renderHeight * 4);
 
       _startTickLoop();
@@ -658,6 +671,59 @@ class EngineService extends ChangeNotifier {
     try { return fn(_ctx!, ptr, format); } catch (e) { return -1; } finally { calloc.free(ptr); }
   }
 
+  /// v1.5.0-T5 (P6): live-update one effect-chain parameter (param 0..3)
+  /// without remove/re-add (which would shift later chain indices).
+  void setAudioEffectParam(int index, int param, double value) {
+    _checkDisposed();
+    final fn = _bindings?.setAudioEffectParam;
+    if (!isReady || fn == null || index < 0 || param < 0 || param > 3) return;
+    try {
+      fn(_ctx!, index, param, value);
+    } catch (e) {
+      debugPrint('[EngineService] setAudioEffectParam failed: $e');
+    }
+  }
+
+  /// v1.5.0-T5 (P5): sticker transform — scale about center + rotation.
+  void setClipStickerTransformNative(int nativeClipId, double scale, double rotationDeg) {
+    _checkDisposed();
+    final fn = _bindings?.setClipStickerTransform;
+    if (!isReady || fn == null || nativeClipId <= 0) return;
+    try {
+      fn(_ctx!, nativeClipId, scale, rotationDeg);
+    } catch (e) {
+      debugPrint('[EngineService] setClipStickerTransform failed: $e');
+    }
+  }
+
+  /// v1.5.0-T5 (P2/P3): telemetry JSON — cache stats and GPU dispatch
+  /// counters. Returns {} when the engine or symbol is unavailable.
+  Map<String, dynamic> getCacheStats() => _telemetryJson(() {
+        final fn = _bindings?.getCacheStats;
+        if (!isReady || fn == null) return null;
+        final p = fn(_ctx!);
+        if (p == nullptr) return null;
+        return p.toDartString();
+      });
+
+  Map<String, dynamic> getGpuStats() => _telemetryJson(() {
+        final fn = _bindings?.getGpuStats;
+        if (!isReady || fn == null) return null;
+        final p = fn();
+        if (p == nullptr) return null;
+        return p.toDartString();
+      });
+
+  Map<String, dynamic> _telemetryJson(String? Function() fetch) {
+    try {
+      final s = fetch();
+      if (s == null || s.isEmpty) return const {};
+      return jsonDecode(s) as Map<String, dynamic>;
+    } catch (_) {
+      return const {};
+    }
+  }
+
   /// v1.1.0 (PLAN 3.11): Clear the speed-ramp curve of a clip.
   void clearSpeedCurve(int clipId) {
     _checkDisposed();
@@ -711,7 +777,11 @@ class EngineService extends ChangeNotifier {
     if (!isReady || fn == null || count <= 0) return Float32List(0);
     final key = '$trackIndex:$count';
     final cached = _timelineWaveformCache[key];
-    if (cached != null) return Float32List.fromList(cached);
+    // v1.5.0-T3 (P2): hand out the CACHED instance — the old copy-per-call
+    // produced a fresh Float32List every fetch, defeating identity-based
+    // shouldRepaint checks and re-copying on every timeline build (~30fps
+    // during playback). Callers treat the samples as read-only.
+    if (cached != null) return cached;
 
     final ptr = calloc<Float>(count);
     try {
@@ -723,7 +793,7 @@ class EngineService extends ChangeNotifier {
         _timelineWaveformCache.remove(_timelineWaveformCache.keys.first);
       }
       _timelineWaveformCache[key] = result;
-      return Float32List.fromList(result);
+      return result;
     } finally {
       calloc.free(ptr);
     }
@@ -939,7 +1009,20 @@ class EngineService extends ChangeNotifier {
     final bindings = _bindings;
     final fn = bindings?.renderFrameAt;
     if (!isReady || fn == null || _framePointer == null) return null;
+    if (width <= 0 || height <= 0) return null;
     try {
+      // v1.5.0-T1: grow-only — the shared buffer is sized for the default
+      // preview; a larger request used to make the native side write past
+      // the allocation. The old block must be freed or every distinct size
+      // leaks one buffer.
+      final needed = width * height * 4;
+      if (_framePointerCapacity < needed) {
+        final grown = calloc<Uint8>(needed);
+        if (grown == nullptr) return null;
+        calloc.free(_framePointer!);
+        _framePointer = grown;
+        _framePointerCapacity = needed;
+      }
       if (!fn(_ctx!, _framePointer!, width, height, positionMs)) return null;
       final list = _framePointer!.asTypedList(width * height * 4);
       return Uint8List.fromList(list);
@@ -1181,6 +1264,14 @@ class EngineService extends ChangeNotifier {
   int _lastPolledDurMs = 0;
   int _lastPolledGen = -1;
 
+  /// v1.5.0-T1: drop every cached paused-frame. The cache key only covers
+  /// position/size/global filter/volume/rate — per-clip state (filters, text,
+  /// keyframes, positions) and the timeline structure are invisible to it, so
+  /// after ANY timeline edit the stale pre-edit frames must be invalidated.
+  void invalidateFrameCache() {
+    _frameCache.clear();
+  }
+
   void cacheFrame(String key, Uint8List frame) {
     if (_disposed || !isReady) return;
     // LRU eviction: drop the least recently used entry when full
@@ -1334,13 +1425,19 @@ class EngineService extends ChangeNotifier {
       // hit (e.g. frame at 0ms cached during a previous pause) would keep
       // returning without ever advancing: Play at 0ms "didn't run" until the
       // user scrubbed. Playing must always call the native render.
-      if (cachedFrame != null && !bindings.isPlaying(_ctx!)) {
+      if (cachedFrame != null && !_isPlaying) {
         // v1.1.0 (PLAN 2.2/C1): Alias instead of copy — the old setAll()
         // memcpy'd 0.88 MB on every hit. Consumers snapshot the bytes before
         // decoding, so sharing the cached entry is safe.
         _frameBytes = cachedFrame;
         _frameBytesIsCacheRef = true;
-        _isPlaying = bindings.isPlaying(_ctx!); // Keep playing state updated
+        // v1.5.0-T1: refresh the idle snapshot BEFORE returning — the old
+        // code left _lastPolled* stale on cache hits, so every following
+        // 33 ms tick redid 4-5 FFI calls (incl. a duplicate isPlaying)
+        // forever instead of short-circuiting.
+        _lastPolledPosMs = _positionMs;
+        _lastPolledDurMs = _durationMs;
+        _lastPolledGen = _frameGeneration;
         // v1.1.0 (PLAN 2.10): The frame is unchanged, but a moved playhead /
         // changed duration / playing state still needs a UI wake-up.
         if (_positionMs != oldPos || _durationMs != oldDur || _isPlaying != oldPlaying) {

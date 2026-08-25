@@ -89,6 +89,16 @@ class _UndoHistoryPanelState extends State<UndoHistoryPanel> {
                 const SizedBox(width: 8),
                 const Text('Undo History', style: TextStyle(color: AppTheme.textMain, fontSize: 14, fontWeight: FontWeight.w600)),
                 const Spacer(),
+                // v1.5.0-T5 (P6): wire the previously-dead snapshot restore
+                // path — one tap rewinds the whole project to the last
+                // periodic checkpoint.
+                if (history.snapshotCount > 0)
+                  IconButton(
+                    tooltip: 'Restore latest snapshot',
+                    icon: const Icon(Icons.restore_rounded, size: 18, color: AppTheme.primaryLight),
+                    onPressed: () => controller.restoreLatestSnapshot(),
+                    style: IconButton.styleFrom(padding: const EdgeInsets.all(4)),
+                  ),
                 Text('${undoStack.length} steps', style: const TextStyle(color: AppTheme.textMuted, fontSize: 10)),
                 IconButton(
                   icon: const Icon(Icons.close_rounded, size: 18, color: AppTheme.textMuted),

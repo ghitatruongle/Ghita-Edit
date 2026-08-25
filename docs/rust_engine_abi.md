@@ -263,3 +263,39 @@ Additional T6 modules (no FFI symbols, internal Rust only):
 - ai_tools.rs: NLM denoise, bicubic upscale, color segmentation, hash dedup
 
 Gates: cargo test --lib 55/55 PASS, flutter analyze 0 errors, flutter test 143/143 PASS.
+
+## 15. T2 additions (v1.5.0 final — CI/CD track)
+
+| Symbol | Semantics |
+|---|---|
+| ghita_engine_set_export_channel_layout(ctx, layout) | 0/-1; layout = "stereo" \| "5.1" \| "7.1" — selects the export AAC channel mapping (added in T2-P3 so shell drivers (export_matrix → ffprobe) can reach the multichannel path, which previously had NO C export). |
+
+T1 corrections reflected here (parity fixes, no signature changes):
+- §14 signatures above are the ACTUAL Rust exports `(width,height,…)`-style;
+  the Dart bindings (native_bindings.dart) were re-aligned in T1-P1 and are
+  now enforced by test/ffi_arity_contract_test.dart (symbol+arity table,
+  Dart ↔ c_api.rs).
+- ghita_project_db_library_search takes (db_path, query, min_rating).
+
+Gates after T1/T2: flutter analyze --fatal-infos clean · flutter test 152/152 ·
+cargo test default 92/92 · cargo test --features ffmpeg 116/116.
+
+## 16. T5 additions (v1.5.0 final — Rust hóa sâu)
+
+| Symbol | Semantics |
+|---|---|
+| ghita_engine_cache_stats(ctx) | JSON {hits,misses,entries,rate} — paused-scrub ProcessingCache telemetry |
+| ghita_engine_gpu_stats() | JSON {available,adapter,gpu_frames,cpu_fallbacks} — available=false khi không build feature `gpu` |
+| ghita_engine_set_clip_sticker_transform(ctx, clip_id, scale, rotation_deg) | 0/-1; chỉ áp dụng clip kind Sticker; scale clamp 0.05..8 |
+| ghita_engine_set_audio_effect_param(ctx, index, param, value) | 0/-1; live-edit p0..p3 của effect chain (ffmpeg feature); từ chối index âm/vượt cuối chain thay vì clamp |
+| ghita_engine_paint_clone(buf, w, h, src_x, src_y, dst_x, dst_y, radius, opacity) | 0/-1; ctx-less clone stamp trên buffer caller (src snapshot nội bộ chống aliasing) |
+| ghita_engine_paint_heal(buf, w, h, cx, cy, radius) | 0/-1; spot heal ctx-less |
+| ghita_engine_paint_brush_stroke(buf, w, h, px[], py[], count, size, hardness, opacity, color_rgba) | 0/-1; soft brush stroke dọc polyline; color little-endian RGBA |
+
+Removed in T5 (không còn tồn tại): module `f32_pipeline` + feature
+`f32_pipeline`; module `graph`. ProcessingCache giờ được wire vào render
+paused-path (không còn dead code).
+
+Gates after T6: cargo test default 95/95 · cargo test --features ffmpeg,gpu
+121/121 · flutter analyze --fatal-infos clean · flutter test 157/157 ·
+coverage ≥60% gate PASS.

@@ -55,10 +55,15 @@ struct EffectState {
     env: [f32; 2],
     // Biquad states: [channel][0..5] = b0..b2, a1, a2 history (x1,x2,y1,y2).
     bq: [[BiquadState; 2]; 3],
+    // Dedicated 4-stage allpass chain for the phaser — aliasing stages onto
+    // `bq` corrupted the EQ/distortion filters and collided stages 3→slot 1.
+    phaser: [[BiquadState; 2]; 4],
     // LFO phase (phaser/wahwah).
     lfo_phase: f32,
     // Schroeder reverb: 4 combs + 3 allpasses per channel.
     comb: [Vec<f32>; 8],
+    // Freeverb one-pole damping state per comb line (feedback lowpass).
+    comb_damp: [f32; 8],
     comb_idx: usize,
     allp: [Vec<f32>; 6],
     allp_idx: usize,
@@ -236,7 +241,7 @@ impl AudioEffect {
                 let mut xr = r;
                 for stage in 0..4 {
                     let (b0, b1, b2, a1, a2) = allpass(mod_freq * (1.0 + 0.25 * stage as f32), sr);
-                    let st = &mut self.state.bq[stage.min(2)];
+                    let st = &mut self.state.phaser[stage];
                     xl = st[0].process(xl, b0, b1, b2, a1, a2);
                     xr = st[1].process(xr, b0, b1, b2, a1, a2);
                 }
@@ -248,6 +253,7 @@ impl AudioEffect {
                 let damp = self.p[1].clamp(0.0, 1.0);
                 let decay = self.p[2].clamp(0.1, 0.99);
                 if self.state.comb[0].is_empty() {
+                    self.state.comb_damp = [0.0; 8];
                     for (i, ms) in [29.7f32, 37.1, 41.1, 43.7].iter().enumerate() {
                         let len = (*ms * sr / 1000.0) as usize;
                         self.state.comb[i] = vec![0.0; len];
@@ -363,8 +369,12 @@ fn schroeder(st: &mut EffectState, input: f32, comb_base: usize, damp: f32, deca
         let len = st.comb[idx].len().max(1);
         let ci = st.comb_idx % len;
         let cur = st.comb[idx][ci];
-        let filtered = cur * (1.0 - damp) + cur * damp;
-        st.comb[idx][ci] = input + filtered * decay;
+        // Freeverb comb: one-pole damp on the feedback path, with per-line
+        // filter state — `cur*(1-damp) + cur*damp` (the old line) cancels
+        // algebraically and left the damp parameter doing nothing.
+        let fs = &mut st.comb_damp[idx];
+        *fs = cur * (1.0 - damp) + *fs * damp;
+        st.comb[idx][ci] = input + *fs * decay;
         out += cur;
     }
     let mut y = out * 0.25;

@@ -27,8 +27,8 @@ parallel = ["dep:rayon"]
 gpu = ["dep:wgpu", "dep:pollster"]
 # T5-P1: SQLite project format + media library database.
 sqlite = ["dep:rusqlite"]
-# T5-P7: 32-bit float internal render pipeline (additive).
-f32_pipeline = []
+# v1.5.0-T5 (P4): the `f32_pipeline` feature was REMOVED with its module —
+# divergent filter-id table, zero callers, no benchmark win (see lib.rs).
 
 [dev-dependencies]
 serde_json = "1"

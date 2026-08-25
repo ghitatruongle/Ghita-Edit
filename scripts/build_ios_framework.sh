@@ -46,6 +46,13 @@ cp "$BUILD_DIR/libghita_engine.a" "$FRAMEWORK_DIR/ghita_engine"
 cp "$PROJECT_DIR/native_engine/include/ghita_c_api.h" "$FRAMEWORK_DIR/Headers/"
 cp "$PROJECT_DIR/native_engine/include/ghita_engine.h" "$FRAMEWORK_DIR/Headers/"
 
+# Engine version from single source of truth (same pattern as CI version gate)
+ENGINE_VERSION="$(sed -n 's/.*kMajorVersion = \([0-9]*\).*/\1/p' "$PROJECT_DIR/lib/src/core/version.dart").$(sed -n 's/.*kMinorVersion = \([0-9]*\).*/\1/p' "$PROJECT_DIR/lib/src/core/version.dart").$(sed -n 's/.*kPatchVersion = \([0-9]*\).*/\1/p' "$PROJECT_DIR/lib/src/core/version.dart")"
+if [ -z "${ENGINE_VERSION//./}" ]; then
+    echo "ERROR: cannot parse version from lib/src/core/version.dart" >&2
+    exit 1
+fi
+
 # Create Info.plist for framework
 cat > "$FRAMEWORK_DIR/Info.plist" << PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -53,7 +60,7 @@ cat > "$FRAMEWORK_DIR/Info.plist" << PLIST_EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentVersion</key>
-    <string>0.4.5</string>
+    <string>$ENGINE_VERSION</string>
     <key>CFBundleExecutable</key>
     <string>ghita_engine</string>
     <key>CFBundleIdentifier</key>
@@ -65,7 +72,7 @@ cat > "$FRAMEWORK_DIR/Info.plist" << PLIST_EOF
     <key>CFBundlePackageType</key>
     <string>FMWK</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.4.5</string>
+    <string>$ENGINE_VERSION</string>
     <key>CFBundleVersion</key>
     <string>5</string>
     <key>MinimumOSVersion</key>

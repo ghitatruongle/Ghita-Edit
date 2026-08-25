@@ -92,6 +92,18 @@ jobs:
       - name: Run Flutter Test Suite
         run: flutter test --coverage
 
+      # v1.5.0-T2 (P3): keep the coverage report + enforce a controllers
+      # floor so refactors cannot silently gut test coverage.
+      - name: Upload Coverage Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: error
+
+      - name: Controllers Coverage Gate (>= 60%)
+        run: dart run tool/coverage_gate.dart 0.60
+
   build-native-engine-windows:
     name: Build C++ Native Engine (Windows MSVC)
     runs-on: windows-latest
@@ -202,19 +214,196 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install MSYS2 MinGW FFmpeg + Clang
+        id: msys2
         uses: msys2/setup-msys2@v2
         with:
-          install: mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-clang
+          install: mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-clang mingw-w64-x86_64-gcc
+
+      # v1.5.0 fix (2026-08-24): setup-msys2 with release:true (default) does
+      # NOT install into the preinstalled C:\msys64 — it extracts a fresh
+      # MSYS2 into a runner temp dir (D:\a\_temp\msys64). Hardcoding C:/msys64
+      # pointed FFMPEG_DIR at a header-less msys2 and kept this job red since
+      # T5 ("libavutil/avutil.h: No such file"). Export everything from the
+      # action's actual install location instead.
+      - name: Export MSYS2 MinGW env
+        shell: bash
+        run: |
+          WINROOT='${{ steps.msys2.outputs.msys2-location }}'
+          ROOT="$(cygpath -u "$WINROOT")"
+          [ -f "$ROOT/mingw64/include/libavutil/avutil.h" ] || {
+            echo "FFmpeg headers missing under $ROOT/mingw64"; ls "$ROOT/mingw64/include" | head; exit 1; }
+          # Windows-form paths for Windows-native consumers (gcc -I via
+          # ffmpeg-sys-next, bindgen); POSIX form only for bash scripts.
+          {
+            echo "FFMPEG_DIR=$WINROOT\mingw64"
+            echo "LIBCLANG_PATH=$WINROOT\mingw64\bin"
+            echo "MSYS_MINGW_BIN=$ROOT/mingw64/bin"
+          } >> "$GITHUB_ENV"
+          echo "$WINROOT\mingw64\bin" >> "$GITHUB_PATH"
+
+      # The engine must build with the GNU toolchain — the dev machine's
+      # default (rustup show: x86_64-pc-windows-gnu). Under the MSVC default,
+      # ffmpeg-sys-next compiles its probe with cl.exe which cannot resolve
+      # the msys64 headers.
+      - name: Install GNU Rust Toolchain
+        shell: bash
+        run: rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
 
       - name: Run cargo test (default features)
         working-directory: native_engine_rust
         env:
-          LIBCLANG_PATH: C:/msys64/mingw64/bin
+          RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
         run: cargo test
 
       - name: Run cargo test (all features)
         working-directory: native_engine_rust
         env:
-          LIBCLANG_PATH: C:/msys64/mingw64/bin
-          FFMPEG_DIR: C:/msys64/mingw64
-        run: cargo test --features "ffmpeg,parallel,f32_pipeline"
+          RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
+        run: cargo test --features "ffmpeg,parallel,sqlite" -j 2
+
+      # v1.5.0-T2 (P3): the REAL-engine Dart tests (engine_real_test,
+      # review_track_a) previously ran NOWHERE in CI — ubuntu had no DLL and
+      # the Windows smoke job's C++ engine is synthetic-only. Here a true
+      # FFmpeg-enabled Rust DLL is built, staged at the repo root (a bindings
+      # lookup candidate) and driven through the actual Flutter test suite.
+      - name: Build Rust Engine DLL (ffmpeg, release)
+        working-directory: native_engine_rust
+        env:
+          RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
+        run: cargo build --release --features ffmpeg,sqlite -j 2
+# sqlite feature included so the SQLite dual-backend Dart test runs for real.
+
+      - name: Stage Rust DLL for Dart Tests
+        shell: pwsh
+        run: Copy-Item native_engine_rust/target/release/ghita_engine.dll ghita_engine.dll
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.x'
+          channel: 'stable'
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Generate Real Test Media
+        shell: bash
+        run: |
+          export PATH="$MSYS_MINGW_BIN:$PATH"
+          ffmpeg -y -f lavfi -i testsrc2=size=320x240:rate=30:duration=1.2 \
+            -f lavfi -i sine=frequency=440:duration=1.2 -c:v libx264 -pix_fmt yuv420p \
+            -c:a aac -shortest -movflags +faststart test_video.mp4
+
+      - name: Run Real-Engine Dart Tests
+        shell: bash
+        run: |
+          # msys64 stays on PATH so avcodec/avformat runtime DLLs resolve.
+          export PATH="$MSYS_MINGW_BIN:$PATH"
+          flutter test test/engine_real_test.dart test/review_track_a_test.dart
+
+  release-windows:
+    name: Release (Windows Installer + Portable)
+    # v1.5.0-T2 (P3): tags now produce shippable artifacts instead of nothing.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [check-version-consistency]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.x'
+          channel: 'stable'
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      # v1.5.0 fix (2026-08-24): the installer must ship the RUST engine, not
+      # the legacy C++ one (windows/CMakeLists.txt still installs native_
+      # engine's ghita_engine.dll over it on every flutter build), plus the
+      # msys64 FFmpeg runtime WITH its full ~93-DLL dependency closure — a
+      # bare av*/sw* set fails to load on machines without msys64 in PATH and
+      # the app dead-ends in Demo Mode ("native engine not available").
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install MSYS2 MinGW FFmpeg + Clang
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          install: mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-clang mingw-w64-x86_64-gcc
+
+      # Same location trap as rust-engine-test: the action installs to a
+      # runner temp dir, not C:\msys64 — export from its actual location.
+      - name: Export MSYS2 MinGW env
+        shell: bash
+        run: |
+          WINROOT='${{ steps.msys2.outputs.msys2-location }}'
+          ROOT="$(cygpath -u "$WINROOT")"
+          [ -f "$ROOT/mingw64/include/libavutil/avutil.h" ] || {
+            echo "FFmpeg headers missing under $ROOT/mingw64"; ls "$ROOT/mingw64/include" | head; exit 1; }
+          {
+            echo "FFMPEG_DIR=$WINROOT\mingw64"
+            echo "LIBCLANG_PATH=$WINROOT\mingw64\bin"
+            echo "MSYS_MINGW_BIN=$ROOT/mingw64/bin"
+          } >> "$GITHUB_ENV"
+
+      - name: Install GNU Rust Toolchain
+        shell: bash
+        run: rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+
+      - name: Build Rust Engine DLL (ffmpeg,gpu,sqlite)
+        working-directory: native_engine_rust
+        env:
+          RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
+        run: cargo build --release --features ffmpeg,gpu,sqlite -j 2
+
+      - name: Build Windows Release
+        run: flutter build windows --release
+
+      - name: Stage Rust Engine + FFmpeg Dependency Closure
+        shell: bash
+        run: bash scripts/stage_windows_release.sh
+
+      # Prove the bundle is self-contained: with msys64 stripped from PATH
+      # (clean-machine simulation) the engine DLL must still load, initialize
+      # and report FFmpeg. cwd = the bundle dir so dependency resolution
+      # matches an installed app (DLLs next to the exe).
+      - name: Verify Bundle Is Self-Contained
+        shell: bash
+        working-directory: build/windows/x64/runner/Release
+        run: |
+          env PATH="/c/Windows/System32:/c/Windows" \
+            "$FLUTTER_ROOT/bin/cache/dart-sdk/bin/dart.exe" \
+            "$GITHUB_WORKSPACE/scripts/load_probe.dart" ghita_engine.dll
+
+      - name: Package Portable Zip
+        shell: pwsh
+        run: Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath 'GhitaEdit-portable-windows.zip'
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Installer
+        shell: cmd
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\ghita_edit_setup.iss'
+
+      # v1.5.0-T6 debug fix: Inno writes to installer/output/ but the publish
+      # step globs dist/*.exe — stage the installer there or it silently
+      # never attaches to the release.
+      - name: Stage Installer Into dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item 'installer/output/*.exe' 'dist/' -Force
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            GhitaEdit-portable-windows.zip
+          fail_on_unmatched_files: false

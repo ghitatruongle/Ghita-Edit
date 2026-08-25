@@ -178,6 +178,28 @@ typedef DartGhitaEngineGetBeatTimes = int Function(Pointer<GhitaEngineContext> c
 typedef CGhitaEngineSetLoopRegion = Void Function(Pointer<GhitaEngineContext> ctx, Int64 startMs, Int64 endMs, Int32 enabled);
 typedef DartGhitaEngineSetLoopRegion = void Function(Pointer<GhitaEngineContext> ctx, int startMs, int endMs, int enabled);
 
+// v1.5.0-T5 (P6): live effect-parameter editing.
+typedef CGhitaEngineSetAudioEffectParam = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 index, Int32 param, Float value);
+typedef DartGhitaEngineSetAudioEffectParam = int Function(Pointer<GhitaEngineContext> ctx, int index, int param, double value);
+
+// v1.5.0-T5 (P5): sticker transform.
+typedef CGhitaEngineSetClipStickerTransform = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Float scale, Float rotationDeg);
+typedef DartGhitaEngineSetClipStickerTransform = int Function(Pointer<GhitaEngineContext> ctx, int clipId, double scale, double rotationDeg);
+
+// v1.5.0-T5 (P6): photo paint tools (ctx-less, caller-owned RGBA buffer).
+typedef CGhitaEnginePaintClone = Int32 Function(Pointer<Uint8> buf, Int32 width, Int32 height, Int32 srcX, Int32 srcY, Int32 dstX, Int32 dstY, Int32 radius, Float opacity);
+typedef DartGhitaEnginePaintClone = int Function(Pointer<Uint8> buf, int width, int height, int srcX, int srcY, int dstX, int dstY, int radius, double opacity);
+typedef CGhitaEnginePaintHeal = Int32 Function(Pointer<Uint8> buf, Int32 width, Int32 height, Int32 cx, Int32 cy, Int32 radius);
+typedef DartGhitaEnginePaintHeal = int Function(Pointer<Uint8> buf, int width, int height, int cx, int cy, int radius);
+typedef CGhitaEnginePaintBrushStroke = Int32 Function(Pointer<Uint8> buf, Int32 width, Int32 height, Pointer<Float> pointsX, Pointer<Float> pointsY, Int32 count, Float size, Float hardness, Float opacity, Uint32 colorRgba);
+typedef DartGhitaEnginePaintBrushStroke = int Function(Pointer<Uint8> buf, int width, int height, Pointer<Float> pointsX, Pointer<Float> pointsY, int count, double size, double hardness, double opacity, int colorRgba);
+
+// v1.5.0-T5 (P2/P3): performance telemetry (JSON into thread-local buffer).
+typedef CGhitaEngineCacheStats = Pointer<Utf8> Function(Pointer<GhitaEngineContext> ctx);
+typedef DartGhitaEngineCacheStats = Pointer<Utf8> Function(Pointer<GhitaEngineContext> ctx);
+typedef CGhitaEngineGpuStats = Pointer<Utf8> Function();
+typedef DartGhitaEngineGpuStats = Pointer<Utf8> Function();
+
 typedef CGhitaEngineSetClipPitch = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Float semitones);
 typedef DartGhitaEngineSetClipPitch = int Function(Pointer<GhitaEngineContext> ctx, int clipId, double semitones);
 
@@ -213,8 +235,8 @@ typedef DartGhitaProjectDbDelete = int Function(Pointer<Utf8> dbPath, Pointer<Ut
 typedef CGhitaProjectDbLibraryAdd = Int32 Function(Pointer<Utf8> dbPath, Pointer<Utf8> path, Pointer<Utf8> hash, Pointer<Utf8> metadataJson);
 typedef DartGhitaProjectDbLibraryAdd = int Function(Pointer<Utf8> dbPath, Pointer<Utf8> path, Pointer<Utf8> hash, Pointer<Utf8> metadataJson);
 
-typedef CGhitaProjectDbLibrarySearch = Pointer<Utf8> Function(Pointer<Utf8> dbPath, Pointer<Utf8> query);
-typedef DartGhitaProjectDbLibrarySearch = Pointer<Utf8> Function(Pointer<Utf8> dbPath, Pointer<Utf8> query);
+typedef CGhitaProjectDbLibrarySearch = Pointer<Utf8> Function(Pointer<Utf8> dbPath, Pointer<Utf8> query, Int32 minRating);
+typedef DartGhitaProjectDbLibrarySearch = Pointer<Utf8> Function(Pointer<Utf8> dbPath, Pointer<Utf8> query, int minRating);
 
 typedef CGhitaProjectDbLibraryUpdateRating = Int32 Function(Pointer<Utf8> dbPath, Int64 id, Int32 rating);
 typedef DartGhitaProjectDbLibraryUpdateRating = int Function(Pointer<Utf8> dbPath, int id, int rating);
@@ -224,17 +246,17 @@ typedef DartGhitaProjectDbLibraryUpdateTags = int Function(Pointer<Utf8> dbPath,
 
 // ========== v1.5.0 T6: Selection Tools — defensive lookups. ==========
 
-typedef CGhitaEngineSetSelectionRect = Int32 Function(Int32 x, Int32 y, Int32 w, Int32 h, Int32 op);
-typedef DartGhitaEngineSetSelectionRect = int Function(int x, int y, int w, int h, int op);
+typedef CGhitaEngineSetSelectionRect = Int32 Function(Int32 width, Int32 height, Int32 x, Int32 y, Int32 w, Int32 h, Int32 op);
+typedef DartGhitaEngineSetSelectionRect = int Function(int width, int height, int x, int y, int w, int h, int op);
 
-typedef CGhitaEngineSetSelectionEllipse = Int32 Function(Int32 cx, Int32 cy, Int32 rx, Int32 ry, Int32 op);
-typedef DartGhitaEngineSetSelectionEllipse = int Function(int cx, int cy, int rx, int ry, int op);
+typedef CGhitaEngineSetSelectionEllipse = Int32 Function(Int32 width, Int32 height, Int32 cx, Int32 cy, Int32 rx, Int32 ry, Int32 op);
+typedef DartGhitaEngineSetSelectionEllipse = int Function(int width, int height, int cx, int cy, int rx, int ry, int op);
 
-typedef CGhitaEngineSetSelectionLasso = Int32 Function(Pointer<Int32> points, Int32 count, Int32 op);
-typedef DartGhitaEngineSetSelectionLasso = int Function(Pointer<Int32> points, int count, int op);
+typedef CGhitaEngineSetSelectionLasso = Int32 Function(Int32 width, Int32 height, Pointer<Int32> pointsX, Pointer<Int32> pointsY, Int32 count, Int32 op);
+typedef DartGhitaEngineSetSelectionLasso = int Function(int width, int height, Pointer<Int32> pointsX, Pointer<Int32> pointsY, int count, int op);
 
-typedef CGhitaEngineSetSelectionMagicWand = Int32 Function(Pointer<Uint8> imageData, Int32 width, Int32 height, Int32 seedX, Int32 seedY, Float tolerance, Int32 op);
-typedef DartGhitaEngineSetSelectionMagicWand = int Function(Pointer<Uint8> imageData, int width, int height, int seedX, int seedY, double tolerance, int op);
+typedef CGhitaEngineSetSelectionMagicWand = Int32 Function(Int32 width, Int32 height, Int32 seedX, Int32 seedY, Float tolerance, Pointer<Uint8> imageData, Int32 op);
+typedef DartGhitaEngineSetSelectionMagicWand = int Function(int width, int height, int seedX, int seedY, double tolerance, Pointer<Uint8> imageData, int op);
 
 typedef CGhitaEngineModifyMask = Int32 Function(Int32 op);
 typedef DartGhitaEngineModifyMask = int Function(int op);
@@ -608,6 +630,15 @@ class GhitaNativeBindings {
   DartGhitaEngineStopRecording? stopRecording;
   DartGhitaEngineIsRecording? isRecording;
   DartGhitaEngineExportLabels? exportLabels;
+  // v1.5.0-T5: effect-param live edit + performance telemetry.
+  DartGhitaEngineSetAudioEffectParam? setAudioEffectParam;
+  DartGhitaEngineCacheStats? getCacheStats;
+  DartGhitaEngineGpuStats? getGpuStats;
+  DartGhitaEngineSetClipStickerTransform? setClipStickerTransform;
+  // v1.5.0-T5 (P6): photo paint tools.
+  DartGhitaEnginePaintClone? paintClone;
+  DartGhitaEnginePaintHeal? paintHeal;
+  DartGhitaEnginePaintBrushStroke? paintBrushStroke;
 
   // ========== v1.5.0 T5: SQLite Project Database — defensive lookups (sqlite feature). ==========
   DartGhitaProjectDbSave? projectDbSave;
@@ -705,6 +736,17 @@ class GhitaNativeBindings {
   }
 
   void _bindFunctions() {
+    // v1.5.0-T2 (P2): a hard lookup failure must name the offending symbol
+    // instead of a bare ArgumentError that upstream code swallows into
+    // silent Demo Mode.
+    try {
+      _bindFunctionsInner();
+    } on ArgumentError catch (e) {
+      throw StateError('Engine DLL rejected a required FFI symbol: $e');
+    }
+  }
+
+  void _bindFunctionsInner() {
     // Lifecycle
     createEngine = _lib.lookupFunction<CGhitaEngineCreate, DartGhitaEngineCreate>('ghita_engine_create');
     destroyEngine = _lib.lookupFunction<CGhitaEngineDestroy, DartGhitaEngineDestroy>('ghita_engine_destroy');
@@ -832,6 +874,14 @@ class GhitaNativeBindings {
     stopRecording = _tryLookup('ghita_engine_stop_recording', () => _lib.lookupFunction<CGhitaEngineStopRecording, DartGhitaEngineStopRecording>('ghita_engine_stop_recording'));
     isRecording = _tryLookup('ghita_engine_is_recording', () => _lib.lookupFunction<CGhitaEngineIsRecording, DartGhitaEngineIsRecording>('ghita_engine_is_recording'));
     exportLabels = _tryLookup('ghita_engine_export_labels', () => _lib.lookupFunction<CGhitaEngineExportLabels, DartGhitaEngineExportLabels>('ghita_engine_export_labels'));
+    // v1.5.0-T5: effect-param live edit + performance telemetry.
+    setAudioEffectParam = _tryLookup('ghita_engine_set_audio_effect_param', () => _lib.lookupFunction<CGhitaEngineSetAudioEffectParam, DartGhitaEngineSetAudioEffectParam>('ghita_engine_set_audio_effect_param'));
+    getCacheStats = _tryLookup('ghita_engine_cache_stats', () => _lib.lookupFunction<CGhitaEngineCacheStats, DartGhitaEngineCacheStats>('ghita_engine_cache_stats'));
+    getGpuStats = _tryLookup('ghita_engine_gpu_stats', () => _lib.lookupFunction<CGhitaEngineGpuStats, DartGhitaEngineGpuStats>('ghita_engine_gpu_stats'));
+    setClipStickerTransform = _tryLookup('ghita_engine_set_clip_sticker_transform', () => _lib.lookupFunction<CGhitaEngineSetClipStickerTransform, DartGhitaEngineSetClipStickerTransform>('ghita_engine_set_clip_sticker_transform'));
+    paintClone = _tryLookup('ghita_engine_paint_clone', () => _lib.lookupFunction<CGhitaEnginePaintClone, DartGhitaEnginePaintClone>('ghita_engine_paint_clone'));
+    paintHeal = _tryLookup('ghita_engine_paint_heal', () => _lib.lookupFunction<CGhitaEnginePaintHeal, DartGhitaEnginePaintHeal>('ghita_engine_paint_heal'));
+    paintBrushStroke = _tryLookup('ghita_engine_paint_brush_stroke', () => _lib.lookupFunction<CGhitaEnginePaintBrushStroke, DartGhitaEnginePaintBrushStroke>('ghita_engine_paint_brush_stroke'));
 
     // ========== v1.5.0 T5: SQLite Project Database — defensive lookups (sqlite feature). ==========
     projectDbSave = _tryLookup('ghita_project_db_save', () => _lib.lookupFunction<CGhitaProjectDbSave, DartGhitaProjectDbSave>('ghita_project_db_save'));

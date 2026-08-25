@@ -1,6 +1,7 @@
 import 'dart:io' show Directory;
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../controllers/editor_controller.dart';
@@ -47,9 +48,11 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
   bool _recording = false;
   int _recMode = 0;
   int _recDurationMs = 0;
+  DateTime? _recStartTime;
 
   // Loop region
   bool _loopEnabled = false;
+  // v1.5.0-T5 (P6): editable loop bounds (were hardwired read-only values).
   int _loopStartMs = 0;
   int _loopEndMs = 5000;
 
@@ -78,6 +81,9 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
   void dispose() {
     _exportTimer?.cancel();
     _pollTimer?.cancel();
+    // v1.5.0-T3 (P2): release the cached static spectrogram layer.
+    _specStaticPicture?.dispose();
+    _specStaticPicture = null;
     super.dispose();
   }
 
@@ -87,11 +93,19 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
     if (!e.isReady) return;
     bool changed = false;
     final rec = e.isRecording();
-    if (rec != _recording) { _recording = rec; changed = true; }
-    if (_recording) {
-      _recDurationMs = e.stopRecording(); // peek without stopping — actually we need isRecording only
-      // Re-check: stopRecording returns duration only when stopped. Use a separate approach.
-      // For live duration display, just track elapsed time locally.
+    if (rec != _recording) {
+      _recording = rec;
+      _recStartTime = rec ? DateTime.now() : null;
+      changed = true;
+    }
+    // Live duration from a local clock — the old "peek" called stopRecording()
+    // every tick, which really killed the native recorder after ~200 ms.
+    if (_recording && _recStartTime != null) {
+      final elapsed = DateTime.now().difference(_recStartTime!).inMilliseconds;
+      if (elapsed != _recDurationMs) {
+        _recDurationMs = elapsed;
+        changed = true;
+      }
     }
     final gr = e.getGainReductionDb();
     if (gr != _gainReductionDb) { _gainReductionDb = gr; changed = true; }
@@ -122,6 +136,46 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
       _specBins = bins;
       _spectrogramVersion = version;
     }
+  }
+
+  // v1.5.0-T3 (P2): the heavy static spectrogram layers (background, heat
+  // map, waveform, beats, loop region) are recorded ONCE into a ui.Picture
+  // per data/size change — playback ticks then cost one drawPicture + a
+  // playhead line instead of ~12,800 drawRect allocations per repaint.
+  ui.Picture? _specStaticPicture;
+  int _specStaticKey = -1;
+
+  void _ensureSpectrogramStaticLayer(double w, double h) {
+    final durMs = widget.controller.durationMs;
+    final key = Object.hash(
+        _spectrogramVersion,
+        _waveformVersion,
+        _beatTimes.length,
+        identityHashCode(_beatTimes),
+        _loopEnabled,
+        _loopStartMs,
+        _loopEndMs,
+        durMs,
+        w.round(),
+        h.round());
+    if (key == _specStaticKey && _specStaticPicture != null) return;
+    _specStaticKey = key;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    _SpectrogramStaticPainter(
+      spectrogram: _spectrogram,
+      cols: _specCols,
+      bins: _specBins,
+      waveform: _fetchWaveform(),
+      beatTimes: _beatTimes,
+      durationMs: durMs,
+      loopEnabled: _loopEnabled,
+      loopStartRatio: durMs > 0 ? _loopStartMs / durMs : 0.0,
+      loopEndRatio: durMs > 0 ? _loopEndMs / durMs : 0.0,
+    ).paint(canvas, Size(w, h));
+    final picture = recorder.endRecording();
+    _specStaticPicture?.dispose();
+    _specStaticPicture = picture;
   }
 
   void _detectTempo() {
@@ -209,6 +263,8 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
     } else {
       final outPath = '${(widget.controller.project.filePath.isNotEmpty ? Directory(widget.controller.project.filePath).parent.path : '.')}/recording_${DateTime.now().millisecondsSinceEpoch}.wav';
       e.startRecording(outPath, _recMode, 0, 0, 0);
+      _recStartTime = DateTime.now();
+      _recDurationMs = 0;
       setState(() => _recording = true);
     }
   }
@@ -224,7 +280,15 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
     if (listIndex < 0 || listIndex >= _effects.length) return;
     final entry = _effects[listIndex];
     widget.controller.engineService.removeAudioEffect(entry.index);
-    setState(() => _effects.removeAt(listIndex));
+    setState(() {
+      // v1.5.0-T6 debug fix: the engine chain shifts later entries down by
+      // one — mirror that locally or the param sliders (and close buttons)
+      // retune the WRONG effect after any removal.
+      for (final other in _effects) {
+        if (other.index > entry.index) other.index--;
+      }
+      _effects.removeAt(listIndex);
+    });
   }
 
   @override
@@ -289,6 +353,33 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
               widget.controller.engineService.setLoopRegion(_loopStartMs, _loopEndMs, _loopEnabled);
             },
           ),
+          // v1.5.0-T5 (P6): editable loop region — was hardwired 0..5000ms.
+          if (_loopEnabled) ...[
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 120,
+              child: Column(children: [
+                SliderTheme(
+                  data: const SliderThemeData(trackHeight: 2, thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5)),
+                  child: Slider(value: _loopStartMs.toDouble(), min: 0, max: (_loopEndMs - 100).clamp(100, 600000).toDouble(),
+                    label: 'In ${_loopStartMs}ms',
+                    onChanged: (v) {
+                      setState(() => _loopStartMs = v.round());
+                      widget.controller.engineService.setLoopRegion(_loopStartMs, _loopEndMs, true);
+                    }),
+                ),
+                SliderTheme(
+                  data: const SliderThemeData(trackHeight: 2, thumbShape: RoundSliderThumbShape(enabledThumbRadius: 5)),
+                  child: Slider(value: _loopEndMs.toDouble(), min: (_loopStartMs + 100).clamp(100, 600000).toDouble(), max: 600000,
+                    label: 'Out ${_loopEndMs}ms',
+                    onChanged: (v) {
+                      setState(() => _loopEndMs = v.round());
+                      widget.controller.engineService.setLoopRegion(_loopStartMs, _loopEndMs, true);
+                    }),
+                ),
+              ]),
+            ),
+          ],
           const SizedBox(width: 8),
           _ToggleButton(
             label: 'Brush', active: _brushMode,
@@ -340,6 +431,21 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
                   dense: true, visualDensity: VisualDensity.compact,
                   leading: const Icon(Icons.audio_file, size: 14, color: AppTheme.primaryLight),
                   title: Text(_effectNames[e.type], style: const TextStyle(color: AppTheme.textMain, fontSize: 11)),
+                  // v1.5.0-T5 (P6): live per-parameter editing (p0..p3) via
+                  // ghita_engine_set_audio_effect_param — the chain entry no
+                  // longer needs remove/re-add to change a value.
+                  subtitle: SizedBox(
+                    height: 22,
+                    child: Row(children: List.generate(4, (pi) => Expanded(
+                      child: Slider(
+                        value: e.params[pi], min: 0, max: 1,
+                        onChanged: (v) {
+                          setState(() => e.params[pi] = v);
+                          widget.controller.engineService.setAudioEffectParam(e.index, pi, v);
+                        },
+                      ),
+                    ))),
+                  ),
                   trailing: IconButton(
                     icon: const Icon(Icons.close, size: 12), onPressed: () => _removeEffect(i),
                     color: AppTheme.textMuted, padding: EdgeInsets.zero, constraints: const BoxConstraints(),
@@ -388,7 +494,10 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
                 setState(() => _clipPitch = v);
                 final selClip = widget.controller.selectedClip;
                 if (selClip != null) {
-                  final cid = int.tryParse(selClip.id); if (cid != null) widget.controller.engineService.setClipPitch(cid, v);
+                  // Clip ids are 'clip_<ts>_<n>' — resolve through the
+                  // controller's native-id map (int.tryParse never matched).
+                  final cid = widget.controller.nativeClipIdFor(selClip.id);
+                  if (cid != null) widget.controller.engineService.setClipPitch(cid, v);
                 }
               }),
           ),
@@ -452,12 +561,17 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
                 border: Border.all(color: AppTheme.divider),
               ),
               child: LayoutBuilder(builder: (_, constraints) {
+                // v1.5.0-T3 (P2): record the heavy static layers ONCE per
+                // data/size change; the per-tick paint is drawPicture + line.
+                _ensureSpectrogramStaticLayer(
+                    constraints.maxWidth, constraints.maxHeight);
                 return GestureDetector(
                   onTapDown: _brushMode ? (d) => _onSpectrogramTap(d, constraints.maxWidth) : null,
                   onHorizontalDragUpdate: _brushMode ? (d) => _onSpectrogramTap(d, constraints.maxWidth) : null,
                   child: CustomPaint(
                     size: Size(constraints.maxWidth, constraints.maxHeight),
                     painter: _SpectrogramPainter(
+                      staticLayer: _specStaticPicture,
                       spectrogram: _spectrogram, cols: _specCols, bins: _specBins,
                       waveform: _fetchWaveform(),
                       positionRatio: widget.controller.durationMs > 0
@@ -571,8 +685,14 @@ class _AudioDawPanelState extends State<AudioDawPanel> {
 
 class _EffectEntry {
   final int type;
-  final int index;
-  _EffectEntry({required this.type, required this.index});
+  // v1.5.0-T6 debug fix: mutable — the engine chain shifts indices down on
+  // remove, so entries must re-sync their chain position.
+  int index;
+  /// v1.5.0-T5 (P6): live p0..p3 values mirrored from the engine chain
+  /// (engine defaults are 0.5) — edited via setAudioEffectParam.
+  final List<double> params;
+  _EffectEntry({required this.type, required this.index})
+      : params = List.filled(4, 0.5);
 }
 
 class _RecordButton extends StatelessWidget {
@@ -623,21 +743,22 @@ class _ToggleButton extends StatelessWidget {
   }
 }
 
-class _SpectrogramPainter extends CustomPainter {
+/// v1.5.0-T3 (P2): heavy STATIC layers only — recorded into a ui.Picture by
+/// the panel state, never repainted per tick.
+class _SpectrogramStaticPainter extends CustomPainter {
   final Float32List spectrogram;
   final int cols;
   final int bins;
   final Float32List waveform;
-  final double positionRatio;
   final List<int> beatTimes;
   final int durationMs;
   final bool loopEnabled;
   final double loopStartRatio;
   final double loopEndRatio;
 
-  _SpectrogramPainter({
+  _SpectrogramStaticPainter({
     required this.spectrogram, required this.cols, required this.bins,
-    required this.waveform, required this.positionRatio,
+    required this.waveform,
     required this.beatTimes, required this.durationMs,
     required this.loopEnabled, required this.loopStartRatio, required this.loopEndRatio,
   });
@@ -694,11 +815,6 @@ class _SpectrogramPainter extends CustomPainter {
         }
       }
     }
-
-    // Playhead
-    final px = positionRatio.clamp(0.0, 1.0) * size.width;
-    canvas.drawLine(Offset(px, 0), Offset(px, size.height),
-      Paint()..color = const Color(0xFFEC4899)..strokeWidth = 2.0);
   }
 
   Color _heatColor(double t) {
@@ -709,9 +825,54 @@ class _SpectrogramPainter extends CustomPainter {
   }
 
   @override
+  bool shouldRepaint(covariant _SpectrogramStaticPainter old) => true;
+}
+
+/// Per-frame layer: blits the cached static picture and draws the playhead.
+class _SpectrogramPainter extends CustomPainter {
+  final ui.Picture? staticLayer;
+  final Float32List spectrogram;
+  final int cols;
+  final int bins;
+  final Float32List waveform;
+  final double positionRatio;
+  final List<int> beatTimes;
+  final int durationMs;
+  final bool loopEnabled;
+  final double loopStartRatio;
+  final double loopEndRatio;
+
+  _SpectrogramPainter({
+    required this.staticLayer,
+    required this.spectrogram, required this.cols, required this.bins,
+    required this.waveform, required this.positionRatio,
+    required this.beatTimes, required this.durationMs,
+    required this.loopEnabled, required this.loopStartRatio, required this.loopEndRatio,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cached = staticLayer;
+    if (cached != null) {
+      canvas.drawPicture(cached);
+    } else {
+      // Fallback before the first recording — draw the static layers inline.
+      _SpectrogramStaticPainter(
+        spectrogram: spectrogram, cols: cols, bins: bins,
+        waveform: waveform, beatTimes: beatTimes, durationMs: durationMs,
+        loopEnabled: loopEnabled, loopStartRatio: loopStartRatio,
+        loopEndRatio: loopEndRatio,
+      ).paint(canvas, size);
+    }
+
+    // Playhead
+    final px = positionRatio.clamp(0.0, 1.0) * size.width;
+    canvas.drawLine(Offset(px, 0), Offset(px, size.height),
+      Paint()..color = const Color(0xFFEC4899)..strokeWidth = 2.0);
+  }
+
+  @override
   bool shouldRepaint(covariant _SpectrogramPainter old) =>
-      old.positionRatio != positionRatio || old.waveform != waveform ||
-      old.spectrogram != spectrogram || old.beatTimes != beatTimes ||
-      old.loopEnabled != loopEnabled;
+      old.positionRatio != positionRatio || old.staticLayer != staticLayer;
 }
 

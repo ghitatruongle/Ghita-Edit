@@ -199,6 +199,24 @@ fn t3_import_transcript_creates_text_clips() {
     let _ = std::fs::remove_file(&path);
 }
 
+// v1.5.0-T1 regression — CRLF-saved .srt must import EVERY cue: the old block
+// split on a bare "\n\n" never matched "\r\n\r\n", so only the first cue
+// became a clip.
+#[test]
+fn t3_import_transcript_crlf_imports_all_cues() {
+    let srt = "1\r\n00:00:00,500 --> 00:00:02,000\r\nHello world\r\n\r\n2\r\n00:00:02,000 --> 00:00:04,000\r\nSecond line\r\n";
+    let path = std::env::temp_dir().join("t3_transcript_crlf.srt");
+    std::fs::write(&path, srt).unwrap();
+    let p = ctx_new();
+    let cpath = CString::new(path.to_str().unwrap()).unwrap();
+    let n = unsafe { ghita_engine_import_transcript(p, cpath.as_ptr(), 3) };
+    assert_eq!(n, 2, "CRLF file must yield two cues");
+    assert_eq!(unsafe { ghita_engine_get_clip_count(p) }, 2);
+    assert_eq!(unsafe { ghita_engine_get_duration_ms(p) }, 4000);
+    unsafe { ghita_engine_destroy(p) };
+    let _ = std::fs::remove_file(&path);
+}
+
 // #8 — Font family ------------------------------------------------------------
 
 #[test]

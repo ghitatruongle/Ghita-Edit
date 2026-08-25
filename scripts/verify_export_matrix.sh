@@ -27,9 +27,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-FFPROBE="$(command -v ffprobe || command -v ffprobe.exe || echo /c/msys64/mingw64/bin/ffprobe.exe)"
-FFMPEG="$(command -v ffmpeg || command -v ffmpeg.exe || echo /c/msys64/mingw64/bin/ffmpeg.exe)"
-DART="$(command -v dart || echo /c/Users/Acer/flutter/bin/dart)"
+# v1.5.0-T2 (P3): resolve tools via PATH / env override only — the old
+# fallbacks pointed at ONE developer's machine (/c/Users/Acer/..., msys64).
+: "${FFPROBE:=ffprobe}"
+: "${FFMPEG:=ffmpeg}"
+: "${DART:=dart}"
+command -v "$FFPROBE" >/dev/null 2>&1 || { echo "ERROR: ffprobe not found (set FFPROBE=...)" >&2; exit 2; }
+command -v "$FFMPEG" >/dev/null 2>&1 || { echo "ERROR: ffmpeg not found (set FFMPEG=...)" >&2; exit 2; }
+command -v "$DART" >/dev/null 2>&1 || { echo "ERROR: dart not found (set DART=...)" >&2; exit 2; }
 
 if [ ! -f "$DLL" ]; then
   echo "ERROR: engine DLL not found at $DLL" >&2
@@ -55,6 +60,8 @@ SKIPPED=0
 
 verify() {
   local name="$1" ext="$2" expect_type="$3" expect_codec="$4" min_seconds="$5"
+  # v1.5.0-T2 (P3): optional expected channel count (5.1→6, 7.1→8).
+  local expect_channels="${6:-}"
   local file="$OUT/$name.$ext"
   if [ ! -f "$file" ] || [ ! -s "$file" ]; then
     # Honest SKIP when the required encoder is absent from this FFmpeg build
@@ -81,7 +88,7 @@ verify() {
     return
   fi
   local info
-  info="$("$FFPROBE" -v error -show_entries stream=codec_type,codec_name -show_entries format=duration -of csv "$file" 2>/dev/null || true)"
+  info="$("$FFPROBE" -v error -show_entries stream=channels,codec_type,codec_name -show_entries format=duration -of csv "$file" 2>/dev/null || true)"
   if [ -z "$info" ]; then
     echo "  [FAIL] $name — ffprobe cannot parse the file"
     FAILED=$((FAILED + 1))
@@ -90,8 +97,12 @@ verify() {
   local ok=1
   # ffprobe CSV rows are "stream,<codec_name>,<codec_type>" (fields are
   # sorted alphabetically by ffprobe, so codec_name precedes codec_type).
+  # With channels requested the row becomes "stream,<n>,<codec>,<type>".
   if ! echo "$info" | grep -q "stream,$expect_codec,$expect_type"; then ok=0; fi
   if ! echo "$info" | grep -q "stream,.*,$expect_type"; then ok=0; fi
+  if [ -n "$expect_channels" ] && ! echo "$info" | grep -q "stream,$expect_channels,$expect_codec,$expect_type"; then
+    ok=0
+  fi
   local duration
   duration="$(echo "$info" | grep '^format,' | head -1 | cut -d, -f2)"
   if [ -n "$min_seconds" ]; then
@@ -103,10 +114,10 @@ verify() {
     fi
   fi
   if [ "$ok" -eq 1 ]; then
-    echo "  [PASS] $name — ${expect_type}/${expect_codec}, ${duration}s"
+    echo "  [PASS] $name — ${expect_type}/${expect_codec}${expect_channels:+ x$expect_channels}, ${duration}s"
     PASSED=$((PASSED + 1))
   else
-    echo "  [FAIL] $name — expected $expect_type/$expect_codec but got:"
+    echo "  [FAIL] $name — expected $expect_type/$expect_codec${expect_channels:+ x$expect_channels} but got:"
     echo "$info" | sed 's/^/         /'
     FAILED=$((FAILED + 1))
   fi
@@ -120,6 +131,10 @@ verify mp4_vp9    mp4 video vp9  0.8
 verify gif        gif video gif  0.5
 verify mp3        mp3 audio mp3  0.8
 verify mov_h264   mov video h264 0.8
+# v1.5.0-T2 (P3): multichannel AAC — the engine channel layout (5.1/7.1)
+# must survive into the container: ffprobe channels = 6 / 8.
+verify aac_51     mp4 audio aac  0.8 6
+verify aac_71     mp4 audio aac  0.8 8
 
 echo "---"
 echo "Matrix result: $PASSED passed, $SKIPPED skipped, $FAILED failed"

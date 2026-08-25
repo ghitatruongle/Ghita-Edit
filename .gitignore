@@ -41,7 +41,14 @@ migrate_working_dir/
 /noibo/
 PLAN_*.md
 PLAN_REVIEW_*.md
-docs/
+# Internal code-review handoff artifacts (audit exports, diff dumps)
+_XEMAYDOI*
+# Ad-hoc tooling dropped into the repo root (portable GitHub CLI copy etc.)
+/gh_cli/
+/gh.zip
+# v1.5.0-T2 (P4): docs/ is TRACKED (plan_v1.5.0.md, plan_v1.5.0_final.md,
+# rust_engine_abi.md, android_status.md...) — the old blanket "docs/" ignore
+# made new docs silently invisible to git.
 assets/logos/
 assets/logo_concept*.png
 *.ghita
@@ -283,3 +290,12 @@ dist/
 refer_project/
 
 **/target/
+
+# ------------------------------------------------------------------------------
+# 13. Re-asserted Internal Ignores (MUST stay last)
+# Git keeps the LAST matching pattern, so the !*.md safeguard above silently
+# re-includes any .md ignored earlier. These rules close that hole.
+# ------------------------------------------------------------------------------
+_XEMAYDOI*
+/PLAN_*.md
+/PLAN_REVIEW_*.md

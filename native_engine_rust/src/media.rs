@@ -63,6 +63,12 @@ pub struct FfmpegDecoder {
     pcm_i16_buf: Vec<i16>,
     pcm_f32_buf: Vec<f32>,
     audio_conv_buf: Vec<f32>,
+
+    /// v1.5.0-T4 (P4): PTS of the last decoded video frame — enables the
+    /// monotonic-seek fast path (sequential forward reads keep the decoder
+    /// pipeline warm instead of seek+flush on EVERY export frame).
+    /// i64::MIN = unknown (fresh open / after flush / non-monotonic jump).
+    last_video_pts: i64,
 }
 
 // SAFETY: serialized by the render mutex — same contract as the C++ decoder.
@@ -124,6 +130,7 @@ impl FfmpegDecoder {
             pcm_i16_buf: Vec::new(),
             pcm_f32_buf: Vec::new(),
             audio_conv_buf: Vec::new(),
+            last_video_pts: i64::MIN,
         }
     }
 
@@ -143,6 +150,8 @@ impl FfmpegDecoder {
     /// RealFFmpegMediaDecoder::open — FFmpeg init or transparent fallback.
     pub fn open(&mut self, file_path: &str) -> bool {
         self.file_path = file_path.to_string();
+        // New container ⇒ old PTS continuity is meaningless.
+        self.last_video_pts = i64::MIN;
         unsafe {
             if self.init_ffmpeg_contexts() {
                 self.has_ffmpeg = true;
@@ -667,11 +676,24 @@ impl FfmpegDecoder {
             return true;
         }
 
-        let seek_ret = ffi::av_seek_frame(self.fmt_ctx, self.video_stream_idx, target_pts, ffi::AVSEEK_FLAG_BACKWARD);
-        if seek_ret < 0 {
-            ffi::av_seek_frame(self.fmt_ctx, self.video_stream_idx, 0, ffi::AVSEEK_FLAG_BACKWARD);
+        // v1.5.0-T4 (P4): monotonic fast path — export/preview sweeps decode
+        // FORWARD through the file; skipping seek+flush keeps the decoder
+        // pipeline warm (the old path threw it away on EVERY frame). Any
+        // backward jump or unknown state falls back to a real seek.
+        // v1.5.0-T6 debug fix: STRICTLY forward (`>`, not `>=`) — repeated
+        // renders at the same position (paused CC drag, resize, slow-mo
+        // duplicate source ms) must return the SAME frame deterministically;
+        // with `>=` we skipped the seek and served the NEXT decoded packet.
+        let monotonic = self.last_video_pts != i64::MIN
+            && target_pts > self.last_video_pts
+            && !likely_still;
+        if !monotonic {
+            let seek_ret = ffi::av_seek_frame(self.fmt_ctx, self.video_stream_idx, target_pts, ffi::AVSEEK_FLAG_BACKWARD);
+            if seek_ret < 0 {
+                ffi::av_seek_frame(self.fmt_ctx, self.video_stream_idx, 0, ffi::AVSEEK_FLAG_BACKWARD);
+            }
+            ffi::avcodec_flush_buffers(self.video_codec_ctx);
         }
-        ffi::avcodec_flush_buffers(self.video_codec_ctx);
 
         // The read+decode loop, used twice (after seek, and after a fresh
         // demuxer open for image2-style stills).
@@ -691,6 +713,9 @@ impl FfmpegDecoder {
                                 if frame_pts == i64::MIN {
                                     frame_pts = 0;
                                 }
+                                // v1.5.0-T4 (P4): track decode position for
+                                // the monotonic fast path.
+                                self.last_video_pts = frame_pts;
                                 if frame_pts >= target_pts {
                                     ffi::av_packet_unref(self.packet);
                                     decoded = true;
@@ -721,6 +746,8 @@ impl FfmpegDecoder {
             {
                 ffi::avformat_close_input(&mut self.fmt_ctx);
                 self.fmt_ctx = fresh;
+                // New demuxer ⇒ monotonic state invalid until first decode.
+                self.last_video_pts = i64::MIN;
                 ffi::avcodec_flush_buffers(self.video_codec_ctx);
                 frame_decoded = read_loop!();
             } else if !fresh.is_null() {
@@ -804,8 +831,13 @@ impl FfmpegDecoder {
                         let mut float_data = (*self.frame).data[0] as *mut f32;
                         let mut frames = (*self.frame).nb_samples as usize;
                         if (*self.audio_codec_ctx).sample_fmt != AV_SAMPLE_FMT_FLT && !self.swr_ctx.is_null() {
+                            // SWR output layout == source layout (interleaved FLT): every
+                            // converted frame writes nb_channels floats, so requested frames
+                            // must be capped at sample_count / channels or swr_convert
+                            // overflows conv_buffer on any non-mono source.
+                            let channels = (*self.audio_codec_ctx).ch_layout.nb_channels.max(1) as usize;
+                            let requested = swr_requested_frames(frames, sample_count, channels);
                             let conv_out: [*mut u8; 1] = [conv_buffer.as_mut_ptr() as *mut u8];
-                            let requested = frames.min(sample_count);
                             let out_frames = ffi::swr_convert(
                                 self.swr_ctx,
                                 conv_out.as_ptr(),
@@ -1038,4 +1070,30 @@ impl Drop for FfmpegDecoder {
 
 fn bytemuck_u8<T: Copy>(v: &mut [T]) -> &mut [u8] {
     unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr() as *mut u8, std::mem::size_of_val(v)) }
+}
+
+/// Frames to request from swr so the interleaved-FLT output can never exceed
+/// `sample_count` floats — every converted frame writes `channels` floats, so
+/// an uncapped request overflowed conv_buffer on any non-mono source (T1).
+fn swr_requested_frames(frame_samples: usize, sample_count: usize, channels: usize) -> usize {
+    frame_samples.min(sample_count / channels.max(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::swr_requested_frames;
+
+    #[test]
+    fn swr_cap_never_exceeds_conv_buffer_on_multichannel() {
+        // Regression (T1): requesting 1000 frames for a stereo source into a
+        // 1000-float buffer wrote up to 2000 floats — heap overflow on any
+        // non-FLT stereo file (MP3/AAC waveform path).
+        assert_eq!(swr_requested_frames(1000, 1000, 2), 500);
+        assert_eq!(swr_requested_frames(4096, 1024, 2), 512);
+        // 5.1 content: six floats per frame.
+        assert_eq!(swr_requested_frames(600, 600, 6), 100);
+        // Mono keeps the full budget; a degenerate channel count counts as 1.
+        assert_eq!(swr_requested_frames(1000, 1000, 1), 1000);
+        assert_eq!(swr_requested_frames(1000, 1000, 0), 1000);
+    }
 }

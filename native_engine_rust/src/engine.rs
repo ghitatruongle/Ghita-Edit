@@ -46,6 +46,10 @@ pub struct EngineState {
     // v1.5.0 T3 (#10): timeline bookmarks.
     pub bookmarks: Vec<Bookmark>,
     pub next_bookmark_id: i32,
+    /// v1.5.0-T5 (P2): paused-scrub frame cache — keyed by position + size +
+    /// full timeline-state hash; RefCell is safe here because every access
+    /// happens while the render mutex is held (serialized).
+    pub processing: std::cell::RefCell<crate::processing_cache::ProcessingCache>,
 }
 
 impl Default for EngineState {
@@ -63,6 +67,7 @@ impl Default for EngineState {
             canvas_bg_color2: 0xFF000000,
             bookmarks: Vec::new(),
             next_bookmark_id: 1,
+            processing: std::cell::RefCell::new(crate::processing_cache::ProcessingCache::new()),
         }
     }
 }
@@ -123,8 +128,33 @@ fn cpal_mix_chunk<T: cpal::SizedSample + cpal::FromSample<f32>>(this: &EnginePtr
     let engine = unsafe { &*this.raw() };
     let pos = engine.get_position_ms();
     let window_ms = (frames as f64 * 1000.0 / 44100.0) as i64;
-    let mut mix = vec![0.0f32; frames * 2];
-    let has_audio = engine.mix_audio_window(pos, pos + window_ms, &mut mix, frames * 2, true);
+    // v1.5.0-T4 (P5): the mix scratch lives in a thread-local pool owned by
+    // the audio-callback thread — the old path allocated a fresh Vec on
+    // EVERY realtime callback (allocation in the RT path).
+    thread_local! {
+        static CPAL_MIX_SCRATCH: std::cell::RefCell<Vec<f32>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let mut mix = CPAL_MIX_SCRATCH.with(|b| {
+        let mut b = b.borrow_mut();
+        b.clear();
+        b.resize(frames * 2, 0.0);
+        std::mem::take(&mut *b)
+    });
+    // An audio callback must never unwind across cpal's thread and must not
+    // propagate a poisoned-lock panic — degrade to silence instead.
+    let has_audio = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        engine.mix_audio_window(pos, pos + window_ms, &mut mix, frames * 2, true)
+    }))
+    .unwrap_or(false);
+    CPAL_MIX_SCRATCH.with(|b| {
+        let mut b = b.borrow_mut();
+        if b.capacity() < mix.capacity() {
+            b.reserve(mix.capacity());
+        }
+        b.clear();
+        b.append(&mut mix);
+    });
     for f in 0..frames {
         let (l, r) = if has_audio { (mix[f * 2], mix[f * 2 + 1]) } else { (0.0, 0.0) };
         match channels {
@@ -160,6 +190,17 @@ struct AudioThreadState {
     thread_mutex: Mutex<Option<std::thread::JoinHandle<()>>>,
     running: AtomicBool,
     stop: AtomicBool,
+}
+
+/// v1.5.0 perf: cached per-bucket peak/RMS of the timeline audio (one entry
+/// per distinct timeline signature × bucket count, oldest evicted). Served by
+/// get_timeline_waveform / get_timeline_rms so repeated UI fetches never
+/// re-decode.
+struct TimelineAudioStats {
+    signature: u64,
+    sample_count: usize,
+    peaks: Vec<f32>,
+    rms: Vec<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +239,8 @@ pub struct GhitaEngine {
     audio_device: Mutex<Option<String>>,
     // T2 (P5): export audio channel layout ("stereo" | "5.1" | "7.1").
     export_channel_layout: Mutex<String>,
+    // v1.5.0 perf: cached timeline audio stats (see TimelineAudioStats).
+    timeline_audio_stats: Mutex<Vec<TimelineAudioStats>>,
     // v1.5.0 T4: audio features state (effect chain, loop, recording, ...).
     #[cfg(feature = "ffmpeg")]
     pub(crate) t4: crate::audio_t4::T4State,
@@ -242,6 +285,7 @@ impl GhitaEngine {
             },
             audio_device: Mutex::new(None),
             export_channel_layout: Mutex::new("stereo".to_string()),
+            timeline_audio_stats: Mutex::new(Vec::new()),
             #[cfg(feature = "ffmpeg")]
             t4: crate::audio_t4::T4State::default(),
         }
@@ -422,6 +466,8 @@ impl GhitaEngine {
         }
 
         if !state.clips.is_empty() {
+            // v1.5.0-T5 (P2): playback tick — cache OFF (frames are
+            // single-use; caching would burn memory for zero hits).
             return render_timeline_frame(
                 &state,
                 &mut rstate,
@@ -432,6 +478,7 @@ impl GhitaEngine {
                 true,
                 self.active_filter_type.load(Ordering::Relaxed),
                 self.filter_intensity.load(),
+                false,
             );
         }
         let mut dec = state.decoder.borrow_mut();
@@ -454,6 +501,7 @@ impl GhitaEngine {
         let mut rstate = self.render.lock().unwrap();
 
         if !state.clips.is_empty() {
+            // v1.5.0-T5 (P2): paused scrub — cache ON.
             return render_timeline_frame(
                 &state,
                 &mut rstate,
@@ -464,6 +512,7 @@ impl GhitaEngine {
                 true,
                 self.active_filter_type.load(Ordering::Relaxed),
                 self.filter_intensity.load(),
+                true,
             );
         }
         let duration = self.duration_ms.load(Ordering::Relaxed);
@@ -488,6 +537,7 @@ impl GhitaEngine {
         let mut rstate = self.render.lock().unwrap();
 
         if !state.clips.is_empty() {
+            // v1.5.0-T5 (P2): raw (effects-free) path — cache ON when paused.
             return render_timeline_frame(
                 &state,
                 &mut rstate,
@@ -498,6 +548,7 @@ impl GhitaEngine {
                 apply_fx,
                 self.active_filter_type.load(Ordering::Relaxed),
                 self.filter_intensity.load(),
+                !self.is_playing.load(Ordering::Relaxed),
             );
         }
         let duration = self.duration_ms.load(Ordering::Relaxed);
@@ -540,6 +591,9 @@ impl GhitaEngine {
                 true,
                 self.active_filter_type.load(Ordering::Relaxed),
                 self.filter_intensity.load(),
+                // v1.5.0-T5 (P2): native preview thread — cache only when
+                // paused so playback never pollutes the LRU.
+                !self.is_playing.load(Ordering::Relaxed),
             );
         } else {
             let mut dec = state.decoder.borrow_mut();
@@ -995,6 +1049,20 @@ impl GhitaEngine {
         -1
     }
 
+    /// v1.5.0-T5 (P5): sticker transform — scale about center (0.05..8×) and
+    /// rotation in degrees. Only meaningful for Sticker clips.
+    pub fn set_clip_sticker_transform(&self, clip_id: i32, scale: f32, rotation_deg: f32) -> i32 {
+        let mut state = self.state.write().unwrap();
+        for clip in state.clips.iter_mut() {
+            if clip.id == clip_id && clip.kind == crate::model::NativeClipKind::Sticker {
+                clip.sticker_scale = scale.clamp(0.05, 8.0);
+                clip.sticker_rotation = rotation_deg;
+                return 0;
+            }
+        }
+        -1
+    }
+
     pub fn set_clip_font(&self, clip_id: i32, family: &str) -> i32 {
         let mut state = self.state.write().unwrap();
         for clip in state.clips.iter_mut() {
@@ -1082,6 +1150,9 @@ impl GhitaEngine {
             Ok(d) => d,
             Err(_) => return 0,
         };
+        // Normalize CRLF/CR — .srt/.vtt saved on Windows never contain a bare
+        // "\n\n" block separator, so without this only the first cue imported.
+        let data = data.replace("\r\n", "\n").replace('\r', "\n");
         let mut cues: Vec<(i64, i64, String)> = Vec::new();
         let is_vtt = data.contains("WEBVTT");
         // Split into blocks: index (srt) then timing line then text.
@@ -1311,19 +1382,45 @@ impl GhitaEngine {
             interpolation: SincInterpolationType::Nearest,
             window: WindowFunction::BlackmanHarris2,
         };
-        let mut resampler = SincFixedIn::<f64>::new(ratio, 1.2, params, 512, channels).expect("rubato init");
-        let out = match resampler.process(&mut deint, None) {
-            Ok(o) => o,
-            Err(_) => return input.to_vec(),
-        };
-        let frames = out[0].len();
-        let mut result = vec![0.0f32; frames * channels];
-        for f in 0..frames {
-            for c in 0..channels {
-                result[f * channels + c] = out[c][f] as f32;
-            }
+        // v1.5.0-T4 (P4): cache the resampler per (ratio, channels) and call
+        // reset() before each window — reset() restores the exact
+        // as-constructed state, so the OUTPUT IS IDENTICAL to the old
+        // construct-per-window path while skipping the expensive sinc-table
+        // rebuild on every 10ms mix window (maintain-pitch used to rebuild
+        // it ~100×/second of stretched audio).
+        thread_local! {
+            static PITCH_RESAMPLER: std::cell::RefCell<Option<((u64, usize), SincFixedIn<f64>)>> =
+                const { std::cell::RefCell::new(None) };
         }
-        result
+        let key = (ratio.to_bits(), channels);
+        PITCH_RESAMPLER.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let cached = slot.as_mut().and_then(|(k, r)| if *k == key { Some(r) } else { None });
+            let res = match cached {
+                Some(r) => r,
+                None => {
+                    *slot = Some((
+                        key,
+                        SincFixedIn::<f64>::new(ratio, 1.2, params, 512, channels)
+                            .expect("rubato init"),
+                    ));
+                    &mut slot.as_mut().unwrap().1
+                }
+            };
+            res.reset();
+            let out = match res.process(&mut deint, None) {
+                Ok(o) => o,
+                Err(_) => return input.to_vec(),
+            };
+            let frames = out[0].len();
+            let mut result = vec![0.0f32; frames * channels];
+            for f in 0..frames {
+                for c in 0..channels {
+                    result[f * channels + c] = out[c][f] as f32;
+                }
+            }
+            result
+        })
     }
 
     /// Legacy waveform — reads the single loadMedia() decoder (real PCM via
@@ -1338,41 +1435,194 @@ impl GhitaEngine {
         dec.extract_pcm_audio_samples(&mut out[..sample_count], self.volume.load())
     }
 
-    /// v1.1.0 (PLAN 3.7): REAL timeline waveform — peak per window from the
-    /// mix pipeline.
+    /// v1.1.0 (PLAN 3.7): REAL timeline waveform — peak per bucket.
+    /// v1.5.0 perf: served from the cached single-pass stats (the old body
+    /// re-mixed thousands of 10 ms windows, each an FFmpeg seek — 70–107 s
+    /// on a 3-minute MP3).
     pub fn get_timeline_waveform(&self, out: &mut [f32], sample_count: usize, _track_index: i32) -> bool {
-        if sample_count == 0 {
+        if sample_count == 0 || out.len() < sample_count {
             return false;
         }
+        let Some((peaks, _rms)) = self.cached_timeline_audio_stats(sample_count) else {
+            return false;
+        };
+        out[..sample_count].copy_from_slice(&peaks[..sample_count]);
+        peaks.iter().any(|&p| p > 0.0)
+    }
+
+    // ------------------------------------------------------------------
+    // v1.5.0 perf: timeline audio stats (waveform + RMS) — one sequential
+    // decode pass, cached until any audio-affecting timeline field changes.
+    // ------------------------------------------------------------------
+
+    fn timeline_audio_signature(clips: &[NativeClip], track_gains: &[(bool, f32)], duration_ms: i64) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        duration_ms.hash(&mut h);
+        for c in clips {
+            (c.id, c.kind as i32, c.track_index).hash(&mut h);
+            c.file_path.hash(&mut h);
+            (c.start_ms, c.duration_ms, c.source_in_ms).hash(&mut h);
+            (c.speed.to_bits(), c.volume.to_bits()).hash(&mut h);
+        }
+        for t in track_gains {
+            (t.0, t.1.to_bits()).hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// Per-bucket [peak, rms] over the whole timeline's audio, from cache when
+    /// the timeline signature and bucket count are unchanged. Buckets tile
+    /// [0, duration) uniformly. Reflects clip/track gains only — master FX,
+    /// noise suppression and clip pitch are preview-bus processing and are
+    /// deliberately not part of the display waveform.
+    pub(crate) fn cached_timeline_audio_stats(&self, sample_count: usize) -> Option<(Vec<f32>, Vec<f32>)> {
+        if sample_count == 0 || sample_count > 262_144 {
+            return None;
+        }
+        // Snapshot metadata so the pass decodes a consistent timeline and the
+        // stored signature describes exactly what was decoded.
         let duration = self.duration_ms.load(Ordering::Relaxed);
         if duration <= 0 {
-            return false;
+            return None;
         }
+        let (clips, track_gains) = {
+            let state = self.state.read().unwrap();
+            let gains: Vec<(bool, f32)> = state
+                .track_states
+                .iter()
+                .map(|t| (t.muted, t.volume))
+                .collect();
+            (state.clips.clone(), gains)
+        };
+        let signature = Self::timeline_audio_signature(&clips, &track_gains, duration);
+        {
+            let cache = self.timeline_audio_stats.lock().unwrap();
+            if let Some(e) = cache
+                .iter()
+                .find(|e| e.signature == signature && e.sample_count == sample_count)
+            {
+                return Some((e.peaks.clone(), e.rms.clone()));
+            }
+        }
+        let (peaks, rms) = self.compute_timeline_audio_stats(&clips, &track_gains, duration, sample_count);
+        let mut cache = self.timeline_audio_stats.lock().unwrap();
+        if cache.len() >= 4 {
+            cache.remove(0);
+        }
+        cache.push(TimelineAudioStats {
+            signature,
+            sample_count,
+            peaks: peaks.clone(),
+            rms: rms.clone(),
+        });
+        Some((peaks, rms))
+    }
+
+    /// One sequential decode pass: every audio-capable clip is decoded front
+    /// to back in 1 s chunks — after the first chunk each call hits the
+    /// decoder's continuity fast path (`seg_continuity_ms`) instead of
+    /// seeking, which is what made the old per-10 ms-window mixing take
+    /// minutes. Overlapping clips combine by max-abs peak / mean power per
+    /// bucket (display statistics, not a phase-accurate mix).
+    fn compute_timeline_audio_stats(
+        &self,
+        clips: &[NativeClip],
+        track_gains: &[(bool, f32)],
+        duration: i64,
+        sample_count: usize,
+    ) -> (Vec<f32>, Vec<f32>) {
         let bucket_ms = (duration / sample_count as i64).max(1);
-        let mut mix = vec![0f32; 441 * 2]; // 10ms stereo @ 44100
-        let mix_len = mix.len();
-        let mut any = false;
-        for i in 0..sample_count {
-            let start_ms = (i as i64 * bucket_ms).min(duration - 1);
-            let end_ms = (start_ms + bucket_ms).min(duration);
-            let step_ms = ((end_ms - start_ms) / 8).max(1);
-            let mut peak = 0.0f32;
-            let mut w = start_ms;
-            while w < end_ms {
-                mix.fill(0.0);
-                if self.mix_audio_window(w, (w + 10).min(end_ms), &mut mix, mix_len, false) {
-                    for v in &mix {
-                        peak = peak.max(v.abs());
-                    }
-                }
-                w += step_ms;
+        let mut peaks = vec![0f32; sample_count];
+        let mut sq_sums = vec![0f64; sample_count];
+        let mut frames = vec![0u64; sample_count];
+        // Exactly 1 s of interleaved stereo @44100: decode_audio_segment then
+        // records seg_continuity_ms = start + 1000, so advancing src_ms by
+        // 1000 keeps every subsequent chunk seek-free.
+        const CHUNK_FLOATS: usize = 88_200;
+        let mut chunk = vec![0f32; CHUNK_FLOATS];
+
+        for clip in clips {
+            if clip.start_ms >= duration {
+                break; // sorted by start_ms — nothing later can overlap either
             }
-            out[i] = peak;
-            if peak > 0.0 {
-                any = true;
+            if matches!(
+                clip.kind,
+                NativeClipKind::Image | NativeClipKind::Text | NativeClipKind::Sticker | NativeClipKind::Effect
+            ) {
+                continue;
+            }
+            // Without ffmpeg there are no real decoders — stats stay all-zero,
+            // matching the old mixer path (no synthetic waveform).
+            #[cfg(feature = "ffmpeg")]
+            {
+                let (muted, track_vol) = track_gains
+                    .get(clip.track_index.max(0) as usize)
+                    .copied()
+                    .unwrap_or((false, 1.0));
+                if muted {
+                    continue;
+                }
+                let gain = clip.volume * track_vol;
+                if gain <= 0.0 {
+                    continue;
+                }
+                let speed = if clip.speed > 0.001 { clip.speed } else { 1.0 } as f64;
+                let clip_end = clip.start_ms + clip.duration_ms;
+                let src_base = clip.source_in_ms;
+                let src_limit = src_base + (clip.duration_ms as f64 * speed).ceil() as i64;
+
+                let mut rstate = self.render.lock().unwrap();
+                let RenderState { clip_decoders, decoder_lru, .. } = &mut *rstate;
+                get_clip_decoder(clip_decoders, decoder_lru, clip.id, &clip.file_path);
+                let Some(dec) = clip_decoders.get_mut(&clip.id) else {
+                    continue;
+                };
+                if !dec.has_audio_stream() {
+                    continue;
+                }
+
+                let mut src_ms = src_base;
+                while src_ms < src_limit {
+                    chunk.fill(0.0); // EOF short-reads leave the tail stale otherwise
+                    if !dec.decode_audio_segment(src_ms, &mut chunk, CHUNK_FLOATS, 1.0) {
+                        break;
+                    }
+                    let base_off_s = (src_ms - src_base) as f64 / 1000.0; // seconds into source span
+                    for (f, s) in chunk.chunks_exact(2).enumerate() {
+                        let tl_ms = clip.start_ms as f64
+                            + (base_off_s + f as f64 / 44_100.0) * 1000.0 / speed;
+                        if tl_ms >= clip_end as f64 {
+                            break;
+                        }
+                        let idx =
+                            ((tl_ms as i64) / bucket_ms).clamp(0, sample_count as i64 - 1) as usize;
+                        let l = s[0] * gain;
+                        let r = s[1] * gain;
+                        let peak = l.abs().max(r.abs());
+                        if peak > peaks[idx] {
+                            peaks[idx] = peak;
+                        }
+                        sq_sums[idx] += (l * l + r * r) as f64;
+                        frames[idx] += 1;
+                    }
+                    src_ms += 1000;
+                }
             }
         }
-        any
+
+        let rms = sq_sums
+            .iter()
+            .zip(&frames)
+            .map(|(&sq, &n)| {
+                if n > 0 {
+                    (sq / (2.0 * n as f64)).sqrt() as f32
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        (peaks, rms)
     }
 
     /// v1.1.0 (PLAN 3.6): Decode the frame of ONE timeline clip.
@@ -1627,7 +1877,15 @@ impl GhitaEngine {
         let codec = codec.to_string();
         let handle = std::thread::spawn(move || unsafe {
             let e = &*this.raw();
-            e.run_export_loop_ex(output_path, width, height, fps, codec, bitrate, include_audio);
+            // A panic anywhere in the export loop must never skip the flag
+            // reset — is_exporting stuck true bricks every future export.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                e.run_export_loop_ex(output_path, width, height, fps, codec, bitrate, include_audio)
+            }));
+            if result.is_err() {
+                e.export_error.store(true, Ordering::Relaxed);
+            }
+            e.is_exporting.store(false, Ordering::Relaxed);
         });
         *self.export.join_mutex.lock().unwrap() = Some(handle);
         true
@@ -1642,12 +1900,16 @@ impl GhitaEngine {
     }
 
     pub fn cancel_export(&self) {
-        if self.is_exporting.load(Ordering::Relaxed) {
-            self.cancel_export_flag.store(true, Ordering::Relaxed);
-            let mut guard = self.export.join_mutex.lock().unwrap();
-            if let Some(h) = guard.take() {
-                let _ = h.join();
-            }
+        // Hold the join mutex while checking is_exporting — checking before
+        // locking let a cancel racing a just-finished export + immediate
+        // re-export join/flag the NEW export's handle instead.
+        let mut guard = self.export.join_mutex.lock().unwrap();
+        if !self.is_exporting.load(Ordering::Relaxed) {
+            return;
+        }
+        self.cancel_export_flag.store(true, Ordering::Relaxed);
+        if let Some(h) = guard.take() {
+            let _ = h.join();
         }
     }
 
@@ -1750,7 +2012,10 @@ impl GhitaEngine {
                 self.export_progress.store((frame + 1) as f32 / total_frames as f32);
                 frame += 1;
             }
-            if out_file.is_some() {
+            // Only a fully-written file counts — an early `break` above (decode
+            // or write error) must not mark the fallback export as complete,
+            // matching the ffmpeg path's trailer-gated semantics.
+            if out_file.is_some() && frame >= total_frames {
                 write_completed = true;
             }
             let _ = (bitrate, include_audio);
@@ -2085,6 +2350,8 @@ impl GhitaEngine {
                         let state = self.state.read().unwrap();
                         let mut rstate = self.render.lock().unwrap();
                         if !state.clips.is_empty() {
+                            // v1.5.0-T5 (P2): export — every frame is unique,
+                            // cache stays OFF.
                             render_timeline_frame(
                                 &state,
                                 &mut rstate,
@@ -2095,6 +2362,7 @@ impl GhitaEngine {
                                 true,
                                 self.active_filter_type.load(Ordering::Relaxed),
                                 self.filter_intensity.load(),
+                                false,
                             );
                         } else if !decoder.decode_frame(
                             frame_buffer,
@@ -2278,8 +2546,10 @@ impl GhitaEngine {
                 }
             }
 
-            // Flush the audio encoder.
-            if !failed && !audio_enc_ctx.is_null() {
+            // Flush the audio encoder. audio_stream can be null when
+            // avformat_new_stream failed while the encoder opened — guard the
+            // deref or the export thread crashes instead of failing cleanly.
+            if !failed && !audio_enc_ctx.is_null() && !audio_stream.is_null() {
                 ffi::avcodec_send_frame(audio_enc_ctx, std::ptr::null_mut());
                 while !audio_pkt.is_null() && ffi::avcodec_receive_packet(audio_enc_ctx, audio_pkt) == 0 {
                     ffi::av_packet_rescale_ts(audio_pkt, (*audio_enc_ctx).time_base, (*audio_stream).time_base);
@@ -2378,6 +2648,10 @@ fn parse_timing(line: &str, _is_vtt: bool) -> (i64, i64) {
 
 impl Drop for GhitaEngine {
     fn drop(&mut self) {
+        // Join the input-capture thread FIRST — it derefs a raw pointer to
+        // this engine and must be gone before any field is dropped.
+        #[cfg(feature = "ffmpeg")]
+        self.join_input_capture();
         self.cancel_export();
         self.stop_audio_preview_thread();
         self.is_playing.store(false, Ordering::Relaxed);

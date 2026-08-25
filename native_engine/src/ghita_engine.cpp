@@ -1282,12 +1282,16 @@ bool RealFFmpegMediaDecoder::decodeAudioSamples(float* outSamples, int sampleCou
 
                     // Convert to float if needed via swr_convert
                     if (m_audioCodecCtx->sample_fmt != AV_SAMPLE_FMT_FLT && m_swrCtx) {
+                        // v1.5.0-T5 (P1, oracle fix): SWR output layout == source
+                        // layout (interleaved FLT) — every converted frame writes
+                        // nb_channels floats, so requested FRAMES must be capped
+                        // at sampleCount/channels or swr_convert overflows
+                        // convBuffer on any non-mono source (same heap overflow
+                        // fixed in the Rust decoder in T1).
+                        const int channels = m_audioCodecCtx->ch_layout.nb_channels > 0
+                                                 ? m_audioCodecCtx->ch_layout.nb_channels : 1;
                         uint8_t* convOut[1] = {reinterpret_cast<uint8_t*>(convBuffer.data())};
-                        // v0.7.8: out_count must never exceed the conversion
-                        // buffer — nb_samples can be up to 8192 while the
-                        // buffer is sized to sampleCount (e.g. 200). Previously
-                        // this overflowed the heap buffer (heap corruption).
-                        int requested = std::min(frames, sampleCount);
+                        int requested = std::min(frames, sampleCount / channels);
                         int outFrames = swr_convert(m_swrCtx, convOut, requested,
                                                     const_cast<const uint8_t**>(m_frame->data), frames);
                         if (outFrames > 0) {

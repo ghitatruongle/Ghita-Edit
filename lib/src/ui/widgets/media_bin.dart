@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import '../../controllers/editor_controller.dart';
 import '../../controllers/command_history.dart';
 import '../../models/clip.dart';
+import '../../models/project.dart';
 import '../theme/app_theme.dart';
 
 // ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
@@ -52,6 +53,24 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
         widget.initialTab < 5) {
       _tabController.animateTo(widget.initialTab);
     }
+    _syncImportedMediaIfChanged();
+  }
+
+  // v1.5.0-T3 (P4): the old code re-ran the full sync on EVERY parent
+  // rebuild (didUpdateWidget fired ~30fps during playback) — two Set builds
+  // plus a walk over all clips per tick. Skip when neither the project
+  // instance nor the clip count changed.
+  int? _lastSyncedClipCount;
+  Project? _lastSyncedProject;
+
+  void _syncImportedMediaIfChanged() {
+    final project = widget.controller.project;
+    final count = project.allClips.length;
+    if (identical(project, _lastSyncedProject) && count == _lastSyncedClipCount) {
+      return;
+    }
+    _lastSyncedProject = project;
+    _lastSyncedClipCount = count;
     _syncImportedMedia();
   }
 
@@ -142,7 +161,15 @@ class _MediaBinState extends State<MediaBin> with SingleTickerProviderStateMixin
         allowedExtensions: ['mp4', 'mov', 'avi', 'mkv', 'mp3', 'wav', 'flac', 'png', 'jpg', 'jpeg', 'webm', 'gif'],
       );
       if (result != null && mounted) {
-        widget.controller.importMedia(result.files.single.path!);
+        // v1.5.0-T1: path can be null on some platforms — never force-unwrap.
+        final path = result.files.single.path;
+        if (path == null || path.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Import cancelled — no file selected')),
+          );
+          return;
+        }
+        widget.controller.importMedia(path);
         _syncImportedMedia();
         setState(() {});
         if (mounted) {

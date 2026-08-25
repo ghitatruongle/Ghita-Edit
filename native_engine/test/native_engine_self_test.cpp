@@ -136,7 +136,7 @@ void test_get_version_string() {
     const char* v = ghita_engine_get_version();
     EXPECT_TRUE(v != nullptr);
     // Version should be in the string (CI checks this too)
-    EXPECT_TRUE(std::string(v).find("1.1.") != std::string::npos);
+    EXPECT_TRUE(std::string(v).find("1.5.") != std::string::npos);
 }
 
 void test_clip_operations() {

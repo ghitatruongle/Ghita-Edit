@@ -25,7 +25,7 @@ pub struct GhitaEngineContext {
 }
 
 /// Process-lifetime version string — safe to return for FFI.
-pub const VERSION_STRING: &str = "Ghita Core Engine v1.1.1 (Rust/Flutter)";
+pub const VERSION_STRING: &str = "Ghita Core Engine v1.5.0 (Rust/Flutter)";
 
 fn version_cstring() -> &'static std::ffi::CStr {
     static V: OnceLock<CString> = OnceLock::new();
@@ -365,6 +365,28 @@ pub unsafe extern "C" fn ghita_engine_is_exporting(ctx: *mut GhitaEngineContext)
 pub unsafe extern "C" fn ghita_engine_cancel_export(ctx: *mut GhitaEngineContext) {
     c_guard!(if let Some(e) = engine_of(ctx) { e.cancel_export() }, ())
 }
+
+/// v1.5.0-T2 (P3): expose the export channel layout ("stereo"|"5.1"|"7.1")
+/// so shell/CLI drivers (export_matrix → ffprobe multichannel verification)
+/// can reach the T2-P5 multichannel path, which previously had NO C export.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_set_export_channel_layout(
+    ctx: *mut GhitaEngineContext,
+    layout: *const c_char,
+) -> c_int {
+    let layout = match cstr_arg(layout) {
+        Some(l) => l,
+        None => return -1,
+    };
+    c_guard!(match engine_of(ctx) {
+        Some(e) => {
+            e.set_export_channel_layout(layout);
+            0
+        }
+        None => -1,
+    }, -1)
+}
+
 
 #[no_mangle]
 pub unsafe extern "C" fn ghita_engine_get_version() -> *const c_char {
@@ -1083,6 +1105,124 @@ pub unsafe extern "C" fn ghita_engine_get_bookmarks_json(ctx: *mut GhitaEngineCo
     )
 }
 
+/// v1.5.0-T5 (P5): sticker transform — scale about center + rotation degrees.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_set_clip_sticker_transform(
+    ctx: *mut GhitaEngineContext,
+    clip_id: c_int,
+    scale: f32,
+    rotation_deg: f32,
+) -> c_int {
+    c_guard!(
+        match engine_of(ctx) {
+            Some(e) => e.set_clip_sticker_transform(clip_id, scale, rotation_deg),
+            None => -1,
+        },
+        -1
+    )
+}
+
+/// v1.5.0-T5 (P6): live-update one effect-chain parameter (index, param 0..3).
+#[cfg(feature = "ffmpeg")]
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_set_audio_effect_param(
+    ctx: *mut GhitaEngineContext,
+    index: c_int,
+    param: c_int,
+    value: f32,
+) -> c_int {
+    c_guard!(
+        match engine_of(ctx) {
+            Some(e) => e.set_audio_effect_param(index, param, value),
+            None => -1,
+        },
+        -1
+    )
+}
+
+/// v1.5.0-T5 (P2): paused-scrub processing-cache telemetry.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_cache_stats(ctx: *mut GhitaEngineContext) -> *const c_char {
+    c_guard!(
+        {
+            let json = match engine_of(ctx) {
+                Some(e) => {
+                    // v1.5.0-T6 debug fix: try_borrow — a render thread may
+                    // hold borrow_mut() right now; report zeros instead of
+                    // panicking (c_guard would swallow it into empty stats).
+                    // Values extracted first, guard dropped before formatting.
+                    let state = e.state.read().unwrap();
+                    let (hits, misses, entries, rate) =
+                        match state.processing.try_borrow() {
+                            Ok(pc) => (
+                                pc.hit_count,
+                                pc.miss_count,
+                                pc.len(),
+                                pc.hit_rate(),
+                            ),
+                            Err(_) => (0u64, 0u64, 0usize, 0.0f64),
+                        };
+                    drop(state);
+                    format!(
+                        "{{\"hits\":{hits},\"misses\":{misses},\"entries\":{entries},\"rate\":{rate:.3}}}"
+                    )
+                }
+                None => "{\"hits\":0,\"misses\":0,\"entries\":0,\"rate\":0.0}".to_string(),
+            };
+            T_JSON.with(|b| {
+                let mut b = b.borrow_mut();
+                *b = CString::new(json).unwrap_or_default();
+                b.as_ptr()
+            })
+        },
+        std::ptr::null()
+    )
+}
+
+/// v1.5.0-T5 (P3): GPU dispatch telemetry — available/adapter/frames/fallbacks.
+/// Without the `gpu` feature this always reports available=false.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_gpu_stats() -> *const c_char {
+    #[cfg(feature = "gpu")]
+    {
+        c_guard!(
+            {
+                let (frames, fallbacks) = crate::gpu::gpu_stats();
+                let adapter = crate::gpu::gpu_adapter_name();
+                let json = format!(
+                    "{{\"available\":{},\"adapter\":\"{}\",\"gpu_frames\":{},\"cpu_fallbacks\":{}}}",
+                    crate::gpu::gpu_available(),
+                    adapter.replace('"', "'"),
+                    frames,
+                    fallbacks
+                );
+                T_JSON.with(|b| {
+                    let mut b = b.borrow_mut();
+                    *b = CString::new(json).unwrap_or_default();
+                    b.as_ptr()
+                })
+            },
+            std::ptr::null()
+        )
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        c_guard!(
+            {
+                T_JSON.with(|b| {
+                    let mut b = b.borrow_mut();
+                    *b = CString::new(
+                        "{\"available\":false,\"adapter\":\"\",\"gpu_frames\":0,\"cpu_fallbacks\":0}",
+                    )
+                    .unwrap_or_default();
+                    b.as_ptr()
+                })
+            },
+            std::ptr::null()
+        )
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ghita_engine_copy_keyframes(ctx: *mut GhitaEngineContext, src_clip: c_int, dst_clip: c_int) -> c_int {
     c_guard!(match engine_of(ctx) { Some(e) => e.copy_keyframes(src_clip, dst_clip), None => -1 }, -1)
@@ -1532,117 +1672,213 @@ fn mask_op_from_int(op: i32) -> crate::selection::MaskOp {
 pub unsafe extern "C" fn ghita_engine_set_selection_rect(
     width: i32, height: i32, x: i32, y: i32, w: i32, h: i32, op: i32,
 ) -> c_int {
-    let mask_op = mask_op_from_int(op);
-    T_SELECTION.with(|s| {
-        let mut guard = s.borrow_mut();
-        if guard.is_none() || guard.as_ref().map_or(true, |m| m.width != width as u32 || m.height != height as u32) {
-            *guard = Some(crate::selection::SelectionMask::new(width as u32, height as u32));
-        }
-        if let Some(ref mut mask) = *guard {
-            crate::selection::select_rect(mask, x, y, w, h, mask_op);
-        }
-    });
-    0
+    if width <= 0 || height <= 0 || w < 0 || h < 0 { return -1; }
+    c_guard!({
+        let mask_op = mask_op_from_int(op);
+        T_SELECTION.with(|s| {
+            let mut guard = s.borrow_mut();
+            if guard.is_none() || guard.as_ref().map_or(true, |m| m.width != width as u32 || m.height != height as u32) {
+                *guard = Some(crate::selection::SelectionMask::new(width as u32, height as u32));
+            }
+            if let Some(ref mut mask) = *guard {
+                crate::selection::select_rect(mask, x, y, w, h, mask_op);
+            }
+        });
+        0
+    }, -1)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ghita_engine_set_selection_ellipse(
     width: i32, height: i32, cx: i32, cy: i32, rx: i32, ry: i32, op: i32,
 ) -> c_int {
-    let mask_op = mask_op_from_int(op);
-    T_SELECTION.with(|s| {
-        let mut guard = s.borrow_mut();
-        if guard.is_none() || guard.as_ref().map_or(true, |m| m.width != width as u32 || m.height != height as u32) {
-            *guard = Some(crate::selection::SelectionMask::new(width as u32, height as u32));
-        }
-        if let Some(ref mut mask) = *guard {
-            crate::selection::select_ellipse(mask, cx, cy, rx, ry, mask_op);
-        }
-    });
-    0
+    if width <= 0 || height <= 0 { return -1; }
+    c_guard!({
+        let mask_op = mask_op_from_int(op);
+        T_SELECTION.with(|s| {
+            let mut guard = s.borrow_mut();
+            if guard.is_none() || guard.as_ref().map_or(true, |m| m.width != width as u32 || m.height != height as u32) {
+                *guard = Some(crate::selection::SelectionMask::new(width as u32, height as u32));
+            }
+            if let Some(ref mut mask) = *guard {
+                crate::selection::select_ellipse(mask, cx, cy, rx, ry, mask_op);
+            }
+        });
+        0
+    }, -1)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ghita_engine_set_selection_lasso(
     width: i32, height: i32, points_x: *const i32, points_y: *const i32, count: i32, op: i32,
 ) -> c_int {
-    if points_x.is_null() || points_y.is_null() || count <= 0 { return -1; }
-    let pts: Vec<(i32, i32)> = (0..count as usize)
-        .map(|i| (*points_x.add(i), *points_y.add(i)))
-        .collect();
-    let mask_op = mask_op_from_int(op);
-    T_SELECTION.with(|s| {
-        let mut guard = s.borrow_mut();
-        if guard.is_none() || guard.as_ref().map_or(true, |m| m.width != width as u32 || m.height != height as u32) {
-            *guard = Some(crate::selection::SelectionMask::new(width as u32, height as u32));
-        }
-        if let Some(ref mut mask) = *guard {
-            crate::selection::select_lasso(mask, &pts, mask_op);
-        }
-    });
-    0
+    if points_x.is_null() || points_y.is_null() || count <= 0 || width <= 0 || height <= 0 {
+        return -1;
+    }
+    c_guard!({
+        let pts: Vec<(i32, i32)> = (0..count as usize)
+            .map(|i| (*points_x.add(i), *points_y.add(i)))
+            .collect();
+        let mask_op = mask_op_from_int(op);
+        T_SELECTION.with(|s| {
+            let mut guard = s.borrow_mut();
+            if guard.is_none() || guard.as_ref().map_or(true, |m| m.width != width as u32 || m.height != height as u32) {
+                *guard = Some(crate::selection::SelectionMask::new(width as u32, height as u32));
+            }
+            if let Some(ref mut mask) = *guard {
+                crate::selection::select_lasso(mask, &pts, mask_op);
+            }
+        });
+        0
+    }, -1)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ghita_engine_set_selection_magic_wand(
     width: i32, height: i32, seed_x: i32, seed_y: i32, tolerance: f32, image_data: *const u8, op: i32,
 ) -> c_int {
-    if image_data.is_null() { return -1; }
-    let img_slice = std::slice::from_raw_parts(image_data, (width * height * 4) as usize);
-    // Copy image data so we don't hold a reference across the borrow.
-    let img_copy: Vec<u8> = img_slice.to_vec();
-    let mask_op = mask_op_from_int(op);
-    T_SELECTION.with(|s| {
-        let mut guard = s.borrow_mut();
-        if guard.is_none() || guard.as_ref().map_or(true, |m| m.width != width as u32 || m.height != height as u32) {
-            *guard = Some(crate::selection::SelectionMask::new(width as u32, height as u32));
-        }
-        if let Some(ref mut mask) = *guard {
-            crate::selection::select_magic_wand(mask, &img_copy, seed_x, seed_y, tolerance as f64, mask_op);
-        }
-    });
-    0
+    if image_data.is_null() || width <= 0 || height <= 0 { return -1; }
+    // usize math AFTER validating positive dims — i32 mul would overflow on huge inputs.
+    let len = (width as usize) * (height as usize) * 4;
+    c_guard!({
+        let img_slice = std::slice::from_raw_parts(image_data, len);
+        // Copy image data so we don't hold a reference across the borrow.
+        let img_copy: Vec<u8> = img_slice.to_vec();
+        let mask_op = mask_op_from_int(op);
+        T_SELECTION.with(|s| {
+            let mut guard = s.borrow_mut();
+            if guard.is_none() || guard.as_ref().map_or(true, |m| m.width != width as u32 || m.height != height as u32) {
+                *guard = Some(crate::selection::SelectionMask::new(width as u32, height as u32));
+            }
+            if let Some(ref mut mask) = *guard {
+                crate::selection::select_magic_wand(mask, &img_copy, seed_x, seed_y, tolerance as f64, mask_op);
+            }
+        });
+        0
+    }, -1)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ghita_engine_modify_mask(operation: i32) -> c_int {
-    T_SELECTION.with(|s| {
-        let mut guard = s.borrow_mut();
-        if let Some(ref mut mask) = *guard {
-            match operation {
-                0 => mask.invert(),
-                1 => mask.feather(2),
-                _ => {}
-            }
-        }
-    });
-    0
+    c_guard!(
+        {
+            T_SELECTION.with(|s| {
+                let mut guard = s.borrow_mut();
+                if let Some(ref mut mask) = *guard {
+                    match operation {
+                        0 => mask.invert(),
+                        1 => mask.feather(2),
+                        _ => {}
+                    }
+                }
+            });
+            0
+        },
+        -1
+    )
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ghita_engine_get_mask_buffer(
     out_buf: *mut u8, buf_size: i32,
 ) -> i32 {
-    T_SELECTION.with(|s| {
-        let guard = s.borrow();
-        if let Some(ref mask) = *guard {
-            let len = mask.data.len().min(buf_size as usize);
-            if !out_buf.is_null() && len > 0 {
-                std::ptr::copy_nonoverlapping(mask.data.as_ptr(), out_buf, len);
+    c_guard!(
+        T_SELECTION.with(|s| {
+            let guard = s.borrow();
+            if let Some(ref mask) = *guard {
+                let len = mask.data.len().min(buf_size.max(0) as usize);
+                if !out_buf.is_null() && len > 0 {
+                    std::ptr::copy_nonoverlapping(mask.data.as_ptr(), out_buf, len);
+                }
+                mask.data.len() as i32
+            } else {
+                0
             }
-            mask.data.len() as i32
-        } else {
-            0
-        }
-    })
+        }),
+        -1
+    )
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ghita_engine_clear_selection() {
-    T_SELECTION.with(|s| {
-        let mut guard = s.borrow_mut();
-        if let Some(ref mut mask) = *guard {
-            mask.clear();
-        }
-    });
+    c_guard!(
+        T_SELECTION.with(|s| {
+            let mut guard = s.borrow_mut();
+            if let Some(ref mut mask) = *guard {
+                mask.clear();
+            }
+        }),
+        ()
+    )
+}
+
+// ---------------------------------------------------------------------------
+// v1.5.0-T5 (P6): photo paint tools — operate directly on a caller-owned RGBA
+// buffer (ctx-less, mirroring the selection family). The buffer must remain
+// valid for the duration of the call; UI copies its preview in and back out.
+
+/// Clone stamp — copy a circular region from (src_x,src_y) to (dst_x,dst_y).
+/// NOTE: src and dst share the caller buffer; keep the regions disjoint.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_paint_clone(
+    buf: *mut u8, width: c_int, height: c_int,
+    src_x: c_int, src_y: c_int, dst_x: c_int, dst_y: c_int,
+    radius: c_int, opacity: f32,
+) -> c_int {
+    if buf.is_null() || width <= 0 || height <= 0 || radius <= 0 {
+        return -1;
+    }
+    let len = width as usize * height as usize * 4;
+    // Soundness: snapshot the source side so src/dst never alias.
+    let src_copy = std::slice::from_raw_parts(buf as *const u8, len).to_vec();
+    let slice = std::slice::from_raw_parts_mut(buf, len);
+    crate::paint_tools::clone_stamp(
+        &src_copy, slice, width as u32, height as u32,
+        src_x, src_y, dst_x, dst_y, radius as u32, opacity,
+    );
+    0
+}
+
+/// Spot heal — blend the blemish region toward its surrounding average.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_paint_heal(
+    buf: *mut u8, width: c_int, height: c_int,
+    cx: c_int, cy: c_int, radius: c_int,
+) -> c_int {
+    if buf.is_null() || width <= 0 || height <= 0 || radius <= 0 {
+        return -1;
+    }
+    let len = width as usize * height as usize * 4;
+    let slice = std::slice::from_raw_parts_mut(buf, len);
+    crate::paint_tools::heal_spot(slice, width as u32, height as u32, cx, cy, radius as u32);
+    0
+}
+
+/// Brush stroke — stamps a soft round brush along the polyline (px[], py[]).
+/// color_rgba is packed little-endian (R,G,B,A) to match the panel bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_paint_brush_stroke(
+    buf: *mut u8, width: c_int, height: c_int,
+    points_x: *const f32, points_y: *const f32, count: c_int,
+    size: f32, hardness: f32, opacity: f32, color_rgba: u32,
+) -> c_int {
+    if buf.is_null() || width <= 0 || height <= 0 || points_x.is_null()
+        || points_y.is_null() || count <= 0 {
+        return -1;
+    }
+    let len = width as usize * height as usize * 4;
+    let slice = std::slice::from_raw_parts_mut(buf, len);
+    let pts: Vec<(f32, f32)> = (0..count as usize)
+        .map(|i| (*points_x.add(i), *points_y.add(i)))
+        .collect();
+    let params = crate::brush_engine::BrushParams {
+        size,
+        hardness: hardness.clamp(0.0, 1.0),
+        opacity: opacity.clamp(0.0, 1.0),
+        flow: opacity.clamp(0.0, 1.0),
+    };
+    crate::brush_engine::brush_stroke(
+        slice, width as u32, height as u32, &pts, &params, color_rgba.to_le_bytes(),
+    );
+    0
 }

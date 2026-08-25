@@ -16,34 +16,11 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
-final class GhitaEngineContext extends Opaque {}
+import 'engine_ffi_shared.dart';
 
-typedef _CCreate = Pointer<GhitaEngineContext> Function();
-typedef _DCreate = Pointer<GhitaEngineContext> Function();
-typedef _CInit = Int32 Function(Pointer<GhitaEngineContext>);
-typedef _DInit = int Function(Pointer<GhitaEngineContext>);
-typedef _CDestroy = Void Function(Pointer<GhitaEngineContext>);
-typedef _DDestroy = void Function(Pointer<GhitaEngineContext>);
-typedef _CUpsert = Int32 Function(
-    Pointer<GhitaEngineContext>, Int32, Pointer<Utf8>, Int64, Int64, Int64,
-    Int32, Int32, Float, Float, Float);
-typedef _DUpsert = int Function(
-    Pointer<GhitaEngineContext>, int, Pointer<Utf8>, int, int, int,
-    int, int, double, double, double);
-typedef _CStartExportEx = Int32 Function(
-  Pointer<GhitaEngineContext>, Pointer<Utf8>,
-  Int32, Int32, Int32, Pointer<Utf8>, Int64, Bool,
-);
-typedef _DStartExportEx = int Function(
-  Pointer<GhitaEngineContext>, Pointer<Utf8>,
-  int, int, int, Pointer<Utf8>, int, bool,
-);
-typedef _CIsExporting = Bool Function(Pointer<GhitaEngineContext>);
-typedef _DIsExporting = bool Function(Pointer<GhitaEngineContext>);
-typedef _CGetProgress = Float Function(Pointer<GhitaEngineContext>);
-typedef _DGetProgress = double Function(Pointer<GhitaEngineContext>);
-typedef _CGetFileSize = Int64 Function(Pointer<GhitaEngineContext>);
-typedef _DGetFileSize = int Function(Pointer<GhitaEngineContext>);
+// Signatures live in engine_ffi_shared.dart (single source of truth) —
+// local names below are ALIASES only; never declare Function(...) here.
+typedef GhitaEngineContext = GhitaCtx;
 
 class ExportCase {
   final String name;
@@ -51,8 +28,11 @@ class ExportCase {
   final int w, h, fps;
   final String codec;
   final int bitrate;
+  // v1.5.0-T2 (P3): optional channel layout for multichannel AAC rows.
+  final String? channelLayout;
 
-  const ExportCase(this.name, this.ext, this.w, this.h, this.fps, this.codec, this.bitrate);
+  const ExportCase(this.name, this.ext, this.w, this.h, this.fps, this.codec,
+      this.bitrate, {this.channelLayout});
 }
 
 const cases = [
@@ -62,6 +42,10 @@ const cases = [
   ExportCase('gif', 'gif', 160, 120, 10, 'gif', 0),
   ExportCase('mp3', 'mp3', 0, 0, 0, 'mp3', 128000),
   ExportCase('mov_h264', 'mov', 320, 240, 30, 'h264', 1500000),
+  ExportCase('aac_51', 'mp4', 320, 240, 30, 'h264', 1500000,
+      channelLayout: '5.1'),
+  ExportCase('aac_71', 'mp4', 320, 240, 30, 'h264', 1500000,
+      channelLayout: '7.1'),
 ];
 
 void main(List<String> args) {
@@ -81,20 +65,23 @@ void main(List<String> args) {
   Directory(outDir).createSync(recursive: true);
 
   final lib = DynamicLibrary.open(dllPath);
-  final ctx = lib.lookupFunction<_CCreate, _DCreate>('ghita_engine_create')();
-  lib.lookupFunction<_CInit, _DInit>('ghita_engine_init')(ctx);
-  final destroy = lib.lookupFunction<_CDestroy, _DDestroy>('ghita_engine_destroy');
-  final upsert = lib.lookupFunction<_CUpsert, _DUpsert>('ghita_engine_upsert_clip');
-  final clearClips = lib.lookupFunction<Void Function(Pointer<GhitaEngineContext>),
-      void Function(Pointer<GhitaEngineContext>)>('ghita_engine_clear_clips');
+  final ctx = lib.lookupFunction<CCreate, DCreate>('ghita_engine_create')();
+  lib.lookupFunction<CInit, DInit>('ghita_engine_init')(ctx);
+  final destroy = lib.lookupFunction<CDestroy, DDestroy>('ghita_engine_destroy');
+  final upsert = lib.lookupFunction<CUpsertClip, DUpsertClip>('ghita_engine_upsert_clip');
+  final clearClips =
+      lib.lookupFunction<CClearClips, DClearClips>('ghita_engine_clear_clips');
   final startExportEx =
-      lib.lookupFunction<_CStartExportEx, _DStartExportEx>('ghita_engine_start_export_ex');
+      lib.lookupFunction<CStartExportEx, DStartExportEx>('ghita_engine_start_export_ex');
   final isExporting =
-      lib.lookupFunction<_CIsExporting, _DIsExporting>('ghita_engine_is_exporting');
+      lib.lookupFunction<CIsExporting, DIsExporting>('ghita_engine_is_exporting');
   final getProgress =
-      lib.lookupFunction<_CGetProgress, _DGetProgress>('ghita_engine_get_export_progress');
+      lib.lookupFunction<CGetExportProgress, DGetExportProgress>('ghita_engine_get_export_progress');
   final getFileSize =
-      lib.lookupFunction<_CGetFileSize, _DGetFileSize>('ghita_engine_get_export_file_size');
+      lib.lookupFunction<CGetExportFileSize, DGetExportFileSize>('ghita_engine_get_export_file_size');
+  // v1.5.0-T2 (P3): new C export enabling multichannel verification.
+  final setChannelLayout = lib.lookupFunction<CSetExportChannelLayout,
+      DSetExportChannelLayout>('ghita_engine_set_export_channel_layout');
 
   // One timeline: a video clip (with audio) covering the whole 1.2s media.
   clearClips(ctx);
@@ -106,6 +93,10 @@ void main(List<String> args) {
     final outPath = '$outDir/${c.name}.${c.ext}';
     final op = outPath.toNativeUtf8();
     final codec = c.codec.toNativeUtf8();
+    // Always publish the layout so non-multichannel rows reset to stereo.
+    final layout = (c.channelLayout ?? 'stereo').toNativeUtf8();
+    setChannelLayout(ctx, layout);
+    calloc.free(layout);
     final started =
         startExportEx(ctx, op, c.w, c.h, c.fps, codec, c.bitrate, true) == 0;
     calloc.free(codec);

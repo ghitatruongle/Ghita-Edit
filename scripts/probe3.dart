@@ -9,45 +9,25 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
-final class Ctx extends Opaque {}
+import 'engine_ffi_shared.dart';
 
-typedef CCreate = Pointer<Ctx> Function();
-typedef DCreate = Pointer<Ctx> Function();
-
-typedef CInit = Int32 Function(Pointer<Ctx>);
-typedef DInit = int Function(Pointer<Ctx>);
-
-typedef CUpsert = Int32 Function(Pointer<Ctx>, Int32, Pointer<Utf8>, Int64, Int64,
-    Int64, Int32, Int32, Float, Float, Float);
-typedef DUpsert = int Function(Pointer<Ctx>, int, Pointer<Utf8>, int, int, int, int,
-    int, double, double, double);
-
-typedef CMix = Bool Function(Pointer<Ctx>, Int64, Int64, Pointer<Float>, Int32);
-typedef DMix = bool Function(Pointer<Ctx>, int, int, Pointer<Float>, int);
-
-typedef CRender = Bool Function(Pointer<Ctx>, Pointer<Uint8>, Int32, Int32);
-typedef DRender = bool Function(Pointer<Ctx>, Pointer<Uint8>, int, int);
-
-typedef CVoid = Void Function(Pointer<Ctx>);
-typedef DVoid = void Function(Pointer<Ctx>);
-
-typedef CRenderAt = Bool Function(Pointer<Ctx>, Pointer<Uint8>, Int32, Int32, Int64);
-typedef DRenderAt = bool Function(Pointer<Ctx>, Pointer<Uint8>, int, int, int);
-
-typedef CSeek = Void Function(Pointer<Ctx>, Int64);
-typedef DSeek = void Function(Pointer<Ctx>, int);
-
-typedef CRate = Void Function(Pointer<Ctx>, Float);
-typedef DRate = void Function(Pointer<Ctx>, double);
-
-typedef CInt64 = Int64 Function(Pointer<Ctx>);
-typedef DInt64 = int Function(Pointer<Ctx>);
-
-typedef CIsPlaying = Bool Function(Pointer<Ctx>);
-typedef DIsPlaying = bool Function(Pointer<Ctx>);
-
-typedef CHasFFmpeg = Bool Function(Pointer<Ctx>);
-typedef DHasFFmpeg = bool Function(Pointer<Ctx>);
+// Signatures live in engine_ffi_shared.dart (single source of truth) —
+// local names below are ALIASES only; never declare Function(...) here.
+typedef Ctx = GhitaCtx;
+typedef CUpsert = CUpsertClip;
+typedef DUpsert = DUpsertClip;
+typedef CMix = CMixAudioWindow;
+typedef DMix = DMixAudioWindow;
+typedef CRender = CRenderFrame;
+typedef DRender = DRenderFrame;
+typedef CVoid = CVoidCtx;
+typedef DVoid = DVoidCtx;
+typedef CRenderAt = CRenderFrameAt;
+typedef DRenderAt = DRenderFrameAt;
+typedef CRate = CSetPlaybackRate;
+typedef DRate = DSetPlaybackRate;
+typedef CInt64 = CGetDurationMs;
+typedef DInt64 = DGetDurationMs;
 
 int fails = 0;
 
@@ -71,15 +51,15 @@ void main(List<String> args) {
   final lib = DynamicLibrary.open(dll);
   final create = lib.lookupFunction<CCreate, DCreate>('ghita_engine_create');
   final init = lib.lookupFunction<CInit, DInit>('ghita_engine_init');
-  final upsert = lib.lookupFunction<CUpsert, DUpsert>('ghita_engine_upsert_clip');
-  final play = lib.lookupFunction<CVoid, DVoid>('ghita_engine_play');
-  final pause = lib.lookupFunction<CVoid, DVoid>('ghita_engine_pause');
-  final getPos = lib.lookupFunction<CInt64, DInt64>('ghita_engine_get_position_ms');
-  final mix = lib.lookupFunction<CMix, DMix>('ghita_engine_mix_audio_window');
-  final renderFrameRgba = lib.lookupFunction<CRender, DRender>('ghita_engine_render_frame_rgba');
-  final renderAt = lib.lookupFunction<CRenderAt, DRenderAt>('ghita_engine_render_frame_at');
+  final upsert = lib.lookupFunction<CUpsertClip, DUpsertClip>('ghita_engine_upsert_clip');
+  final play = lib.lookupFunction<CVoidCtx, DVoidCtx>('ghita_engine_play');
+  final pause = lib.lookupFunction<CVoidCtx, DVoidCtx>('ghita_engine_pause');
+  final getPos = lib.lookupFunction<CGetPositionMs, DGetPositionMs>('ghita_engine_get_position_ms');
+  final mix = lib.lookupFunction<CMixAudioWindow, DMixAudioWindow>('ghita_engine_mix_audio_window');
+  final renderFrameRgba = lib.lookupFunction<CRenderFrame, DRenderFrame>('ghita_engine_render_frame_rgba');
+  final renderAt = lib.lookupFunction<CRenderFrameAt, DRenderFrameAt>('ghita_engine_render_frame_at');
   final seek = lib.lookupFunction<CSeek, DSeek>('ghita_engine_seek');
-  final setRate = lib.lookupFunction<CRate, DRate>('ghita_engine_set_playback_rate');
+  final setRate = lib.lookupFunction<CSetPlaybackRate, DSetPlaybackRate>('ghita_engine_set_playback_rate');
   final isPlaying = lib.lookupFunction<CIsPlaying, DIsPlaying>('ghita_engine_is_playing');
   final hasFFmpeg = lib.lookupFunction<CHasFFmpeg, DHasFFmpeg>('ghita_engine_has_ffmpeg');
 

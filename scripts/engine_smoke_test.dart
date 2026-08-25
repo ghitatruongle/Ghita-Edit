@@ -31,42 +31,21 @@ import 'dart:math' as math;
 
 import 'package:ffi/ffi.dart';
 
-final class GhitaEngineContext extends Opaque {}
+import 'engine_ffi_shared.dart';
 
-typedef _CCreate = Pointer<GhitaEngineContext> Function();
-typedef _DCreate = Pointer<GhitaEngineContext> Function();
-typedef _CInit = Int32 Function(Pointer<GhitaEngineContext>);
-typedef _DInit = int Function(Pointer<GhitaEngineContext>);
-typedef _CPlay = Void Function(Pointer<GhitaEngineContext>);
-typedef _DPlay = void Function(Pointer<GhitaEngineContext>);
-typedef _CPause = Void Function(Pointer<GhitaEngineContext>);
-typedef _DPause = void Function(Pointer<GhitaEngineContext>);
-typedef _CUpsert = Int32 Function(
-    Pointer<GhitaEngineContext>, Int32, Pointer<Utf8>, Int64, Int64, Int64,
-    Int32, Int32, Float, Float, Float);
-typedef _DUpsert = int Function(
-    Pointer<GhitaEngineContext>, int, Pointer<Utf8>, int, int, int,
-    int, int, double, double, double);
-typedef _CRender = Bool Function(Pointer<GhitaEngineContext>, Pointer<Uint8>, Int32, Int32);
-typedef _DRender = bool Function(Pointer<GhitaEngineContext>, Pointer<Uint8>, int, int);
-typedef _CRenderAt = Bool Function(
-    Pointer<GhitaEngineContext>, Pointer<Uint8>, Int32, Int32, Int64);
-typedef _DRenderAt = bool Function(
-    Pointer<GhitaEngineContext>, Pointer<Uint8>, int, int, int);
-typedef _CGetPos = Int64 Function(Pointer<GhitaEngineContext>);
-typedef _DGetPos = int Function(Pointer<GhitaEngineContext>);
-typedef _CGetDur = Int64 Function(Pointer<GhitaEngineContext>);
-typedef _DGetDur = int Function(Pointer<GhitaEngineContext>);
-typedef _CMix = Bool Function(Pointer<GhitaEngineContext>, Int64, Int64, Pointer<Float>, Int32);
-typedef _DMix = bool Function(Pointer<GhitaEngineContext>, int, int, Pointer<Float>, int);
-typedef _CHasFFmpeg = Bool Function(Pointer<GhitaEngineContext>);
-typedef _DHasFFmpeg = bool Function(Pointer<GhitaEngineContext>);
-typedef _CGetVersion = Pointer<Utf8> Function();
-typedef _DGetVersion = Pointer<Utf8> Function();
-typedef _CClear = Void Function(Pointer<GhitaEngineContext>);
-typedef _DClear = void Function(Pointer<GhitaEngineContext>);
-typedef _CDestroy = Void Function(Pointer<GhitaEngineContext>);
-typedef _DDestroy = void Function(Pointer<GhitaEngineContext>);
+// Signatures live in engine_ffi_shared.dart (single source of truth) —
+// local names below are ALIASES only; never declare Function(...) here.
+typedef GhitaEngineContext = GhitaCtx;
+typedef _DPlay = DPlay;
+typedef _DPause = DPause;
+typedef _DUpsert = DUpsertClip;
+typedef _DRender = DRenderFrame;
+typedef _DRenderAt = DRenderFrameAt;
+typedef _CGetPos = CGetPositionMs;
+typedef _DGetPos = DGetPositionMs;
+typedef _CGetDur = CGetDurationMs;
+typedef _DGetDur = DGetDurationMs;
+typedef _DMix = DMixAudioWindow;
 
 int _failures = 0;
 
@@ -144,20 +123,20 @@ void main(List<String> args) {
 
   // ---------------------------------------------------------------- load
   final lib = DynamicLibrary.open(dllPath);
-  final create = lib.lookupFunction<_CCreate, _DCreate>('ghita_engine_create');
-  final init = lib.lookupFunction<_CInit, _DInit>('ghita_engine_init');
-  final play = lib.lookupFunction<_CPlay, _DPlay>('ghita_engine_play');
-  final pause = lib.lookupFunction<_CPause, _DPause>('ghita_engine_pause');
-  final upsert = lib.lookupFunction<_CUpsert, _DUpsert>('ghita_engine_upsert_clip');
-  final render = lib.lookupFunction<_CRender, _DRender>('ghita_engine_render_frame_rgba');
-  final renderAt = lib.lookupFunction<_CRenderAt, _DRenderAt>('ghita_engine_render_frame_at');
+  final create = lib.lookupFunction<CCreate, DCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CInit, DInit>('ghita_engine_init');
+  final play = lib.lookupFunction<CPlay, DPlay>('ghita_engine_play');
+  final pause = lib.lookupFunction<CPause, DPause>('ghita_engine_pause');
+  final upsert = lib.lookupFunction<CUpsertClip, DUpsertClip>('ghita_engine_upsert_clip');
+  final render = lib.lookupFunction<CRenderFrame, DRenderFrame>('ghita_engine_render_frame_rgba');
+  final renderAt = lib.lookupFunction<CRenderFrameAt, DRenderFrameAt>('ghita_engine_render_frame_at');
   final getPos = lib.lookupFunction<_CGetPos, _DGetPos>('ghita_engine_get_position_ms');
   final getDur = lib.lookupFunction<_CGetDur, _DGetDur>('ghita_engine_get_duration_ms');
-  final mix = lib.lookupFunction<_CMix, _DMix>('ghita_engine_mix_audio_window');
-  final hasFFmpeg = lib.lookupFunction<_CHasFFmpeg, _DHasFFmpeg>('ghita_engine_has_ffmpeg');
-  final getVersion = lib.lookupFunction<_CGetVersion, _DGetVersion>('ghita_engine_get_version');
-  final clear = lib.lookupFunction<_CClear, _DClear>('ghita_engine_clear_clips');
-  final destroy = lib.lookupFunction<_CDestroy, _DDestroy>('ghita_engine_destroy');
+  final mix = lib.lookupFunction<CMixAudioWindow, DMixAudioWindow>('ghita_engine_mix_audio_window');
+  final hasFFmpeg = lib.lookupFunction<CHasFFmpeg, DHasFFmpeg>('ghita_engine_has_ffmpeg');
+  final getVersion = lib.lookupFunction<CGetVersion, DGetVersion>('ghita_engine_get_version');
+  final clear = lib.lookupFunction<CClearClips, DClearClips>('ghita_engine_clear_clips');
+  final destroy = lib.lookupFunction<CDestroy, DDestroy>('ghita_engine_destroy');
 
   final ctx = create();
   _check('create()', ctx != nullptr);

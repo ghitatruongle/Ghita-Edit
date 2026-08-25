@@ -8,7 +8,7 @@ struct GhitaEngineContext {
 };
 
 // Static string is safe to return because it lives for the process lifetime
-static const char VERSION_STRING[] = "Ghita Core Engine v1.1.1 (C++/Flutter)";
+static const char VERSION_STRING[] = "Ghita Core Engine v1.5.0 (C++/Flutter)";
 
 // Thread-local buffer for JSON return values (FFI-safe)
 static thread_local std::string t_jsonBuffer;

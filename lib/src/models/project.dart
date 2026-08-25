@@ -25,6 +25,14 @@ class Project {
   /// v0.5.5: Multi-select support via Set of clip IDs
   final Set<String> _selectedClipIds = <String>{};
 
+  /// v1.5.0-T3 (P4): LIVE selected ids (clips that still exist) maintained by
+  /// [_syncClipSelectionFlags] so hot UI paths get O(1) membership/count —
+  /// the old selectedClips scan ran per-clip per-build at ~30fps playback.
+  final Set<String> _liveSelectedIds = <String>{};
+
+  /// O(1) membership test for the timeline build loop.
+  bool isClipSelected(String clipId) => _liveSelectedIds.contains(clipId);
+
   Project({
     required this.name,
     this.filePath = '',
@@ -82,7 +90,9 @@ class Project {
   /// Number of currently selected clips.
   // v0.7.8: Count only LIVE selections — stale ids of deleted/split clips no
   // longer inflate the count (previously: count>0 with nothing selectable).
-  int get selectedClipCount => selectedClips.length;
+  // v1.5.0-T3 (P4): O(1) via the live-id set instead of materializing the
+  // full selectedClips list on every status-bar/timeline read.
+  int get selectedClipCount => _liveSelectedIds.length;
 
   /// v0.7.8: Drop ids of clips that no longer exist (deleted or split), and
   /// resync the per-clip isSelected flags.
@@ -103,6 +113,7 @@ class Project {
   /// Deselect all clips.
   void deselectAll() {
     _selectedClipIds.clear();
+    _liveSelectedIds.clear();
     for (final track in tracks) {
       for (final clip in track.clips) {
         clip.isSelected = false;
@@ -169,9 +180,12 @@ class Project {
 
   /// Sync _selectedClipIds → clip.isSelected for UI widgets that read isSelected.
   void _syncClipSelectionFlags() {
+    _liveSelectedIds.clear();
     for (final track in tracks) {
       for (final clip in track.clips) {
-        clip.isSelected = _selectedClipIds.contains(clip.id);
+        final sel = _selectedClipIds.contains(clip.id);
+        clip.isSelected = sel;
+        if (sel) _liveSelectedIds.add(clip.id);
       }
     }
   }

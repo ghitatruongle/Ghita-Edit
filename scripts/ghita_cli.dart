@@ -1,32 +1,44 @@
-/// v1.5.0 T5-P5: Headless CLI for Ghita Edit — batch export, media info, thumbnails.
-///
-/// Usage:
-///   dart run scripts/ghita_cli.dart export <project.ghita> --output <path> [--codec h264] [--width 1920] [--height 1080] [--fps 30]
-///   dart run scripts/ghita_cli.dart info <media_file>
-///   dart run scripts/ghita_cli.dart thumbnail <media_file> --output <path.png> [--time 1000]
-///   dart run scripts/ghita_cli.dart batch <batch.json>
-///
-/// Exit codes: 0 success, 1 error.
+// v1.5.0 T5-P5: Headless CLI for Ghita Edit — batch export, media info, thumbnails.
+//
+// Usage:
+//   dart run scripts/ghita_cli.dart export <project.ghita> --output <path> [--codec h264] [--width 1920] [--height 1080] [--fps 30]
+//   dart run scripts/ghita_cli.dart info <media_file>
+//   dart run scripts/ghita_cli.dart thumbnail <media_file> --output <path.png> [--time 1000]
+//   dart run scripts/ghita_cli.dart batch <batch.json>
+//
+// Exit codes: 0 success, 1 error.
 
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
 
-// Minimal FFI bindings for headless operation.
-typedef CGhitaEngineCreate = Pointer<Void> Function();
-typedef CGhitaEngineInit = Int32 Function(Pointer<Void>);
-typedef CGhitaEngineDestroy = Void Function(Pointer<Void>);
-typedef CGhitaEngineLoadMedia = Int32 Function(Pointer<Void>, Pointer<Utf8>);
-typedef CGhitaEngineGetDurationMs = Int64 Function(Pointer<Void>);
-typedef CGhitaEngineGetMediaInfo = Pointer<Utf8> Function(Pointer<Void>);
-typedef CGhitaEngineStartExportEx = Int32 Function(
-    Pointer<Void>, Pointer<Utf8>, Int32, Int32, Int32, Pointer<Utf8>, Int64, Bool);
-typedef CGhitaEngineIsExporting = Bool Function(Pointer<Void>);
-typedef CGhitaEngineGetExportProgress = Float Function(Pointer<Void>);
-typedef CGhitaEngineGetExportFileSize = Int64 Function(Pointer<Void>);
-typedef CGhitaEngineRenderFrameAt = Bool Function(
-    Pointer<Void>, Pointer<Uint8>, Int32, Int32, Int64);
+import 'engine_ffi_shared.dart';
+
+// Signatures live in engine_ffi_shared.dart (single source of truth) —
+// local names below are ALIASES only; never declare Function(...) here.
+typedef CGhitaEngineCreate = CCreate;
+typedef DGhitaEngineCreate = DCreate;
+typedef CGhitaEngineInit = CInit;
+typedef DGhitaEngineInit = DInit;
+typedef CGhitaEngineDestroy = CDestroy;
+typedef DGhitaEngineDestroy = DDestroy;
+typedef CGhitaEngineLoadMedia = CLoadMedia;
+typedef DGhitaEngineLoadMedia = DLoadMedia;
+typedef CGhitaEngineGetDurationMs = CGetDurationMs;
+typedef DGhitaEngineGetDurationMs = DGetDurationMs;
+typedef CGhitaEngineGetMediaInfo = CGetMediaInfo;
+typedef DGhitaEngineGetMediaInfo = DGetMediaInfo;
+typedef CGhitaEngineStartExportEx = CStartExportEx;
+typedef DGhitaEngineStartExportEx = DStartExportEx;
+typedef CGhitaEngineIsExporting = CIsExporting;
+typedef DGhitaEngineIsExporting = DIsExporting;
+typedef CGhitaEngineGetExportProgress = CGetExportProgress;
+typedef DGhitaEngineGetExportProgress = DGetExportProgress;
+typedef CGhitaEngineGetExportFileSize = CGetExportFileSize;
+typedef DGhitaEngineGetExportFileSize = DGetExportFileSize;
+typedef CGhitaEngineRenderFrameAt = CRenderFrameAt;
+typedef DGhitaEngineRenderFrameAt = DRenderFrameAt;
 
 void main(List<String> args) {
   if (args.isEmpty) {
@@ -64,19 +76,13 @@ void _printUsage() {
 }
 
 DynamicLibrary? _loadEngine() {
-  final candidates = [
-    'native_engine_rust/target/debug/ghita_engine.dll',
-    'native_engine_rust/target/release/ghita_engine.dll',
-    'build/native_engine/ghita_engine.dll',
-    'ghita_engine.dll',
-  ];
-  for (final path in candidates) {
-    try {
-      return DynamicLibrary.open(path);
-    } catch (_) {}
+  // v1.5.0-T2 (P2): candidate list lives in engine_ffi_shared.dart — one
+  // loader for every script instead of five diverging copies.
+  final lib = loadEngineLibrary();
+  if (lib == null) {
+    stderr.writeln('ERROR: Could not find ghita_engine.dll');
   }
-  stderr.writeln('ERROR: Could not find ghita_engine.dll');
-  return null;
+  return lib;
 }
 
 Map<String, String> _parseFlags(List<String> args) {
@@ -110,14 +116,13 @@ void _cmdExport(List<String> args) {
   final lib = _loadEngine();
   if (lib == null) exit(1);
 
-  final create = lib.lookupFunction<CGhitaEngineCreate, CGhitaEngineCreate>('ghita_engine_create');
-  final init = lib.lookupFunction<CGhitaEngineInit, CGhitaEngineInit>('ghita_engine_init');
-  final destroy = lib.lookupFunction<CGhitaEngineDestroy, CGhitaEngineDestroy>('ghita_engine_destroy');
-  final loadMedia = lib.lookupFunction<CGhitaEngineLoadMedia, CGhitaEngineLoadMedia>('ghita_engine_load_media');
-  final startExport = lib.lookupFunction<CGhitaEngineStartExportEx, CGhitaEngineStartExportEx>('ghita_engine_start_export_ex');
-  final isExporting = lib.lookupFunction<CGhitaEngineIsExporting, CGhitaEngineIsExporting>('ghita_engine_is_exporting');
-  final getProgress = lib.lookupFunction<CGhitaEngineGetExportProgress, CGhitaEngineGetExportProgress>('ghita_engine_get_export_progress');
-  final getFileSize = lib.lookupFunction<CGhitaEngineGetExportFileSize, CGhitaEngineGetExportFileSize>('ghita_engine_get_export_file_size');
+  final create = lib.lookupFunction<CGhitaEngineCreate, DGhitaEngineCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CGhitaEngineInit, DGhitaEngineInit>('ghita_engine_init');
+  final destroy = lib.lookupFunction<CGhitaEngineDestroy, DGhitaEngineDestroy>('ghita_engine_destroy');
+  final startExport = lib.lookupFunction<CGhitaEngineStartExportEx, DGhitaEngineStartExportEx>('ghita_engine_start_export_ex');
+  final isExporting = lib.lookupFunction<CGhitaEngineIsExporting, DGhitaEngineIsExporting>('ghita_engine_is_exporting');
+  final getProgress = lib.lookupFunction<CGhitaEngineGetExportProgress, DGhitaEngineGetExportProgress>('ghita_engine_get_export_progress');
+  final getFileSize = lib.lookupFunction<CGhitaEngineGetExportFileSize, DGhitaEngineGetExportFileSize>('ghita_engine_get_export_file_size');
 
   final ctx = create();
   if (ctx == nullptr) {
@@ -142,7 +147,7 @@ void _cmdExport(List<String> args) {
         stderr.writeln('ERROR: Export failed to start (code $ret)');
         exit(1);
       }
-      stderr.writeln('{"status":"exporting","output":"$output","codec":"$codec","resolution":"${width}x${height}","fps":$fps}');
+      stderr.writeln('{"status":"exporting","output":"$output","codec":"$codec","resolution":"${width}x$height","fps":$fps}');
 
       while (isExporting(ctx)) {
         final progress = getProgress(ctx);
@@ -175,12 +180,12 @@ void _cmdInfo(List<String> args) {
   final lib = _loadEngine();
   if (lib == null) exit(1);
 
-  final create = lib.lookupFunction<CGhitaEngineCreate, CGhitaEngineCreate>('ghita_engine_create');
-  final init = lib.lookupFunction<CGhitaEngineInit, CGhitaEngineInit>('ghita_engine_init');
-  final destroy = lib.lookupFunction<CGhitaEngineDestroy, CGhitaEngineDestroy>('ghita_engine_destroy');
-  final loadMedia = lib.lookupFunction<CGhitaEngineLoadMedia, CGhitaEngineLoadMedia>('ghita_engine_load_media');
-  final getDuration = lib.lookupFunction<CGhitaEngineGetDurationMs, CGhitaEngineGetDurationMs>('ghita_engine_get_duration_ms');
-  final getMediaInfo = lib.lookupFunction<CGhitaEngineGetMediaInfo, CGhitaEngineGetMediaInfo>('ghita_engine_get_media_info');
+  final create = lib.lookupFunction<CGhitaEngineCreate, DGhitaEngineCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CGhitaEngineInit, DGhitaEngineInit>('ghita_engine_init');
+  final destroy = lib.lookupFunction<CGhitaEngineDestroy, DGhitaEngineDestroy>('ghita_engine_destroy');
+  final loadMedia = lib.lookupFunction<CGhitaEngineLoadMedia, DGhitaEngineLoadMedia>('ghita_engine_load_media');
+  final getDuration = lib.lookupFunction<CGhitaEngineGetDurationMs, DGhitaEngineGetDurationMs>('ghita_engine_get_duration_ms');
+  final getMediaInfo = lib.lookupFunction<CGhitaEngineGetMediaInfo, DGhitaEngineGetMediaInfo>('ghita_engine_get_media_info');
 
   final ctx = create();
   if (ctx == nullptr) exit(1);
@@ -222,11 +227,11 @@ void _cmdThumbnail(List<String> args) {
   final lib = _loadEngine();
   if (lib == null) exit(1);
 
-  final create = lib.lookupFunction<CGhitaEngineCreate, CGhitaEngineCreate>('ghita_engine_create');
-  final init = lib.lookupFunction<CGhitaEngineInit, CGhitaEngineInit>('ghita_engine_init');
-  final destroy = lib.lookupFunction<CGhitaEngineDestroy, CGhitaEngineDestroy>('ghita_engine_destroy');
-  final loadMedia = lib.lookupFunction<CGhitaEngineLoadMedia, CGhitaEngineLoadMedia>('ghita_engine_load_media');
-  final renderAt = lib.lookupFunction<CGhitaEngineRenderFrameAt, CGhitaEngineRenderFrameAt>('ghita_engine_render_frame_at');
+  final create = lib.lookupFunction<CGhitaEngineCreate, DGhitaEngineCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CGhitaEngineInit, DGhitaEngineInit>('ghita_engine_init');
+  final destroy = lib.lookupFunction<CGhitaEngineDestroy, DGhitaEngineDestroy>('ghita_engine_destroy');
+  final loadMedia = lib.lookupFunction<CGhitaEngineLoadMedia, DGhitaEngineLoadMedia>('ghita_engine_load_media');
+  final renderAt = lib.lookupFunction<CGhitaEngineRenderFrameAt, DGhitaEngineRenderFrameAt>('ghita_engine_render_frame_at');
 
   const w = 320;
   const h = 180;
@@ -257,7 +262,7 @@ void _cmdThumbnail(List<String> args) {
         sink.writeByteSync(buf[i * 4 + 2]); // B
       }
       sink.closeSync();
-      stderr.writeln('{"status":"complete","output":"$output","size":"${w}x${h}","time_ms":$timeMs}');
+      stderr.writeln('{"status":"complete","output":"$output","size":"${w}x$h","time_ms":$timeMs}');
     } finally {
       calloc.free(buf);
     }
@@ -301,12 +306,12 @@ void _doExportJob(String input, String output, String codec, int width, int heig
   final lib = _loadEngine();
   if (lib == null) return;
 
-  final create = lib.lookupFunction<CGhitaEngineCreate, CGhitaEngineCreate>('ghita_engine_create');
-  final init = lib.lookupFunction<CGhitaEngineInit, CGhitaEngineInit>('ghita_engine_init');
-  final destroy = lib.lookupFunction<CGhitaEngineDestroy, CGhitaEngineDestroy>('ghita_engine_destroy');
-  final startExport = lib.lookupFunction<CGhitaEngineStartExportEx, CGhitaEngineStartExportEx>('ghita_engine_start_export_ex');
-  final isExporting = lib.lookupFunction<CGhitaEngineIsExporting, CGhitaEngineIsExporting>('ghita_engine_is_exporting');
-  final getFileSize = lib.lookupFunction<CGhitaEngineGetExportFileSize, CGhitaEngineGetExportFileSize>('ghita_engine_get_export_file_size');
+  final create = lib.lookupFunction<CGhitaEngineCreate, DGhitaEngineCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CGhitaEngineInit, DGhitaEngineInit>('ghita_engine_init');
+  final destroy = lib.lookupFunction<CGhitaEngineDestroy, DGhitaEngineDestroy>('ghita_engine_destroy');
+  final startExport = lib.lookupFunction<CGhitaEngineStartExportEx, DGhitaEngineStartExportEx>('ghita_engine_start_export_ex');
+  final isExporting = lib.lookupFunction<CGhitaEngineIsExporting, DGhitaEngineIsExporting>('ghita_engine_is_exporting');
+  final getFileSize = lib.lookupFunction<CGhitaEngineGetExportFileSize, DGhitaEngineGetExportFileSize>('ghita_engine_get_export_file_size');
 
   final ctx = create();
   if (ctx == nullptr) return;

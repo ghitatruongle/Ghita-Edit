@@ -7,22 +7,24 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
-final class Ctx extends Opaque {}
-typedef CUpsert = Int32 Function(Pointer<Ctx>, Int32, Pointer<Utf8>, Int64, Int64,
-    Int64, Int32, Int32, Float, Float, Float);
-typedef DUpsert = int Function(Pointer<Ctx>, int, Pointer<Utf8>, int, int, int, int,
-    int, double, double, double);
-typedef CMix = Bool Function(Pointer<Ctx>, Int64, Int64, Pointer<Float>, Int32);
-typedef DMix = bool Function(Pointer<Ctx>, int, int, Pointer<Float>, int);
+import 'engine_ffi_shared.dart';
+
+// Signatures live in engine_ffi_shared.dart (single source of truth) —
+// local names below are ALIASES only; never declare Function(...) here.
+typedef Ctx = GhitaCtx;
+typedef CUpsert = CUpsertClip;
+typedef DUpsert = DUpsertClip;
+typedef CMix = CMixAudioWindow;
+typedef DMix = DMixAudioWindow;
 
 void main(List<String> args) {
   final path = args[0];
   final dll = 'build/windows/x64/runner/Release/ghita_engine.dll';
   final lib = DynamicLibrary.open(dll);
-  final create = lib.lookupFunction<Pointer<Ctx> Function(), Pointer<Ctx> Function()>('ghita_engine_create');
-  final init = lib.lookupFunction<Int32 Function(Pointer<Ctx>), int Function(Pointer<Ctx>)>('ghita_engine_init');
-  final upsert = lib.lookupFunction<CUpsert, DUpsert>('ghita_engine_upsert_clip');
-  final mix = lib.lookupFunction<CMix, DMix>('ghita_engine_mix_audio_window');
+  final create = lib.lookupFunction<CCreate, DCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CInit, DInit>('ghita_engine_init');
+  final upsert = lib.lookupFunction<CUpsertClip, DUpsertClip>('ghita_engine_upsert_clip');
+  final mix = lib.lookupFunction<CMixAudioWindow, DMixAudioWindow>('ghita_engine_mix_audio_window');
   final ctx = create();
   init(ctx);
   final p = path.toNativeUtf8();

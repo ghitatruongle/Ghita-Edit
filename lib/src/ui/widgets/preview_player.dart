@@ -64,13 +64,16 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
   @override
   void initState() {
     super.initState();
-    widget.controller.addListener(_onControllerUpdate);
+    // v1.5.0-T3 (P1): consume ENGINE notifications instead of controller ones
+    // — position-only playback ticks no longer wake the full controller
+    // listener set, but frames must keep flowing to the preview.
+    widget.controller.engineService.addListener(_onControllerUpdate);
     _startMiniControlsTimer();
   }
 
   @override
   void dispose() {
-    widget.controller.removeListener(_onControllerUpdate);
+    widget.controller.engineService.removeListener(_onControllerUpdate);
     _miniControlsTimer?.cancel();
     _currentFrameImage?.dispose();
     // v1.1.0 (PLAN 3.5): Dispose the raw split-view image too.
@@ -161,8 +164,15 @@ class _PreviewPlayerState extends State<PreviewPlayer> {
   // v1.1.0 (PLAN 3.5): Decode the raw frame (no per-clip filter/cc, no
   // global filter) at the current position for the split-view left side.
   bool _rawDecodeInFlight = false;
+  // v1.5.0-T3 (P3): split-view used to re-render a second full 640×360 frame
+  // (alloc + copy) synchronously per decoded frame (~30fps). Throttle to
+  // ~10fps; seek-while-paused latency of ≤100ms is imperceptible.
+  int _lastRawRenderAtMs = 0;
   void _maybeLoadRawFrame() {
     if (!_splitView || !mounted || _rawDecodeInFlight) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastRawRenderAtMs < 100) return;
+    _lastRawRenderAtMs = now;
     _rawDecodeInFlight = true;
     final ctrl = widget.controller;
     final raw = ctrl.engineService.renderRawFrameAt(ctrl.positionMs);

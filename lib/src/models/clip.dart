@@ -332,14 +332,17 @@ class Clip {
       textContent: textContent ?? this.textContent,
       textFont: textFont ?? this.textFont,
       textFontSize: textFontSize ?? this.textFontSize,
-      textColorValue: _clipColorArgb(textColor ?? const Color(0x00000000)),
+      // Text colors: an omitted parameter must PRESERVE the current color —
+      // falling back to transparent wiped every split/copy/property-edit of a
+      // text clip into invisible black.
+      textColorValue: textColor != null ? _clipColorArgb(textColor) : textColorValue,
       textBold: textBold ?? this.textBold,
       textItalic: textItalic ?? this.textItalic,
       textUnderline: textUnderline ?? this.textUnderline,
       textStrokeWidth: textStrokeWidth ?? this.textStrokeWidth,
-      textStrokeColorValue: _clipColorArgb(textStrokeColor ?? const Color(0x00000000)),
+      textStrokeColorValue: textStrokeColor != null ? _clipColorArgb(textStrokeColor) : textStrokeColorValue,
       textShadow: textShadow ?? this.textShadow,
-      textBackgroundColorValue: _clipColorArgb(textBackgroundColor ?? const Color(0x00000000)),
+      textBackgroundColorValue: textBackgroundColor != null ? _clipColorArgb(textBackgroundColor) : textBackgroundColorValue,
       textAlignment: textAlignment ?? this.textAlignment,
       textGradient: textGradient ?? this.textGradient,
       stickerScale: stickerScale ?? this.stickerScale,

@@ -17,6 +17,12 @@ abstract class EditCommand {
   /// restores the value from before the gesture started.
   void inheritUndoState(EditCommand old) {}
 
+  /// v1.5.0-T3 (P2): structural commands change clip membership/geometry —
+  /// they invalidate cached timeline waveforms. Property-only commands
+  /// (filter/opacity/volume/text/…) must NOT clear those caches on every
+  /// coalesced slider tick.
+  bool get isStructural => false;
+
   void execute(Project project);
   void undo(Project project);
 }
@@ -35,6 +41,9 @@ class AddClipCommand extends EditCommand {
 
   @override
   String get description => 'Add clip "${clip.displayName}"';
+
+  @override
+  bool get isStructural => true;
 
   @override
   void execute(Project project) {
@@ -73,7 +82,7 @@ class AddClipCommand extends EditCommand {
 class DeleteClipCommand extends EditCommand {
   final String trackId;
   final Clip clip;
-  late int _originalPosition;
+  late int _originalIndex;
 
   DeleteClipCommand({required this.trackId, required this.clip});
 
@@ -81,16 +90,109 @@ class DeleteClipCommand extends EditCommand {
   String get description => 'Delete clip "${clip.displayName}"';
 
   @override
+  bool get isStructural => true;
+
+  @override
   void execute(Project project) {
-    _originalPosition = clip.timelineStartMs;
     final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
+    final idx = track?.clips.indexOf(clip) ?? -1;
+    _originalIndex = idx < 0 ? 0 : idx;
     track?.removeClip(clip.id);
   }
 
   @override
   void undo(Project project) {
     final track = project.tracks.where((t) => t.id == trackId).firstOrNull;
-    track?.addClipAt(clip, _originalPosition);
+    if (track == null) return;
+    // Re-insert at the captured index WITHOUT addClipAt()'s overlap
+    // resolution — undo must restore the exact pre-delete state, not shift
+    // unrelated clips (a delete→undo→redo cycle used to leave a different
+    // timeline). LIFO command order guarantees later mutations were already
+    // undone, so the original slot is free.
+    final i = _originalIndex.clamp(0, track.clips.length);
+    track.clips.insert(i, clip);
+    track.clips.sort((a, b) => a.timelineStartMs.compareTo(b.timelineStartMs));
+  }
+}
+
+/// v1.5.0-T6 (P3): generic whole-clip state snapshot — brings the T3/T5
+/// property setters (blend/mask/pitch/font/keyframes/sticker) into the undo
+/// system. The controller preloads before/after copies, so execute/undo are
+/// pure swaps with no capture-on-redo pitfalls. Coalesces per clip+field
+/// within one gesture id (slider drags).
+class ClipStateCommand extends EditCommand {
+  final String clipId;
+  final String field;
+  final int? gestureId;
+  late Clip before;
+  late Clip after;
+
+  ClipStateCommand({
+    required this.clipId,
+    required this.field,
+    required Clip afterValue,
+    this.gestureId,
+  }) {
+    after = afterValue;
+  }
+
+  void preloadBefore(Clip value) => before = value;
+
+  @override
+  String? get coalesceKey => 'clip-state:$clipId:$field:$gestureId';
+
+  @override
+  String get description => 'Edit $field';
+
+  @override
+  void inheritUndoState(EditCommand old) {
+    // Coalesced replacement keeps the ORIGINAL pre-gesture snapshot.
+    if (old is ClipStateCommand) before = old.before;
+  }
+
+  static void _replace(Project project, String clipId, Clip replacement) {
+    for (final track in project.tracks) {
+      final i = track.clips.indexWhere((c) => c.id == clipId);
+      if (i >= 0) {
+        track.clips[i] = replacement;
+        return;
+      }
+    }
+  }
+
+  @override
+  void execute(Project project) => _replace(project, clipId, after);
+
+  @override
+  void undo(Project project) => _replace(project, clipId, before);
+}
+
+/// v1.5.0-T6 (P3): groups several commands behind ONE undo entry — used by
+/// multi-delete so N deletions no longer need N undos.
+class CompositeCommand extends EditCommand {
+  final List<EditCommand> commands;
+  final String label;
+
+  CompositeCommand(this.commands, {this.label = 'Composite edit'});
+
+  @override
+  String get description => label;
+
+  @override
+  bool get isStructural => commands.any((c) => c.isStructural);
+
+  @override
+  void execute(Project project) {
+    for (final c in commands) {
+      c.execute(project);
+    }
+  }
+
+  @override
+  void undo(Project project) {
+    for (final c in commands.reversed) {
+      c.undo(project);
+    }
   }
 }
 
@@ -108,6 +210,9 @@ class SplitClipCommand extends EditCommand {
 
   @override
   String get description => 'Split clip at ${positionMs}ms';
+
+  @override
+  bool get isStructural => true;
 
   @override
   void execute(Project project) {
@@ -143,6 +248,9 @@ class MoveClipCommand extends EditCommand {
 
   @override
   String get description => 'Move clip to ${newStartMs}ms';
+
+  @override
+  bool get isStructural => true;
 
   @override
   void execute(Project project) {
@@ -260,6 +368,9 @@ class TrimClipCommand extends EditCommand {
 
   @override
   String get description => trimStart ? 'Trim clip start' : 'Trim clip end';
+
+  @override
+  bool get isStructural => true;
 
   @override
   void execute(Project project) {
@@ -524,6 +635,8 @@ class ChangeClipColorCorrectionCommand extends EditCommand {
 /// set and coalesces a typing session into a single undo entry.
 class ChangeClipTextCommand extends EditCommand {
   final String clipId;
+  // v1.5.0-T6 (P3): typing-session id — separates consecutive edit sessions.
+  final int? gestureId;
   final String newContent;
   final String newFont;
   final double newFontSize;
@@ -569,12 +682,14 @@ class ChangeClipTextCommand extends EditCommand {
     required this.newBgColorValue,
     required this.newAlignment,
     required this.newGradient,
+    this.gestureId,
   });
 
-  /// One undo entry per clip text-edit session — coalesce on the clip id only
-  /// (no gestureId) so a whole typing run collapses to a single undo.
+  /// v1.5.0-T6 (P3): coalesce per typing SESSION — the controller bumps
+  /// its gesture counter when the text field gains focus, so two separate
+  /// editing sessions no longer merge into one undo entry.
   @override
-  String? get coalesceKey => 'clip-text:$clipId';
+  String? get coalesceKey => 'clip-text:$clipId:$gestureId';
 
   @override
   String get description => 'Edit text';
@@ -768,6 +883,9 @@ class AddTrackCommand extends EditCommand {
   String get description => 'Add track "${track.name}"';
 
   @override
+  bool get isStructural => true;
+
+  @override
   void execute(Project project) {
     project.addTrack(track);
   }
@@ -787,6 +905,9 @@ class RemoveTrackCommand extends EditCommand {
 
   @override
   String get description => 'Remove track "${track.name}"';
+
+  @override
+  bool get isStructural => true;
 
   @override
   void execute(Project project) {
@@ -840,6 +961,12 @@ class CommandHistory extends ChangeNotifier {
   int get undoCount => _undoStack.length;
   int get redoCount => _redoStack.length;
 
+  /// v1.5.0-T3 (P2): whether the most recent execute/undo/redo was a
+  /// STRUCTURAL command (membership/geometry) — property-only drags return
+  /// false so consumers skip waveform-cache invalidation.
+  bool _lastChangeWasStructural = true;
+  bool get lastChangeWasStructural => _lastChangeWasStructural;
+
   List<EditCommand> get undoStack => List.unmodifiable(_undoStack);
   List<EditCommand> get redoStack => List.unmodifiable(_redoStack);
 
@@ -847,6 +974,9 @@ class CommandHistory extends ChangeNotifier {
   void execute(EditCommand command, Project project) {
     if (_disposed) return;
     command.execute(project);
+    // v1.5.0-T3 (P2): classify so consumers can skip waveform-cache clears
+    // on coalesced property ticks.
+    _lastChangeWasStructural = command.isStructural;
 
     // v0.7.8: Coalesce consecutive commands with the same key (e.g. slider
     // drags) so one gesture produces exactly one undo entry. The replacement
@@ -930,6 +1060,7 @@ class CommandHistory extends ChangeNotifier {
     if (_disposed || !canUndo) return false;
     final command = _undoStack.removeLast();
     command.undo(project);
+    _lastChangeWasStructural = command.isStructural;
     _redoStack.add(command);
     project.markModified();
     notifyListeners();
@@ -941,6 +1072,7 @@ class CommandHistory extends ChangeNotifier {
     if (_disposed || !canRedo) return false;
     final command = _redoStack.removeLast();
     command.execute(project);
+    _lastChangeWasStructural = command.isStructural;
     _undoStack.add(command);
     project.markModified();
     notifyListeners();
@@ -952,6 +1084,9 @@ class CommandHistory extends ChangeNotifier {
     if (_disposed) return;
     _undoStack.clear();
     _redoStack.clear();
+    // v1.5.0-T1: snapshots serialize the whole project — stale ones could
+    // resurrect tracks of a previous project into the new one.
+    _snapshots.clear();
     notifyListeners();
   }
 

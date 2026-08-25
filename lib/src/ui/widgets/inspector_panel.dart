@@ -182,7 +182,13 @@ class InspectorPanel extends StatelessWidget {
       bool? shadow,
       int? bgColorValue,
       int? alignment,
+      int? gestureId,
     }) {
+      // v1.5.0-T6 (P3): toggle-style callers (gradient/bold/…) start a fresh
+      // gesture so each click is its own undo entry; the content TextField
+      // opens ONE session on focus so typing collapses together.
+      if (content == null) controller.beginPropertyGesture();
+      final gid = controller.propertyGestureCount;
       controller.setClipText(
         clip.id,
         content: content,
@@ -197,6 +203,7 @@ class InspectorPanel extends StatelessWidget {
         shadow: shadow,
         bgColorValue: bgColorValue,
         alignment: alignment,
+        gestureId: content == null ? gid : controller.propertyGestureCount,
       );
     }
 
@@ -227,6 +234,9 @@ class InspectorPanel extends StatelessWidget {
             // after Ctrl+Z.
             _TextContentField(
               clip: clip,
+              // v1.5.0-T6 (P3): focus opens ONE typing session — keystrokes
+              // coalesce into a single undo until the field loses focus.
+              onFocusChange: () => controller.beginPropertyGesture(),
               onChanged: (val) => editText(content: val),
             ),
             const SizedBox(height: 10),
@@ -480,11 +490,9 @@ Row(
                 min: 0.1,
                 max: 5.0,
                 activeColor: AppTheme.clipSticker,
-                // v1.1.0 (PLAN 3.12/B13): DISABLED — the engine renders
-                // stickers via GDI text (fixed size); scale had NO effect on
-                // preview/export while the UI pretended it did. Honest label
-                // until the engine supports sticker transform.
-                onChanged: null,
+                // v1.5.0-T5 (P5): sticker transform is REAL now — the engine
+                // scales about center via ghita_engine_set_clip_sticker_transform.
+                onChanged: (v) => controller.setClipStickerTransform(clip.id, v, clip.stickerRotation),
               ),
               Row(
                 children: [
@@ -499,10 +507,8 @@ Row(
                 max: 180.0,
                 divisions: 36,
                 activeColor: AppTheme.clipSticker,
-                onChanged: null, // v1.1.0: disabled — no engine transform support
+                onChanged: (v) => controller.setClipStickerTransform(clip.id, clip.stickerScale, v),
               ),
-              const Text('Sticker transform chưa được engine hỗ trợ (disbled trung thực)',
-                  style: TextStyle(color: AppTheme.textMuted, fontSize: 9, fontStyle: FontStyle.italic)),
           ],
         ),
       ),
@@ -1122,11 +1128,13 @@ Row(
   // ============================================================
 
   Widget _buildTransitionCard(Clip clip, EditorController controller) {
-    // v1.1.0 (PLAN 3.12): Only the transitions the ENGINE actually renders —
-    // the v1.0.0 changelog claimed Slide/Wipe/Zoom/Dissolve/Radial were real,
-    // but the compositor only implements FadeIn/FadeOut/Crossfade (the others
-    // were metadata-only no-ops). Honest dropdown until the effects exist.
-    final transitions = ['None', 'Fade In', 'Fade Out', 'Crossfade'];
+    // v1.5.0-T5 (P5): Slide/Wipe/Zoom/Dissolve/Radial are NOW real compositor
+    // implementations (blend_extended_transition) — the dropdown exposes all
+    // nine engine transition kinds again, ids aligned with TransitionType.
+    final transitions = [
+      'None', 'Fade In', 'Fade Out', 'Crossfade', 'Slide',
+      'Wipe', 'Zoom', 'Dissolve', 'Radial',
+    ];
     final safeType = clip.transitionType.clamp(0, transitions.length - 1);
 
     return Container(
@@ -1365,8 +1373,10 @@ Row(
         activeType == id,
         () {
           if (clip != null) {
-            clip.filterType = id;
-            controller.notifyListeners();
+            // v1.5.0-T1: same undoable + engine-synced path as the engine
+            // chip list — direct mutation skipped command history AND
+            // _markEngineSync so preview/export never saw the filter.
+            controller.setClipFilter(clip.id, id, clip.filterIntensity);
           } else {
             controller.setFilter(id, 1.0);
           }
@@ -1531,7 +1541,11 @@ class _ColorGrid extends StatelessWidget {
 class _TextContentField extends StatefulWidget {
   final Clip clip;
   final ValueChanged<String> onChanged;
-  const _TextContentField({required this.clip, required this.onChanged});
+  /// v1.5.0-T6 (P3): called when the field gains focus — opens one undo
+  /// session so a whole typing run collapses into a single entry.
+  final VoidCallback? onFocusChange;
+  const _TextContentField(
+      {required this.clip, required this.onChanged, this.onFocusChange});
 
   @override
   State<_TextContentField> createState() => _TextContentFieldState();
@@ -1571,16 +1585,21 @@ class _TextContentFieldState extends State<_TextContentField> {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: _controller,
-      maxLines: 3,
-      decoration: InputDecoration(
-        hintText: 'Enter text...',
-        hintStyle: TextStyle(color: AppTheme.textMuted, fontSize: 12),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    return Focus(
+      onFocusChange: (focused) {
+        if (focused) widget.onFocusChange?.call();
+      },
+      child: TextField(
+        controller: _controller,
+        maxLines: 3,
+        decoration: InputDecoration(
+          hintText: 'Enter text...',
+          hintStyle: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        ),
+        style: TextStyle(color: AppTheme.textMain, fontSize: 13),
+        onChanged: widget.onChanged,
       ),
-      style: TextStyle(color: AppTheme.textMain, fontSize: 13),
-      onChanged: widget.onChanged,
     );
   }
 }

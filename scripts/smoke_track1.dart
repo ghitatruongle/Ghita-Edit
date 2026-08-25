@@ -15,46 +15,14 @@ import 'dart:math' as math;
 
 import 'package:ffi/ffi.dart';
 
-final class GhitaEngineContext extends Opaque {}
+import 'engine_ffi_shared.dart';
 
-typedef _CCreate = Pointer<GhitaEngineContext> Function();
-typedef _DCreate = Pointer<GhitaEngineContext> Function();
-typedef _CInit = Int32 Function(Pointer<GhitaEngineContext>);
-typedef _DInit = int Function(Pointer<GhitaEngineContext>);
-typedef _CDestroy = Void Function(Pointer<GhitaEngineContext>);
-typedef _DDestroy = void Function(Pointer<GhitaEngineContext>);
-typedef _CLoadMedia = Int32 Function(Pointer<GhitaEngineContext>, Pointer<Utf8>);
-typedef _DLoadMedia = int Function(Pointer<GhitaEngineContext>, Pointer<Utf8>);
-typedef _CGetDuration = Int64 Function(Pointer<GhitaEngineContext>);
-typedef _DGetDuration = int Function(Pointer<GhitaEngineContext>);
-typedef _CGetPosition = Int64 Function(Pointer<GhitaEngineContext>);
-typedef _DGetPosition = int Function(Pointer<GhitaEngineContext>);
-typedef _CPlay = Void Function(Pointer<GhitaEngineContext>);
-typedef _DPlay = void Function(Pointer<GhitaEngineContext>);
-typedef _CPause = Void Function(Pointer<GhitaEngineContext>);
-typedef _DPause = void Function(Pointer<GhitaEngineContext>);
-typedef _CSeek = Void Function(Pointer<GhitaEngineContext>, Int64);
-typedef _DSeek = void Function(Pointer<GhitaEngineContext>, int);
-typedef _CRender = Bool Function(
-    Pointer<GhitaEngineContext>, Pointer<Uint8>, Int32, Int32);
-typedef _DRender = bool Function(
-    Pointer<GhitaEngineContext>, Pointer<Uint8>, int, int);
-typedef _CStartExportEx = Int32 Function(
-  Pointer<GhitaEngineContext>, Pointer<Utf8>,
-  Int32, Int32, Int32, Pointer<Utf8>, Int64, Bool,
-);
-typedef _DStartExportEx = int Function(
-  Pointer<GhitaEngineContext>, Pointer<Utf8>,
-  int, int, int, Pointer<Utf8>, int, bool,
-);
-typedef _CIsExporting = Bool Function(Pointer<GhitaEngineContext>);
-typedef _DIsExporting = bool Function(Pointer<GhitaEngineContext>);
-typedef _CGetProgress = Float Function(Pointer<GhitaEngineContext>);
-typedef _DGetProgress = double Function(Pointer<GhitaEngineContext>);
-typedef _CGetFileSize = Int64 Function(Pointer<GhitaEngineContext>);
-typedef _DGetFileSize = int Function(Pointer<GhitaEngineContext>);
-typedef _CGetVersion = Pointer<Utf8> Function();
-typedef _DGetVersion = Pointer<Utf8> Function();
+// Signatures live in engine_ffi_shared.dart (single source of truth) —
+// local names below are ALIASES only; never declare Function(...) here.
+typedef GhitaEngineContext = GhitaCtx;
+typedef _DGetPosition = DGetPositionMs;
+typedef _DPause = DPause;
+typedef _DRender = DRenderFrame;
 
 int _failures = 0;
 void check(bool ok, String what) {
@@ -109,21 +77,21 @@ Future<void> main(List<String> args) async {
   stdout.writeln('session: ${sessionMinutes}min play + export');
 
   final lib = DynamicLibrary.open(dllPath);
-  final create = lib.lookupFunction<_CCreate, _DCreate>('ghita_engine_create');
-  final init = lib.lookupFunction<_CInit, _DInit>('ghita_engine_init');
-  final destroy = lib.lookupFunction<_CDestroy, _DDestroy>('ghita_engine_destroy');
-  final loadMedia = lib.lookupFunction<_CLoadMedia, _DLoadMedia>('ghita_engine_load_media');
-  final getDuration = lib.lookupFunction<_CGetDuration, _DGetDuration>('ghita_engine_get_duration_ms');
-  final getPosition = lib.lookupFunction<_CGetPosition, _DGetPosition>('ghita_engine_get_position_ms');
-  final play = lib.lookupFunction<_CPlay, _DPlay>('ghita_engine_play');
-  final pause = lib.lookupFunction<_CPause, _DPause>('ghita_engine_pause');
-  final seek = lib.lookupFunction<_CSeek, _DSeek>('ghita_engine_seek');
-  final render = lib.lookupFunction<_CRender, _DRender>('ghita_engine_render_frame_rgba');
-  final startExportEx = lib.lookupFunction<_CStartExportEx, _DStartExportEx>('ghita_engine_start_export_ex');
-  final isExporting = lib.lookupFunction<_CIsExporting, _DIsExporting>('ghita_engine_is_exporting');
-  final getProgress = lib.lookupFunction<_CGetProgress, _DGetProgress>('ghita_engine_get_export_progress');
-  final getFileSize = lib.lookupFunction<_CGetFileSize, _DGetFileSize>('ghita_engine_get_export_file_size');
-  final getVersion = lib.lookupFunction<_CGetVersion, _DGetVersion>('ghita_engine_get_version');
+  final create = lib.lookupFunction<CCreate, DCreate>('ghita_engine_create');
+  final init = lib.lookupFunction<CInit, DInit>('ghita_engine_init');
+  final destroy = lib.lookupFunction<CDestroy, DDestroy>('ghita_engine_destroy');
+  final loadMedia = lib.lookupFunction<CLoadMedia, DLoadMedia>('ghita_engine_load_media');
+  final getDuration = lib.lookupFunction<CGetDurationMs, DGetDurationMs>('ghita_engine_get_duration_ms');
+  final getPosition = lib.lookupFunction<CGetPositionMs, DGetPositionMs>('ghita_engine_get_position_ms');
+  final play = lib.lookupFunction<CPlay, DPlay>('ghita_engine_play');
+  final pause = lib.lookupFunction<CPause, DPause>('ghita_engine_pause');
+  final seek = lib.lookupFunction<CSeek, DSeek>('ghita_engine_seek');
+  final render = lib.lookupFunction<CRenderFrame, DRenderFrame>('ghita_engine_render_frame_rgba');
+  final startExportEx = lib.lookupFunction<CStartExportEx, DStartExportEx>('ghita_engine_start_export_ex');
+  final isExporting = lib.lookupFunction<CIsExporting, DIsExporting>('ghita_engine_is_exporting');
+  final getProgress = lib.lookupFunction<CGetExportProgress, DGetExportProgress>('ghita_engine_get_export_progress');
+  final getFileSize = lib.lookupFunction<CGetExportFileSize, DGetExportFileSize>('ghita_engine_get_export_file_size');
+  final getVersion = lib.lookupFunction<CGetVersion, DGetVersion>('ghita_engine_get_version');
 
   final ctx = create();
   check(ctx.address != 0, 'engine create');

@@ -66,7 +66,7 @@ fn version_string_format() {
     let v = unsafe { ghita_engine_get_version() };
     assert!(!v.is_null());
     let s = unsafe { std::ffi::CStr::from_ptr(v) }.to_str().unwrap();
-    assert!(s.starts_with("Ghita Core Engine v1.1.1"), "got: {s}");
+    assert!(s.starts_with("Ghita Core Engine v1.5.0"), "got: {s}");
 }
 
 #[test]

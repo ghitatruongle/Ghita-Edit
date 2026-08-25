@@ -10,7 +10,9 @@ use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
 /// Maximum cached frames (LRU eviction).
-const MAX_CACHE_ENTRIES: usize = 200;
+/// v1.5.0-T5 (P2): wired into the PAUSED render path only; 48 entries ×
+/// ~0.9 MB (640×360×4) ≈ 42 MB worst-case.
+const MAX_CACHE_ENTRIES: usize = 48;
 
 /// If playhead jumps more than this many ms, skip cache population.
 const CACHE_SKIP_THRESHOLD_MS: i64 = 500;

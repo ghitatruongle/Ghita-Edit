@@ -34,8 +34,6 @@ pub mod fft_tools;
 pub mod media;
 
 #[cfg(feature = "gpu")]
-pub mod graph;
-#[cfg(feature = "gpu")]
 pub mod gpu;
 
 // T5-P1: SQLite project format + media library database.
@@ -58,9 +56,13 @@ pub mod brush_engine;
 pub mod ai_tools;
 // T6-P2: Clone/heal/path paint tools.
 pub mod paint_tools;
-// T5-P7: 32-bit float internal render pipeline (additive, feature-gated).
-#[cfg(feature = "f32_pipeline")]
-pub mod f32_pipeline;
+
+// v1.5.0-T5 (P4): the f32_pipeline module was REMOVED — its filter-id table
+// diverged from the shipped u8 reference (15/16/18-20 mapped to the wrong
+// filters), only 5/22 filters had parity tests, it had ZERO production
+// callers, and no benchmark showed a win (f32 does strictly more arithmetic
+// per pixel). Per the plan's own decision tree ("benchmark thua thì xóa"),
+// deletion eliminates the drift permanently.
 
 pub use c_api::{VERSION_STRING, GhitaEngineContext};
 pub use engine::GhitaEngine;
