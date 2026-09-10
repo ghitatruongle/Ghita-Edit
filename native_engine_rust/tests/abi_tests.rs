@@ -66,7 +66,11 @@ fn version_string_format() {
     let v = unsafe { ghita_engine_get_version() };
     assert!(!v.is_null());
     let s = unsafe { std::ffi::CStr::from_ptr(v) }.to_str().unwrap();
-    assert!(s.starts_with("Ghita Core Engine v1.5.0"), "got: {s}");
+    // Derived from CARGO_PKG_VERSION — never hardcode a release number here.
+    assert!(
+        s.starts_with(concat!("Ghita Core Engine v", env!("CARGO_PKG_VERSION"))),
+        "got: {s}"
+    );
 }
 
 #[test]
@@ -386,4 +390,104 @@ fn concurrent_render_stress_no_panic() {
         h.join().unwrap();
     }
     assert_eq!(unsafe { ghita_engine_get_clip_count(c.0) }, 2);
+}
+
+// v1.5.5-demo (B3): adjustment graph -----------------------------------------
+
+fn graph_json_of(c: &Ctx, clip: i32) -> String {
+    unsafe { std::ffi::CStr::from_ptr(ghita_engine_graph_get_json(c.0, clip)) }
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn graph_empty_is_identity() {
+    let c = Ctx::new();
+    let path = cstr("missing.mp4");
+    unsafe { ghita_engine_upsert_clip(c.0, 1, path.as_ptr(), 0, 5000, 0, 0, 0, 1.0, 1.0, 1.0) };
+    let mut a = frame(64, 36);
+    assert!(unsafe { ghita_engine_render_frame_at(c.0, a.as_mut_ptr(), 64, 36, 1000) });
+    // add then clear → must return to the identical frame (parity default)
+    assert!(unsafe { ghita_engine_graph_add_node(c.0, 1, 0, 0.5, 0.0, 0.0) } >= 0);
+    assert_eq!(unsafe { ghita_engine_graph_clear(c.0, 1) }, 1);
+    let mut b = frame(64, 36);
+    assert!(unsafe { ghita_engine_render_frame_at(c.0, b.as_mut_ptr(), 64, 36, 1000) });
+    assert_eq!(a, b, "cleared graph must render identically to no graph");
+}
+
+#[test]
+fn graph_brightness_changes_frame() {
+    let c = Ctx::new();
+    let path = cstr("missing.mp4");
+    unsafe { ghita_engine_upsert_clip(c.0, 1, path.as_ptr(), 0, 5000, 0, 0, 0, 1.0, 1.0, 1.0) };
+    let mut base = frame(64, 36);
+    assert!(unsafe { ghita_engine_render_frame_at(c.0, base.as_mut_ptr(), 64, 36, 1000) });
+    assert!(unsafe { ghita_engine_graph_add_node(c.0, 1, 0, 0.5, 0.0, 0.0) } >= 0);
+    let mut bright = frame(64, 36);
+    assert!(unsafe { ghita_engine_render_frame_at(c.0, bright.as_mut_ptr(), 64, 36, 1000) });
+    assert_ne!(base, bright, "brightness +0.5 must change pixels");
+    for (i, (b, w)) in base.iter().zip(bright.iter()).enumerate() {
+        if i % 4 == 3 {
+            assert_eq!(w, b, "alpha must be untouched");
+        } else {
+            assert!(w >= b, "brightness must only lift channels");
+        }
+    }
+}
+
+#[test]
+fn graph_node_order_matters() {
+    let c = Ctx::new();
+    let path = cstr("missing.mp4");
+    unsafe { ghita_engine_upsert_clip(c.0, 1, path.as_ptr(), 0, 5000, 0, 0, 0, 1.0, 1.0, 1.0) };
+    // contrast → saturation
+    unsafe {
+        ghita_engine_graph_add_node(c.0, 1, 1, 0.8, 0.0, 0.0);
+        ghita_engine_graph_add_node(c.0, 1, 2, -1.0, 0.0, 0.0);
+    }
+    let mut ab = frame(64, 36);
+    assert!(unsafe { ghita_engine_render_frame_at(c.0, ab.as_mut_ptr(), 64, 36, 1000) });
+    // saturation → contrast (reversed chain)
+    unsafe {
+        ghita_engine_graph_clear(c.0, 1);
+        ghita_engine_graph_add_node(c.0, 1, 2, -1.0, 0.0, 0.0);
+        ghita_engine_graph_add_node(c.0, 1, 1, 0.8, 0.0, 0.0);
+    }
+    let mut ba = frame(64, 36);
+    assert!(unsafe { ghita_engine_render_frame_at(c.0, ba.as_mut_ptr(), 64, 36, 1000) });
+    assert_ne!(ab, ba, "node order must matter (contrast→sat ≠ sat→contrast)");
+}
+
+#[test]
+fn graph_preserved_across_upsert() {
+    // Review regression guard: upsert_clip updates in place — the graph
+    // chain must survive a timeline re-sync.
+    let c = Ctx::new();
+    let path = cstr("missing.mp4");
+    unsafe { ghita_engine_upsert_clip(c.0, 1, path.as_ptr(), 0, 5000, 0, 0, 0, 1.0, 1.0, 1.0) };
+    assert!(unsafe { ghita_engine_graph_add_node(c.0, 1, 2, 0.7, 0.0, 0.0) } >= 0);
+    unsafe { ghita_engine_upsert_clip(c.0, 1, path.as_ptr(), 1000, 5000, 0, 0, 0, 1.0, 1.0, 1.0) };
+    let j = graph_json_of(&c, 1);
+    assert!(j.contains("\"type\":2"), "graph lost across upsert: {j}");
+}
+
+#[test]
+fn graph_json_roundtrip_lifo_and_unknown() {
+    let c = Ctx::new();
+    let path = cstr("missing.mp4");
+    unsafe { ghita_engine_upsert_clip(c.0, 1, path.as_ptr(), 0, 5000, 0, 0, 0, 1.0, 1.0, 1.0) };
+    assert_eq!(graph_json_of(&c, 1), "[]");
+    assert_eq!(unsafe { ghita_engine_graph_add_node(c.0, 1, 0, 0.25, 0.0, 0.0) }, 0);
+    assert_eq!(unsafe { ghita_engine_graph_add_node(c.0, 1, 1, -0.5, 0.0, 0.0) }, 1);
+    let j = graph_json_of(&c, 1);
+    assert!(j.contains("\"type\":0") && j.contains("\"type\":1"), "{j}");
+    // LIFO remove
+    assert_eq!(unsafe { ghita_engine_graph_remove_last(c.0, 1) }, 1);
+    let j2 = graph_json_of(&c, 1);
+    assert!(j2.contains("\"type\":0") && !j2.contains("\"type\":1"), "{j2}");
+    // unknown clip
+    assert_eq!(unsafe { ghita_engine_graph_add_node(c.0, 999, 0, 0.1, 0.0, 0.0) }, -1);
+    assert_eq!(graph_json_of(&c, 999), "[]");
+    assert_eq!(unsafe { ghita_engine_graph_clear(c.0, 999) }, 0);
 }

@@ -25,7 +25,11 @@ pub struct GhitaEngineContext {
 }
 
 /// Process-lifetime version string — safe to return for FFI.
-pub const VERSION_STRING: &str = "Ghita Core Engine v1.5.0 (Rust/Flutter)";
+/// Engine self-report — derived from Cargo.toml so it can never drift from
+/// the crate version again (v1.5.5-demo audit: the old hardcoded string
+/// silently stayed at v1.5.0 after the bump).
+pub const VERSION_STRING: &str =
+    concat!("Ghita Core Engine v", env!("CARGO_PKG_VERSION"), " (Rust/Flutter)");
 
 fn version_cstring() -> &'static std::ffi::CStr {
     static V: OnceLock<CString> = OnceLock::new();
@@ -733,6 +737,96 @@ pub unsafe extern "C" fn ghita_engine_set_clip_color_correction(
     )
 }
 
+/// v1.5.5-demo (B3): append an adjustment-graph node to a clip's chain.
+/// Returns the node index (>=0) or -1 when the clip does not exist.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_graph_add_node(
+    ctx: *mut GhitaEngineContext,
+    clip_id: c_int,
+    node_type: c_int,
+    p0: f32,
+    p1: f32,
+    p2: f32,
+) -> c_int {
+    c_guard!(
+        match engine_of(ctx) {
+            Some(e) => e.add_graph_node(clip_id, node_type, p0, p1, p2),
+            None => -1,
+        },
+        -1
+    )
+}
+
+/// v1.5.5-demo (B3): remove a clip's LAST graph node (LIFO). 1 = removed.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_graph_remove_last(ctx: *mut GhitaEngineContext, clip_id: c_int) -> c_int {
+    c_guard!(
+        match engine_of(ctx) {
+            Some(e) => e.remove_last_graph_node(clip_id),
+            None => 0,
+        },
+        0
+    )
+}
+
+/// v1.5.5-demo (B3): clear a clip's entire graph chain. 1 = clip exists.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_graph_clear(ctx: *mut GhitaEngineContext, clip_id: c_int) -> c_int {
+    c_guard!(
+        match engine_of(ctx) {
+            Some(e) => e.clear_graph(clip_id),
+            None => 0,
+        },
+        0
+    )
+}
+
+/// v1.5.5-demo (B3): a clip's graph chain as JSON (UI mirror load).
+/// `[]` for an empty chain or unknown clip.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_graph_get_json(ctx: *mut GhitaEngineContext, clip_id: c_int) -> *const c_char {
+    c_guard!(
+        {
+            let json = match engine_of(ctx) {
+                Some(e) => e.graph_json(clip_id).unwrap_or_else(|| "[]".to_string()),
+                None => "[]".to_string(),
+            };
+            T_JSON.with(|b| {
+                let mut b = b.borrow_mut();
+                *b = CString::new(json).unwrap_or_default();
+                b.as_ptr()
+            })
+        },
+        std::ptr::null()
+    )
+}
+
+/// v1.5.5-demo (T1.P2): linear waveform resample (up or down) — moves the
+/// Dart `_upsampleWaveform` hot loop into Rust. 1 = ok, 0 = bad args.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_resample_waveform(
+    src: *const f32,
+    src_count: c_int,
+    out: *mut f32,
+    out_count: c_int,
+) -> c_int {
+    c_guard!(
+        {
+            if src.is_null() || out.is_null() || src_count <= 0 || out_count <= 0 {
+                return 0;
+            }
+            let s = std::slice::from_raw_parts(src, src_count as usize);
+            let o = std::slice::from_raw_parts_mut(out, out_count as usize);
+            if crate::dsp::resample_waveform(s, o) {
+                1
+            } else {
+                0
+            }
+        },
+        0
+    )
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ghita_engine_set_clip_text(ctx: *mut GhitaEngineContext, clip_id: c_int, text: *const c_char, font_size: f32, color_argb: u32) -> c_int {
     c_guard!(
@@ -1179,6 +1273,38 @@ pub unsafe extern "C" fn ghita_engine_cache_stats(ctx: *mut GhitaEngineContext) 
     )
 }
 
+/// v1.5.5-demo (B1): GPU runtime switch — opt-in GPU dispatch for the
+/// shader-backed filters (Grayscale/Sepia/Invert). Without the `gpu` feature
+/// this is a no-op so callers can always bind it defensively.
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_set_gpu_enabled(enabled: c_int) {
+    #[cfg(feature = "gpu")]
+    {
+        crate::gpu::set_gpu_enabled(enabled != 0);
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = enabled;
+    }
+}
+
+/// v1.5.5-demo (B1): current GPU dispatch switch state (0 = CPU only).
+#[no_mangle]
+pub unsafe extern "C" fn ghita_engine_gpu_enabled() -> c_int {
+    #[cfg(feature = "gpu")]
+    {
+        if crate::gpu::gpu_enabled() {
+            1
+        } else {
+            0
+        }
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        0
+    }
+}
+
 /// v1.5.0-T5 (P3): GPU dispatch telemetry — available/adapter/frames/fallbacks.
 /// Without the `gpu` feature this always reports available=false.
 #[no_mangle]
@@ -1190,11 +1316,12 @@ pub unsafe extern "C" fn ghita_engine_gpu_stats() -> *const c_char {
                 let (frames, fallbacks) = crate::gpu::gpu_stats();
                 let adapter = crate::gpu::gpu_adapter_name();
                 let json = format!(
-                    "{{\"available\":{},\"adapter\":\"{}\",\"gpu_frames\":{},\"cpu_fallbacks\":{}}}",
+                    "{{\"available\":{},\"adapter\":\"{}\",\"gpu_frames\":{},\"cpu_fallbacks\":{},\"enabled\":{}}}",
                     crate::gpu::gpu_available(),
                     adapter.replace('"', "'"),
                     frames,
-                    fallbacks
+                    fallbacks,
+                    if crate::gpu::gpu_enabled() { "true" } else { "false" }
                 );
                 T_JSON.with(|b| {
                     let mut b = b.borrow_mut();
@@ -1212,7 +1339,7 @@ pub unsafe extern "C" fn ghita_engine_gpu_stats() -> *const c_char {
                 T_JSON.with(|b| {
                     let mut b = b.borrow_mut();
                     *b = CString::new(
-                        "{\"available\":false,\"adapter\":\"\",\"gpu_frames\":0,\"cpu_fallbacks\":0}",
+                        "{\"available\":false,\"adapter\":\"\",\"gpu_frames\":0,\"cpu_fallbacks\":0,\"enabled\":false}",
                     )
                     .unwrap_or_default();
                     b.as_ptr()

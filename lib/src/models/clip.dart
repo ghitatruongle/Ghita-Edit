@@ -49,6 +49,23 @@ class KeyframeData {
       );
 }
 
+/// v1.5.5-demo (B3): one node of a clip's adjustment graph — 0=Brightness,
+/// 1=Contrast, 2=Saturation, value in [-1..1]. Nodes chain IN ORDER after the
+/// clip's color correction (preview + export share the render path).
+class GraphNodeData {
+  final int type;
+  final double value;
+
+  const GraphNodeData({required this.type, required this.value});
+
+  Map<String, dynamic> toJson() => {'t': type, 'v': value};
+
+  factory GraphNodeData.fromJson(Map<String, dynamic> json) => GraphNodeData(
+        type: json['t'] as int? ?? 0,
+        value: (json['v'] as num?)?.toDouble() ?? 0.0,
+      );
+}
+
 /// v1.1.0 (PLAN 3.11): One speed-ramp point — normalized timeline position
 /// [t] in 0..1 mapped to a playback speed multiplier.
 class SpeedRampPoint {
@@ -150,6 +167,9 @@ class Clip {
   /// playback multipliers. Empty = constant [speed].
   List<SpeedRampPoint> speedCurve;
 
+  /// v1.5.5-demo (B3): adjustment-graph node chain (empty = identity).
+  List<GraphNodeData> graphNodes;
+
   /// v0.7.0: Group/lock
   String? groupId;
   bool isLocked;
@@ -231,6 +251,7 @@ class Clip {
     this.maintainPitch = false,
     this.keyframes = const [],
     this.speedCurve = const [],
+    this.graphNodes = const [],
     this.pipX = 0.0,
     this.pipY = 0.0,
     this.pipW = 1.0,
@@ -307,6 +328,8 @@ class Clip {
     // v1.1.0 (PLAN 3): keyframes / pip / speed curve
     List<KeyframeData>? keyframes,
     List<SpeedRampPoint>? speedCurve,
+    // v1.5.5-demo (B3): adjustment graph
+    List<GraphNodeData>? graphNodes,
     double? pipX,
     double? pipY,
     double? pipW,
@@ -366,6 +389,7 @@ class Clip {
       maintainPitch: maintainPitch ?? this.maintainPitch,
       keyframes: keyframes ?? this.keyframes,
       speedCurve: speedCurve ?? this.speedCurve,
+      graphNodes: graphNodes ?? this.graphNodes,
       pipX: pipX ?? this.pipX,
       pipY: pipY ?? this.pipY,
       pipW: pipW ?? this.pipW,
@@ -480,6 +504,9 @@ class Clip {
         // v1.1.0 (PLAN 3): keyframes / pip / speed curve (optional fields)
         'keyframes': keyframes.map((k) => k.toJson()).toList(),
         'speedCurve': speedCurve.map((p) => p.toJson()).toList(),
+        // v1.5.5-demo (B3): adjustment graph (optional field, old files load
+        // unchanged)
+        'graphNodes': graphNodes.map((n) => n.toJson()).toList(),
         'pipX': pipX,
         'pipY': pipY,
         'pipW': pipW,
@@ -553,6 +580,11 @@ class Clip {
             const [],
         speedCurve: (json['speedCurve'] as List<dynamic>?)
                 ?.map((p) => SpeedRampPoint.fromJson(p as Map<String, dynamic>))
+                .toList() ??
+            const [],
+        // v1.5.5-demo (B3): adjustment graph — optional, old files default [].
+        graphNodes: (json['graphNodes'] as List<dynamic>?)
+                ?.map((n) => GraphNodeData.fromJson(n as Map<String, dynamic>))
                 .toList() ??
             const [],
         pipX: (json['pipX'] as num?)?.toDouble() ?? 0.0,

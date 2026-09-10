@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use crate::compositor::{decode_clip_frame, get_clip_decoder, render_timeline_frame};
 use crate::gdi::{render_text_gdi, TextGlyphCacheEntry};
-use crate::model::{filters_json, BlendMode, Bookmark, ColorCorrection, Keyframe,
+use crate::model::{filters_json, BlendMode, Bookmark, ColorCorrection, GraphNode, Keyframe,
                    KeyframeInterpolation, MaskType, NativeClip, NativeClipKind, PipGeometry,
                    SpeedRampPoint, TransitionType};
 use crate::synth::MediaDecoder;
@@ -307,6 +307,15 @@ impl GhitaEngine {
         self.snapping_fps.store(30, Ordering::Relaxed);
         self.active_filter_type.store(0, Ordering::Relaxed);
         *self.tick.lock().unwrap() = Instant::now();
+        // v1.5.5-demo (T5): mirror the C++ engine's av_log_set_level(AV_LOG_ERROR)
+        // (ghita_engine.cpp — the v1.0.1 "per-frame warning flood" fix). The
+        // Rust port missed it, so benign mp3float/swscaler AV_LOG_WARNING
+        // noise from seek+flush+decode cycles leaked to stderr and failed the
+        // release smoke test's log-spam check. Errors are still shown.
+        #[cfg(feature = "ffmpeg")]
+        unsafe {
+            ffmpeg_sys_next::av_log_set_level(ffmpeg_sys_next::AV_LOG_ERROR as std::os::raw::c_int);
+        }
         self.ready.store(true, Ordering::Relaxed);
         true
     }
@@ -813,6 +822,64 @@ impl GhitaEngine {
             }
         }
         0
+    }
+
+    // ------------------------------------------------------------------
+    // v1.5.5-demo (B3): adjustment-graph node chain (preview + export).
+    // ------------------------------------------------------------------
+
+    /// Append a graph node to a clip's chain. Returns the new node index
+    /// (0-based) or -1 when the clip does not exist.
+    pub fn add_graph_node(&self, clip_id: i32, node_type: i32, p0: f32, p1: f32, p2: f32) -> i32 {
+        // FFI boundary hygiene: NaN/inf would silently black out frames and
+        // break the JSON mirror — sanitize to the neutral value instead.
+        let san = |v: f32| if v.is_finite() { v.clamp(-1.0, 1.0) } else { 0.0 };
+        let mut state = self.state.write().unwrap();
+        for clip in state.clips.iter_mut() {
+            if clip.id == clip_id {
+                clip.graph.push(GraphNode { node_type, p0: san(p0), p1: san(p1), p2: san(p2) });
+                return (clip.graph.len() - 1) as i32;
+            }
+        }
+        -1
+    }
+
+    /// Remove a clip's LAST graph node (LIFO editing). Returns 1 when a node
+    /// was removed, 0 when the chain was empty or the clip does not exist.
+    pub fn remove_last_graph_node(&self, clip_id: i32) -> i32 {
+        let mut state = self.state.write().unwrap();
+        for clip in state.clips.iter_mut() {
+            if clip.id == clip_id {
+                return if clip.graph.pop().is_some() { 1 } else { 0 };
+            }
+        }
+        0
+    }
+
+    /// Clear a clip's entire graph chain. Returns 1 when the clip exists.
+    pub fn clear_graph(&self, clip_id: i32) -> i32 {
+        let mut state = self.state.write().unwrap();
+        for clip in state.clips.iter_mut() {
+            if clip.id == clip_id {
+                clip.graph.clear();
+                return 1;
+            }
+        }
+        0
+    }
+
+    /// v1.5.5-demo (B3): serialize a clip's graph chain as JSON so the UI
+    /// mirror can load the engine truth when the selection changes.
+    /// None = clip unknown. `[{"type":0,"p0":0.2},...]`
+    pub fn graph_json(&self, clip_id: i32) -> Option<String> {
+        let state = self.state.read().unwrap();
+        let clip = state.clips.iter().find(|c| c.id == clip_id)?;
+        let parts: Vec<String> = clip
+            .graph
+            .iter()
+            .map(|n| format!("{{\"type\":{},\"p0\":{}}}", n.node_type, n.p0))
+            .collect();
+        Some(format!("[{}]", parts.join(",")))
     }
 
     pub fn set_clip_text(&self, clip_id: i32, text: &str, font_size: f32, color_argb: u32) -> i32 {

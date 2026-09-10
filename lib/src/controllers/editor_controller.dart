@@ -386,6 +386,8 @@ class EditorController extends ChangeNotifier {
             'keyframes': kfSig,
             'pip': '$pipActive|${clip.pipX}|${clip.pipY}|${clip.pipW}|${clip.pipH}|${clip.pipRotation}',
             'speedCurve': scSig,
+            // v1.5.5-demo (B3): adjustment graph chain.
+            'graph': [for (final n in clip.graphNodes) '${n.type},${n.value}'].join(';'),
           };
           final prev = _syncedSignatures[clip.id];
           bool changed(String group) => prev == null || prev[group] != sigs[group];
@@ -441,6 +443,15 @@ class EditorController extends ChangeNotifier {
               highlights: clip.colorHighlights,
               shadows: clip.colorShadows,
             );
+          }
+          // v1.5.5-demo (B3): adjustment graph — clear + re-add so a removed
+          // node cannot linger in the engine (same replace-set semantics as
+          // the keyframes group above).
+          if (changed('graph')) {
+            engine.graphClear(nativeId);
+            for (final n in clip.graphNodes) {
+              engine.graphAddNode(nativeId, n.type, n.value, 0, 0);
+            }
           }
           if (changed('text') && sigs['text']!.isNotEmpty) {
             engine.setClipText(
@@ -1135,6 +1146,16 @@ class EditorController extends ChangeNotifier {
   /// T3 (#4): blend mode — 0 Normal, 1 Multiply, 2 Screen, 3 Overlay, 4 Add.
   void setClipBlendMode(String clipId, int mode) {
     _updateClipUndoable(clipId, 'blend', (c) => c.copyWith(blendMode: mode.clamp(0, 4)));
+  }
+
+  /// v1.5.5-demo (B3): replace a clip's adjustment-graph chain (0=Brightness,
+  /// 1=Contrast, 2=Saturation) — undoable via [ClipStateCommand]; the
+  /// deferred fingerprint resync pushes the chain to the engine and it
+  /// persists in the project file (graphNodes).
+  void setClipGraph(String clipId, List<GraphNodeData> nodes, {int? gestureId}) {
+    _updateClipUndoable(
+        clipId, 'graph', (c) => c.copyWith(graphNodes: nodes),
+        gestureId: gestureId);
   }
 
   /// T3 (#5): geometric mask (0 none … 6 cinematic bars) + feather/stroke.

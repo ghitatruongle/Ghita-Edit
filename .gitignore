@@ -1,6 +1,6 @@
 # ==============================================================================
-# Ghita Edit — Enterprise .gitignore Configuration (v1.0.0+0)
-# Cross-Platform Multimedia Editor (Flutter 3.27+ & C++20 Native Engine)
+# Ghita Edit — Enterprise .gitignore Configuration (v1.5.5+0)
+# Cross-Platform Multimedia Editor (Flutter 3.44 & Rust/C++20 Native Engine)
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -125,6 +125,8 @@ coverage/
 **/android/local.properties
 **/android/captures/
 **/android/.cxx/
+# Kotlin 2.x compiler session dir created at repo root during Gradle builds
+/.kotlin/
 **/android/GeneratedPluginRegistrant.java
 /android/app/debug/
 /android/app/profile/
@@ -218,6 +220,12 @@ MinSizeRel/
 
 # Debug Symbols
 *.dSYM/
+
+# Rust engine build artifacts (native_engine_rust/) — target/ dirs are
+# covered by **/target/ at the end of this file
+*.rs.bk
+# POLICY: Cargo.lock IS tracked (cdylib reproducible builds) — never add
+# a blanket *.lock rule here; pubspec.lock is tracked for the same reason.
 
 # ------------------------------------------------------------------------------
 # 9. Exported Media Test Files (Generated during export & render tests)

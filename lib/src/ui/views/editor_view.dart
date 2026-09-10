@@ -19,6 +19,7 @@ import '../widgets/photo_editor_panel.dart';
 import '../widgets/export_dialog.dart';
 import '../widgets/undo_history_panel.dart';
 import '../widgets/voiceover_recorder.dart';
+import '../widgets/beta_panel.dart';
 
 // ============================================================
 // EditorView — CapCut-style Main Layout v0.7.0
@@ -73,6 +74,7 @@ class _EditorViewState extends State<EditorView> {
     _BottomTool('sticker', Icons.emoji_emotions, 'Sticker', 'Add Stickers'),
     _BottomTool('filter', Icons.auto_fix_high, 'Filter', 'Apply Filters'),
     _BottomTool('audio', Icons.music_note, 'Audio', 'Audio Mixer'),
+    _BottomTool('beta', Icons.science_rounded, 'Beta', 'Beta Tools'),
     _BottomTool('more', Icons.more_horiz, 'More', 'More Tools'),
   ];
 
@@ -808,6 +810,9 @@ class _EditorViewState extends State<EditorView> {
         // mic → WAV → timeline clip) instead of a dead-end toast.
         _showVoiceoverSheet();
         break;
+      case 'beta':
+        _showBetaPanel();
+        break;
       case 'more':
         _showMoreToolsDialog();
         break;
@@ -977,6 +982,24 @@ class _EditorViewState extends State<EditorView> {
           bottom: MediaQuery.of(context).viewInsets.bottom + 16,
         ),
         child: VoiceoverRecorder(controller: _controller),
+      ),
+    );
+  }
+
+  // v1.5.5-demo: The Beta tool opens the Beta tools bottom sheet (GPU
+  // compositor toggle + adjustment graph).
+  void _showBetaPanel() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: BetaPanel(controller: _controller),
       ),
     );
   }

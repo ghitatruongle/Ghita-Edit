@@ -16,7 +16,7 @@ use crate::filters::apply_filter_to_buffer;
 use crate::filters::apply_filter_parallel;
 use crate::fx::{apply_mask_to_alpha, blend_clip, blend_pixel_mode};
 use crate::gdi::render_text_gdi;
-use crate::model::{BlendMode, ColorCorrection, Keyframe, MaskType, NativeClip, NativeClipKind,
+use crate::model::{BlendMode, ColorCorrection, GraphNode, Keyframe, MaskType, NativeClip, NativeClipKind,
                    PipGeometry, TransitionType};
 use crate::synth::MediaDecoder;
 
@@ -392,6 +392,57 @@ fn clamp255(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
 }
 
+/// v1.5.5-demo (B3): apply a clip's adjustment-graph nodes IN ORDER to the
+/// RGBA buffer (brightness → contrast → saturation chains are non-commutative,
+/// so node order is preserved). Empty graph = no-op (parity default).
+pub fn apply_graph_nodes_to_buffer(buffer: &mut [u8], width: usize, height: usize, graph: &[GraphNode]) {
+    if graph.is_empty() {
+        return;
+    }
+    let pixel_count = width * height;
+    for node in graph {
+        match node.node_type {
+            // Brightness: linear offset. p0 in [-1..1] → ±127/255.
+            0 => {
+                let amt = node.p0.clamp(-1.0, 1.0) * 127.0;
+                for i in 0..pixel_count {
+                    let d = i * 4;
+                    // +0.5 before truncation = round-half-up, matching the
+                    // clamp255 rounding used by the contrast/saturation nodes.
+                    buffer[d] = ((buffer[d] as f32 + amt).clamp(0.0, 255.0) + 0.5) as u8;
+                    buffer[d + 1] = ((buffer[d + 1] as f32 + amt).clamp(0.0, 255.0) + 0.5) as u8;
+                    buffer[d + 2] = ((buffer[d + 2] as f32 + amt).clamp(0.0, 255.0) + 0.5) as u8;
+                }
+            }
+            // Contrast: pivot around 0.5. p0 in [-1..1] → gain [0..2].
+            1 => {
+                let cont = 1.0 + node.p0.clamp(-1.0, 1.0);
+                for i in 0..pixel_count {
+                    let d = i * 4;
+                    buffer[d] = clamp255(((buffer[d] as f32 / 255.0 - 0.5) * cont + 0.5));
+                    buffer[d + 1] = clamp255(((buffer[d + 1] as f32 / 255.0 - 0.5) * cont + 0.5));
+                    buffer[d + 2] = clamp255(((buffer[d + 2] as f32 / 255.0 - 0.5) * cont + 0.5));
+                }
+            }
+            // Saturation: luma-weighted mix. p0 in [-1..1] → sat factor [0..2].
+            2 => {
+                let sat = 1.0 + node.p0.clamp(-1.0, 1.0);
+                for i in 0..pixel_count {
+                    let d = i * 4;
+                    let r = buffer[d] as f32 / 255.0;
+                    let g = buffer[d + 1] as f32 / 255.0;
+                    let b = buffer[d + 2] as f32 / 255.0;
+                    let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                    buffer[d] = clamp255(luma + (r - luma) * sat);
+                    buffer[d + 1] = clamp255(luma + (g - luma) * sat);
+                    buffer[d + 2] = clamp255(luma + (b - luma) * sat);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Alpha blend one RGBA frame over another (dst stays opaque).
 pub fn blend_rgba(dst: &mut [u8], src: &[u8], pixel_count: usize, alpha: f32) {
     if alpha >= 1.0 {
@@ -629,6 +680,15 @@ pub fn timeline_state_hash(state: &crate::engine::EngineState) -> u64 {
         ] {
             mix(v.to_bits() as u64);
         }
+        // v1.5.5-demo (B3): adjustment-graph chain — a node change must
+        // invalidate cached paused frames, exactly like a CC change does.
+        mix(c.graph.len() as u64);
+        for n in &c.graph {
+            mix(n.node_type as u64);
+            mix(n.p0.to_bits() as u64);
+            mix(n.p1.to_bits() as u64);
+            mix(n.p2.to_bits() as u64);
+        }
         mix(c.transition.kind as u64);
         mix(c.transition.duration_ms as i64 as u64);
         for v in [c.pip.x, c.pip.y, c.pip.w, c.pip.h, c.pip.rotation] {
@@ -680,6 +740,15 @@ pub fn render_timeline_frame(
     // invalidate cached frames too.
     let mut chain_hash = timeline_state_hash(state);
     chain_hash ^= (active_filter_type as u64).wrapping_mul(0x9e3779b97f4a7c15);
+    // v1.5.5-demo (B1 review fix): the GPU dispatch switch changes filter
+    // output (±1/255 vs CPU) — fold its state in so toggling GPU while
+    // paused serves a fresh render instead of a stale cached frame.
+    #[cfg(feature = "gpu")]
+    {
+        if crate::gpu::gpu_enabled() {
+            chain_hash ^= 0x51ed_270b_4a9d_3f17;
+        }
+    }
     chain_hash ^= filter_intensity.to_bits() as u64;
     if apply_fx {
         chain_hash = !chain_hash;
@@ -963,6 +1032,8 @@ fn render_timeline_frame_uncached(
                 );
                 if decode_ok {
                     apply_color_correction_to_buffer(&mut render_scratch[..frame_bytes], width, height, &prev_clip.cc);
+                    // v1.5.5-demo (B3): adjustment graph follows the cc.
+                    apply_graph_nodes_to_buffer(&mut render_scratch[..frame_bytes], width, height, &prev_clip.graph);
                     if extended_kind.is_some() {
                         // v1.5.0-T5 (P5): stash the previous frame UNblended —
                         // the extended transition composites prev vs current
@@ -1073,6 +1144,9 @@ fn render_timeline_frame_uncached(
             if decode_ok {
                 if apply_fx {
                     apply_color_correction_to_buffer(&mut render_scratch[..frame_bytes], width, height, &clip.cc);
+                    // v1.5.5-demo (B3): adjustment graph follows the cc —
+                    // preview AND export run through this same path.
+                    apply_graph_nodes_to_buffer(&mut render_scratch[..frame_bytes], width, height, &clip.graph);
                 }
                 let masked = clip.mask_type != MaskType::None;
                 if masked {

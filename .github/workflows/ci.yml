@@ -270,8 +270,10 @@ jobs:
         working-directory: native_engine_rust
         env:
           RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
-        run: cargo build --release --features ffmpeg,sqlite -j 2
+        run: cargo build --release --features ffmpeg,sqlite,parallel -j 2
 # sqlite feature included so the SQLite dual-backend Dart test runs for real.
+# v1.5.5-demo (T1.P1): `parallel` (rayon) is now part of EVERY release DLL —
+# the shipped bundle and this test DLL stay feature-consistent (rayon default).
 
       - name: Stage Rust DLL for Dart Tests
         shell: pwsh
@@ -359,7 +361,7 @@ jobs:
         working-directory: native_engine_rust
         env:
           RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
-        run: cargo build --release --features ffmpeg,gpu,sqlite -j 2
+        run: cargo build --release --features ffmpeg,gpu,sqlite,parallel -j 2
 
       - name: Build Windows Release
         run: flutter build windows --release
@@ -388,8 +390,15 @@ jobs:
         run: choco install innosetup -y --no-progress
 
       - name: Build Installer
-        shell: cmd
-        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\ghita_edit_setup.iss'
+        shell: bash
+        run: |
+          # v1.5.5-demo: thread kVersionSuffix from version.dart into the
+          # installer name so pre-release builds are distinguishable
+          # (GhitaEdit-1.5.5-demo-Setup.exe); empty suffix on finals.
+          SUFFIX="$(sed -n "s/.*kVersionSuffix = '\([^']*\)'.*/\1/p" lib/src/core/version.dart | head -1)"
+          DEFINES=""
+          if [ -n "$SUFFIX" ]; then DEFINES="/DPreReleaseSuffix=$SUFFIX"; echo "pre-release suffix: $SUFFIX"; fi
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" $DEFINES "installer\\ghita_edit_setup.iss"
 
       # v1.5.0-T6 debug fix: Inno writes to installer/output/ but the publish
       # step globs dist/*.exe — stage the installer there or it silently

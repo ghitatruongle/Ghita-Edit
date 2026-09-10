@@ -4,16 +4,23 @@
 const kAppName = 'Ghita Edit';
 const kMajorVersion = 1;
 const kMinorVersion = 5;
-const kPatchVersion = 0;
+const kPatchVersion = 5;
 const kBuildNumber = 0;
 
-/// Flutter/Dart app version string (e.g., '1.5.0+0')
-String get flutterVersion => '$kMajorVersion.$kMinorVersion.$kPatchVersion+$kBuildNumber';
+/// Pre-release suffix shown in the UI / commit naming only ('' | 'demo' |
+/// 'beta1' | 'beta2' | 'beta3'). NEVER numeric — the CI consistency gates
+/// read only the numeric constants above.
+const kVersionSuffix = 'demo';
 
-/// Native C++ engine version string (e.g., 'Ghita Core Engine v1.5.0 (Rust/Flutter)')
-String get nativeEngineVersion => 'Ghita Core Engine v$kMajorVersion.$kMinorVersion.$kPatchVersion (C++/Flutter)';
+/// Flutter/Dart app version string (e.g., '1.5.5+0' or '1.5.5-demo+0').
+/// The suffix is display-only: pubspec.yaml and the CI gates stay numeric.
+String get flutterVersion => '$kMajorVersion.$kMinorVersion.$kPatchVersion'
+    '${kVersionSuffix.isEmpty ? '' : '-$kVersionSuffix'}+$kBuildNumber';
 
-/// App version displayed in UI (e.g., 'v1.5.0+0')
+/// Native Rust/C++ engine version string (e.g., 'Ghita Core Engine v1.5.5 (Rust/Flutter)')
+String get nativeEngineVersion => 'Ghita Core Engine v$kMajorVersion.$kMinorVersion.$kPatchVersion (Rust/Flutter)';
+
+/// App version displayed in UI (e.g., 'v1.5.5-demo+0')
 String get appVersion => 'v$flutterVersion';
 
 /// Full version string for display in UI

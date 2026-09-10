@@ -42,6 +42,9 @@ const cases = [
   ExportCase('gif', 'gif', 160, 120, 10, 'gif', 0),
   ExportCase('mp3', 'mp3', 0, 0, 0, 'mp3', 128000),
   ExportCase('mov_h264', 'mov', 320, 240, 30, 'h264', 1500000),
+  // v1.5.5-demo (B2): real ProRes encoding — ffprobe codec must be "prores"
+  // (the v1.1.0 bug exported h264 into a .mov while claiming ProRes).
+  ExportCase('prores_mov', 'mov', 320, 240, 30, 'prores', 1500000),
   ExportCase('aac_51', 'mp4', 320, 240, 30, 'h264', 1500000,
       channelLayout: '5.1'),
   ExportCase('aac_71', 'mp4', 320, 240, 30, 'h264', 1500000,

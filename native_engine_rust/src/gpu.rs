@@ -309,12 +309,23 @@ mod tests {
 // v1.5.0-T5 (P3): production wiring — lazily-initialized shared context,
 // dispatch counters for fallback telemetry. Only compiled under the `gpu`
 // feature; the default/parity builds never touch wgpu.
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 static GPU_CTX: OnceLock<Option<Arc<GpuContext>>> = OnceLock::new();
 static GPU_FRAMES: AtomicU64 = AtomicU64::new(0);
 static CPU_FALLBACKS: AtomicU64 = AtomicU64::new(0);
+/// v1.5.5-demo (B1): runtime on/off switch. Default OFF — GPU dispatch is
+/// opt-in via `ghita_engine_set_gpu_enabled` (CPU stays the parity default).
+static GPU_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_gpu_enabled(on: bool) {
+    GPU_ENABLED.store(on, Ordering::Relaxed);
+}
+
+pub fn gpu_enabled() -> bool {
+    GPU_ENABLED.load(Ordering::Relaxed)
+}
 
 fn context() -> Option<&'static Arc<GpuContext>> {
     GPU_CTX

@@ -44,18 +44,28 @@
 
 #define MyAppVersion GetNum(VerMajorLine) + "." + GetNum(VerMinorLine) + "." + GetNum(VerPatchLine)
 
+; v1.5.5-demo: pre-release suffix (demo/beta1/beta2/beta3) passed by
+; build_release.sh as /DPreReleaseSuffix=<x>, read from kVersionSuffix in
+; version.dart. Empty on final releases. Keeps the CI numeric gates intact
+; while making installer files and Control Panel entries distinguishable.
+#ifdef PreReleaseSuffix
+  #define SuffixPart "-" + PreReleaseSuffix
+#else
+  #define SuffixPart ""
+#endif
+
 [Setup]
 AppId={{8F5E9A1C-2B4D-4E7A-9C3D-1A6B8F0E5D2C}
 AppName={#MyAppName}
-AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} {#MyAppVersion}
+AppVersion={#MyAppVersion}{#SuffixPart}
+AppVerName={#MyAppName} {#MyAppVersion}{#SuffixPart}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\Ghita Edit
 DefaultGroupName=Ghita Edit
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=output
-OutputBaseFilename=GhitaEdit-{#MyAppVersion}-Setup
+OutputBaseFilename=GhitaEdit-{#MyAppVersion}{#SuffixPart}-Setup
 SetupIconFile=..\windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2

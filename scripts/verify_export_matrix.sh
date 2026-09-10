@@ -95,13 +95,17 @@ verify() {
     return
   fi
   local ok=1
-  # ffprobe CSV rows are "stream,<codec_name>,<codec_type>" (fields are
-  # sorted alphabetically by ffprobe, so codec_name precedes codec_type).
-  # With channels requested the row becomes "stream,<n>,<codec>,<type>".
+  # ffprobe CSV rows are "stream,<codec_name>,<codec_type>" (channels appended
+  # where requested). These substring checks match every field order.
   if ! echo "$info" | grep -q "stream,$expect_codec,$expect_type"; then ok=0; fi
   if ! echo "$info" | grep -q "stream,.*,$expect_type"; then ok=0; fi
-  if [ -n "$expect_channels" ] && ! echo "$info" | grep -q "stream,$expect_channels,$expect_codec,$expect_type"; then
-    ok=0
+  # v1.5.5-demo review fix: the channels column position varies by ffprobe
+  # version ("stream,<n>,<codec>,<type>" vs "stream,<codec>,<type>,<n>") —
+  # the old single-order pattern failed a CORRECT multichannel export.
+  if [ -n "$expect_channels" ]; then
+    if ! echo "$info" | grep -Eq "stream,$expect_channels,$expect_codec,$expect_type([,)]|$)|stream,$expect_codec,$expect_type,$expect_channels$"; then
+      ok=0
+    fi
   fi
   local duration
   duration="$(echo "$info" | grep '^format,' | head -1 | cut -d, -f2)"
@@ -131,6 +135,9 @@ verify mp4_vp9    mp4 video vp9  0.8
 verify gif        gif video gif  0.5
 verify mp3        mp3 audio mp3  0.8
 verify mov_h264   mov video h264 0.8
+# v1.5.5-demo (B2): ProRes preset end-to-end — the engine must really encode
+# prores (yuv422p10le); SKIP honestly if the build lacks the encoder.
+verify prores_mov mov video prores 0.8
 # v1.5.0-T2 (P3): multichannel AAC — the engine channel layout (5.1/7.1)
 # must survive into the container: ffprobe channels = 6 / 8.
 verify aac_51     mp4 audio aac  0.8 6

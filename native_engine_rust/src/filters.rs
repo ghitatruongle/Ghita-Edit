@@ -639,9 +639,12 @@ pub fn apply_filter_to_buffer(
     // v1.5.0-T5 (P3): production GPU dispatch — feature-gated so parity
     // suites always run pure-CPU. Only full-size frames (≥512×256) go to the
     // GPU; rayon tiles (32 rows) and tiny buffers stay on the CPU shaders.
+    // v1.5.5-demo (B1): runtime override — GPU runs only when enabled via
+    // ghita_engine_set_gpu_enabled (default off).
     #[cfg(feature = "gpu")]
     {
-        if width * height >= 131_072
+        if crate::gpu::gpu_enabled()
+            && width * height >= 131_072
             && crate::gpu::try_gpu(buf, width, height, filter_type, filter_intensity)
         {
             return true;

@@ -102,6 +102,18 @@ class _ExportDialogState extends State<ExportDialog> {
       format: 'MP4', codec: 'VP9', bitrateMbps: 8.0, includeAudio: true,
       description: 'VP9 • 8 Mbps • 30fps',
     ),
+    // v1.5.5-demo (B2): ProRes preset (beta). The v1.1.0 preset was removed
+    // because the engine hardcoded H.264 for it; the Rust engine now looks up
+    // a REAL ProRes encoder and picks yuv422p10le — and it still fails loudly
+    // (instead of silently substituting) when the encoder is absent.
+    ExportPreset(
+      name: 'ProRes HQ Beta',
+      label: 'ProRes HQ (Beta)',
+      icon: Icons.movie_filter,
+      width: 1920, height: 1080, fps: 30,
+      format: 'MOV', codec: 'ProRes', bitrateMbps: 200.0, includeAudio: true,
+      description: 'ProRes • 10-bit • 200 Mbps • 30fps • MOV (beta)',
+    ),
     // v1.1.0 (PLAN 3.12): GIF preset REMOVED — the engine cannot produce a
     // valid GIF: the libavcodec gif encoder only accepts pal8 (palette
     // quantization), and the v1.0.0 claim "GIF export animated thật" never
@@ -542,7 +554,9 @@ class _ExportDialogState extends State<ExportDialog> {
   List<String> get _codecOptions {
     if (!_customMode) return [];
     switch (_selectedFormat) {
-      case 'MOV': return ['H.264']; // v1.1.0 (PLAN 3.10): ProRes removed — the engine fails loudly when the build lacks the encoder, but the preset UI no longer advertises it.
+      // v1.5.5-demo (B2): ProRes re-enabled — the Rust engine looks up a real
+      // ProRes encoder and fails loudly when the build lacks it.
+      case 'MOV': return ['H.264', 'ProRes'];
       // v1.1.0 (PLAN 3.12): 'GIF' case removed — no GIF container support.
       case 'MP3': return ['MP3'];
       default: return ['H.264', 'H.265', 'VP9'];

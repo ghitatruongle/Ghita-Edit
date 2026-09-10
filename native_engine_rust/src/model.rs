@@ -201,6 +201,18 @@ impl Default for NativeTransition {
     }
 }
 
+/// v1.5.5-demo (B3): adjustment-graph node. node_type: 0=Brightness,
+/// 1=Contrast, 2=Saturation — p0..p2 are the node's parameter slots (each
+/// node uses p0; p1/p2 reserved). Nodes chain IN ORDER into the render path
+/// after the clip's color correction (preview AND export).
+#[derive(Clone, Copy, Debug)]
+pub struct GraphNode {
+    pub node_type: i32,
+    pub p0: f32,
+    pub p1: f32,
+    pub p2: f32,
+}
+
 /// Per-clip color correction (mirrors C++ ColorCorrection field order!).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ColorCorrection {
@@ -308,6 +320,8 @@ pub struct NativeClip {
     /// in degrees). Ignored for non-Sticker kinds.
     pub sticker_scale: f32,
     pub sticker_rotation: f32,
+    /// v1.5.5-demo (B3): adjustment-graph node chain (empty = identity).
+    pub graph: Vec<GraphNode>,
 }
 
 impl NativeClip {
@@ -342,6 +356,7 @@ impl NativeClip {
             font_family: String::new(),
             sticker_scale: 1.0,
             sticker_rotation: 0.0,
+            graph: Vec::new(),
         }
     }
 }

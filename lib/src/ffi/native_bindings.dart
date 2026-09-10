@@ -200,6 +200,26 @@ typedef DartGhitaEngineCacheStats = Pointer<Utf8> Function(Pointer<GhitaEngineCo
 typedef CGhitaEngineGpuStats = Pointer<Utf8> Function();
 typedef DartGhitaEngineGpuStats = Pointer<Utf8> Function();
 
+// v1.5.5-demo (B1): GPU dispatch runtime switch (opt-in, default off).
+typedef CGhitaEngineSetGpuEnabled = Void Function(Int32 enabled);
+typedef DartGhitaEngineSetGpuEnabled = void Function(int enabled);
+typedef CGhitaEngineGpuEnabled = Int32 Function();
+typedef DartGhitaEngineGpuEnabled = int Function();
+
+// v1.5.5-demo (B3): adjustment-graph node chain (preview + export).
+typedef CGhitaEngineGraphAddNode = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Int32 nodeType, Float p0, Float p1, Float p2);
+typedef DartGhitaEngineGraphAddNode = int Function(Pointer<GhitaEngineContext> ctx, int clipId, int nodeType, double p0, double p1, double p2);
+typedef CGhitaEngineGraphRemoveLast = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId);
+typedef DartGhitaEngineGraphRemoveLast = int Function(Pointer<GhitaEngineContext> ctx, int clipId);
+typedef CGhitaEngineGraphClear = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId);
+typedef DartGhitaEngineGraphClear = int Function(Pointer<GhitaEngineContext> ctx, int clipId);
+typedef CGhitaEngineGraphGetJson = Pointer<Utf8> Function(Pointer<GhitaEngineContext> ctx, Int32 clipId);
+typedef DartGhitaEngineGraphGetJson = Pointer<Utf8> Function(Pointer<GhitaEngineContext> ctx, int clipId);
+
+// v1.5.5-demo (T1.P2): linear waveform resample (Dart hot loop → Rust).
+typedef CGhitaEngineResampleWaveform = Int32 Function(Pointer<Float> src, Int32 srcCount, Pointer<Float> out, Int32 outCount);
+typedef DartGhitaEngineResampleWaveform = int Function(Pointer<Float> src, int srcCount, Pointer<Float> out, int outCount);
+
 typedef CGhitaEngineSetClipPitch = Int32 Function(Pointer<GhitaEngineContext> ctx, Int32 clipId, Float semitones);
 typedef DartGhitaEngineSetClipPitch = int Function(Pointer<GhitaEngineContext> ctx, int clipId, double semitones);
 
@@ -634,6 +654,16 @@ class GhitaNativeBindings {
   DartGhitaEngineSetAudioEffectParam? setAudioEffectParam;
   DartGhitaEngineCacheStats? getCacheStats;
   DartGhitaEngineGpuStats? getGpuStats;
+  // v1.5.5-demo (B1): GPU dispatch switch (older DLLs → no-ops below).
+  DartGhitaEngineSetGpuEnabled? setGpuEnabled;
+  DartGhitaEngineGpuEnabled? getGpuEnabled;
+  // v1.5.5-demo (B3): adjustment-graph node chain.
+  DartGhitaEngineGraphAddNode? graphAddNode;
+  DartGhitaEngineGraphRemoveLast? graphRemoveLast;
+  DartGhitaEngineGraphClear? graphClear;
+  DartGhitaEngineGraphGetJson? graphGetJson;
+  // v1.5.5-demo (T1.P2): waveform resample in Rust.
+  DartGhitaEngineResampleWaveform? resampleWaveform;
   DartGhitaEngineSetClipStickerTransform? setClipStickerTransform;
   // v1.5.0-T5 (P6): photo paint tools.
   DartGhitaEnginePaintClone? paintClone;
@@ -878,6 +908,14 @@ class GhitaNativeBindings {
     setAudioEffectParam = _tryLookup('ghita_engine_set_audio_effect_param', () => _lib.lookupFunction<CGhitaEngineSetAudioEffectParam, DartGhitaEngineSetAudioEffectParam>('ghita_engine_set_audio_effect_param'));
     getCacheStats = _tryLookup('ghita_engine_cache_stats', () => _lib.lookupFunction<CGhitaEngineCacheStats, DartGhitaEngineCacheStats>('ghita_engine_cache_stats'));
     getGpuStats = _tryLookup('ghita_engine_gpu_stats', () => _lib.lookupFunction<CGhitaEngineGpuStats, DartGhitaEngineGpuStats>('ghita_engine_gpu_stats'));
+    // v1.5.5-demo (B1/B3): additive symbols — missing on older DLLs degrades.
+    setGpuEnabled = _tryLookup('ghita_engine_set_gpu_enabled', () => _lib.lookupFunction<CGhitaEngineSetGpuEnabled, DartGhitaEngineSetGpuEnabled>('ghita_engine_set_gpu_enabled')) ?? ((int enabled) {});
+    getGpuEnabled = _tryLookup('ghita_engine_gpu_enabled', () => _lib.lookupFunction<CGhitaEngineGpuEnabled, DartGhitaEngineGpuEnabled>('ghita_engine_gpu_enabled')) ?? (() => 0);
+    graphAddNode = _tryLookup('ghita_engine_graph_add_node', () => _lib.lookupFunction<CGhitaEngineGraphAddNode, DartGhitaEngineGraphAddNode>('ghita_engine_graph_add_node')) ?? ((Pointer<GhitaEngineContext> ctx, int clipId, int nodeType, double p0, double p1, double p2) => -1);
+    graphRemoveLast = _tryLookup('ghita_engine_graph_remove_last', () => _lib.lookupFunction<CGhitaEngineGraphRemoveLast, DartGhitaEngineGraphRemoveLast>('ghita_engine_graph_remove_last')) ?? ((Pointer<GhitaEngineContext> ctx, int clipId) => 0);
+    graphClear = _tryLookup('ghita_engine_graph_clear', () => _lib.lookupFunction<CGhitaEngineGraphClear, DartGhitaEngineGraphClear>('ghita_engine_graph_clear')) ?? ((Pointer<GhitaEngineContext> ctx, int clipId) => 0);
+    graphGetJson = _tryLookup('ghita_engine_graph_get_json', () => _lib.lookupFunction<CGhitaEngineGraphGetJson, DartGhitaEngineGraphGetJson>('ghita_engine_graph_get_json')) ?? ((Pointer<GhitaEngineContext> ctx, int clipId) => nullptr);
+    resampleWaveform = _tryLookup('ghita_engine_resample_waveform', () => _lib.lookupFunction<CGhitaEngineResampleWaveform, DartGhitaEngineResampleWaveform>('ghita_engine_resample_waveform')) ?? ((Pointer<Float> src, int srcCount, Pointer<Float> out, int outCount) => 0);
     setClipStickerTransform = _tryLookup('ghita_engine_set_clip_sticker_transform', () => _lib.lookupFunction<CGhitaEngineSetClipStickerTransform, DartGhitaEngineSetClipStickerTransform>('ghita_engine_set_clip_sticker_transform'));
     paintClone = _tryLookup('ghita_engine_paint_clone', () => _lib.lookupFunction<CGhitaEnginePaintClone, DartGhitaEnginePaintClone>('ghita_engine_paint_clone'));
     paintHeal = _tryLookup('ghita_engine_paint_heal', () => _lib.lookupFunction<CGhitaEnginePaintHeal, DartGhitaEnginePaintHeal>('ghita_engine_paint_heal'));

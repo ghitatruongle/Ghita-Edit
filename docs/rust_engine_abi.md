@@ -117,7 +117,8 @@ cd native_engine_rust/tools/engine_compare && cargo run --release
   `pacman -S mingw-w64-x86_64-clang`). Runtime DLLs = the same
   avcodec-62/avformat-62/... set beside the C++ engine.
 - `parallel` — T1-P5: rayon tile-based filters (fall back to serial for
-  non-row-local filters).
+  non-row-local filters). v1.5.5-demo (T1.P1): EVERY release build now ships
+  `parallel` — the shipped DLL and the Dart-test DLL are feature-consistent.
 - `gpu` — T1-P6: wgpu DX12 compute filter (Grayscale/Sepia/Invert; CPU
   fallback) + GEGL-like lazy graph (`graph.rs`).
 
@@ -285,7 +286,7 @@ cargo test default 92/92 · cargo test --features ffmpeg 116/116.
 | Symbol | Semantics |
 |---|---|
 | ghita_engine_cache_stats(ctx) | JSON {hits,misses,entries,rate} — paused-scrub ProcessingCache telemetry |
-| ghita_engine_gpu_stats() | JSON {available,adapter,gpu_frames,cpu_fallbacks} — available=false khi không build feature `gpu` |
+| ghita_engine_gpu_stats() | JSON {available,adapter,gpu_frames,cpu_fallbacks,enabled} — available=false khi không build feature `gpu`; `enabled` thêm ở v1.5.5-demo (B1) |
 | ghita_engine_set_clip_sticker_transform(ctx, clip_id, scale, rotation_deg) | 0/-1; chỉ áp dụng clip kind Sticker; scale clamp 0.05..8 |
 | ghita_engine_set_audio_effect_param(ctx, index, param, value) | 0/-1; live-edit p0..p3 của effect chain (ffmpeg feature); từ chối index âm/vượt cuối chain thay vì clamp |
 | ghita_engine_paint_clone(buf, w, h, src_x, src_y, dst_x, dst_y, radius, opacity) | 0/-1; ctx-less clone stamp trên buffer caller (src snapshot nội bộ chống aliasing) |
@@ -299,3 +300,20 @@ paused-path (không còn dead code).
 Gates after T6: cargo test default 95/95 · cargo test --features ffmpeg,gpu
 121/121 · flutter analyze --fatal-infos clean · flutter test 157/157 ·
 coverage ≥60% gate PASS.
+
+## 17. v1.5.5-demo additions (B1/B3/T1.P2 — additive, `_tryLookup`-safe)
+
+| Symbol | Semantics |
+|---|---|
+| ghita_engine_set_gpu_enabled(enabled) | ctx-less; bật/tắt dispatch wgpu cho filter 1/2/3 frame ≥512×256. Default OFF (CPU = parity baseline). No-op khi build thiếu feature `gpu` |
+| ghita_engine_gpu_enabled() | ctx-less; 1/0 trạng thái switch hiện tại |
+| ghita_engine_graph_add_node(ctx, clip_id, node_type, p0, p1, p2) | Append node vào chain của clip (0=Brightness, 1=Contrast, 2=Saturation; p0 clamp −1..1, NaN→0). Trả index 0-based, −1 khi clip không tồn tại |
+| ghita_engine_graph_remove_last(ctx, clip_id) | LIFO remove; 1 = có node bị gỡ |
+| ghita_engine_graph_clear(ctx, clip_id) | Xóa toàn bộ chain; 1 = clip tồn tại |
+| ghita_engine_graph_get_json(ctx, clip_id) | JSON `[{"type":t,"p0":v},...]` — nguồn sự thật cho UI mirror; `[]` khi chain rỗng/clip lạ |
+| ghita_engine_resample_waveform(src, src_count, out, out_count) | ctx-less linear resample (byte-identical với `_upsampleWaveform` Dart cũ); 1 = ok |
+
+Graph được áp SAU color correction trong `render_timeline_frame` (preview +
+export chung đường); `timeline_state_hash` trộn cả chain nên paused-frame
+cache tự invalidate. Chain KHÔNG được lưu vào project JSON/SQLite (demo
+limitation — beta2 sẽ wire undo + persistence).

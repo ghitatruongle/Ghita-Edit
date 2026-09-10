@@ -714,6 +714,99 @@ class EngineService extends ChangeNotifier {
         return p.toDartString();
       });
 
+  // ========== v1.5.5-demo (B1): GPU dispatch runtime switch ==========
+  // Opt-in: the CPU path stays the default (parity baseline). The native
+  // side falls back to CPU automatically for unsupported filters/frames.
+
+  bool _gpuEnabled = false;
+  bool get gpuEnabled => _gpuEnabled;
+
+  bool setGpuEnabled(bool enabled) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.setGpuEnabled;
+    if (fn == null) return false;
+    try {
+      fn(enabled ? 1 : 0);
+      _gpuEnabled = enabled;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('[EngineService] setGpuEnabled failed: $e');
+      return false;
+    }
+  }
+
+  // ========== v1.5.5-demo (B3): adjustment-graph node chain ==========
+  // Mirrors the Dart-side chain into the engine; the engine applies the
+  // nodes on the render path (preview AND export).
+
+  /// Appends a node (0=Brightness, 1=Contrast, 2=Saturation). Returns the
+  /// node index, or -1 when the clip is unknown or the DLL is too old.
+  int graphAddNode(int clipId, int nodeType, double p0, double p1, double p2) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.graphAddNode;
+    if (!isReady || fn == null || clipId <= 0) return -1;
+    try {
+      return fn(_ctx!, clipId, nodeType, p0, p1, p2);
+    } catch (e) {
+      debugPrint('[EngineService] graphAddNode failed: $e');
+      return -1;
+    }
+  }
+
+  /// Removes the last graph node of a clip (LIFO editing).
+  bool graphRemoveLast(int clipId) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.graphRemoveLast;
+    if (!isReady || fn == null || clipId <= 0) return false;
+    try {
+      return fn(_ctx!, clipId) != 0;
+    } catch (e) {
+      debugPrint('[EngineService] graphRemoveLast failed: $e');
+      return false;
+    }
+  }
+
+  /// Clears the clip's entire graph chain.
+  bool graphClear(int clipId) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.graphClear;
+    if (!isReady || fn == null || clipId <= 0) return false;
+    try {
+      return fn(_ctx!, clipId) != 0;
+    } catch (e) {
+      debugPrint('[EngineService] graphClear failed: $e');
+      return false;
+    }
+  }
+
+  /// Loads a clip's graph chain from the engine (UI mirror source of
+  /// truth). Returns [] for an empty chain, unknown clip, or old DLLs.
+  List<({int type, double value})> graphGet(int clipId) {
+    _checkDisposed();
+    final bindings = _bindings;
+    final fn = bindings?.graphGetJson;
+    if (!isReady || fn == null || clipId <= 0) return const [];
+    try {
+      final p = fn(_ctx!, clipId);
+      if (p == nullptr) return const [];
+      final decoded = jsonDecode(p.toDartString());
+      if (decoded is! List) return const [];
+      return [
+        for (final n in decoded)
+          if (n is Map<String, dynamic>)
+            (type: (n['type'] as num?)?.toInt() ?? 0, value: (n['p0'] as num?)?.toDouble() ?? 0.0)
+      ];
+    } catch (e) {
+      debugPrint('[EngineService] graphGet failed: $e');
+      return const [];
+    }
+  }
+
   Map<String, dynamic> _telemetryJson(String? Function() fetch) {
     try {
       final s = fetch();
@@ -1151,9 +1244,29 @@ class EngineService extends ChangeNotifier {
   }
 
   // v0.5.8: Upsample waveform by linear interpolation when downsampling was used
+  // v1.5.5-demo (T1.P2): the interpolation loop moved to Rust
+  // (ghita_engine_resample_waveform, byte-identical to the old Dart math).
+  // Older DLLs without the symbol fall back to the Dart loop below.
   Float32List _upsampleWaveform(Float32List source, int targetCount) {
     if (source.length >= targetCount) return source.sublist(0, targetCount);
-    
+    final bindings = _bindings;
+    final fn = bindings?.resampleWaveform;
+    if (fn != null && source.isNotEmpty) {
+      final srcPtr = calloc<Float>(source.length);
+      final outPtr = calloc<Float>(targetCount);
+      try {
+        srcPtr.asTypedList(source.length).setAll(0, source);
+        if (fn(srcPtr, source.length, outPtr, targetCount) != 0) {
+          return Float32List.fromList(outPtr.asTypedList(targetCount));
+        }
+      } catch (e) {
+        debugPrint('[EngineService] resampleWaveform failed: $e — Dart fallback');
+      } finally {
+        calloc.free(srcPtr);
+        calloc.free(outPtr);
+      }
+    }
+
     final result = Float32List(targetCount);
     for (int i = 0; i < targetCount; i++) {
       final pos = i * source.length / targetCount;

@@ -491,3 +491,84 @@ mod tests {
         assert!(peak(&out) > peak(&low) * 1.3, "low shelf boost: {}", peak(&out));
     }
 }
+
+/// v1.5.5-demo (T1.P2): linear waveform resample (up or down) — exact port
+/// of the Dart `_upsampleWaveform` hot loop (called per zoom level). Same
+/// indexing semantics so Rust output is byte-identical to the Dart result:
+///   pos = i * src.len / out.len;  left = floor(pos);
+///   right = clamp(left + 1, 0, src.len - 1);  frac = pos - left.
+pub fn resample_waveform(src: &[f32], out: &mut [f32]) -> bool {
+    if src.is_empty() || out.is_empty() {
+        return false;
+    }
+    if src.len() == out.len() {
+        out.copy_from_slice(src);
+        return true;
+    }
+    for i in 0..out.len() {
+        let pos = i as f64 * src.len() as f64 / out.len() as f64;
+        let left = pos.floor() as usize;
+        let right = (left + 1).clamp(0, src.len() - 1);
+        let fraction = pos - left as f64;
+        if right < src.len() {
+            out[i] = (src[left] as f64 * (1.0 - fraction) + src[right] as f64 * fraction) as f32;
+        } else {
+            out[i] = src[left];
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod resample_tests {
+    use super::resample_waveform;
+
+    // Reference implementation using the exact Dart algorithm — anything the
+    // production fn does differently from this ref will fail the test.
+    fn reference(src: &[f32], out_len: usize) -> Vec<f32> {
+        let mut out = Vec::with_capacity(out_len);
+        for i in 0..out_len {
+            let pos = i as f64 * src.len() as f64 / out_len as f64;
+            let left = pos.floor() as usize;
+            let right = (left + 1).clamp(0, src.len() - 1);
+            let fraction = pos - left as f64;
+            if right < src.len() {
+                out.push((src[left] as f64 * (1.0 - fraction) + src[right] as f64 * fraction) as f32);
+            } else {
+                out.push(src[left]);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn upsample_matches_reference() {
+        let src = [0.0, 0.25, 0.5, 1.0];
+        let mut out = vec![0.0f32; 7];
+        assert!(resample_waveform(&src, &mut out));
+        assert_eq!(out, reference(&src, 7));
+    }
+
+    #[test]
+    fn downsample_matches_reference() {
+        let src: Vec<f32> = (0..64).map(|v| v as f32 * 0.5).collect();
+        let mut out = vec![0.0f32; 10];
+        assert!(resample_waveform(&src, &mut out));
+        assert_eq!(out, reference(&src, 10));
+    }
+
+    #[test]
+    fn equal_length_copies() {
+        let src = [1.0, 2.0, 3.0];
+        let mut out = vec![0.0f32; 3];
+        assert!(resample_waveform(&src, &mut out));
+        assert_eq!(out, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn empty_inputs_are_rejected() {
+        let mut out = vec![0.0f32; 3];
+        assert!(!resample_waveform(&[], &mut out));
+        assert!(!resample_waveform(&[1.0], &mut []));
+    }
+}

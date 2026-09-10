@@ -106,6 +106,21 @@ if [ ! -f "$EXE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 1b. Re-stage the REAL native engine. `flutter build windows` runs CMake
+#     which installs the legacy C++ engine's ghita_engine.dll over the Rust
+#     one (windows/CMakeLists.txt) — without this step the installer ships
+#     the C++ engine (the exact regression the CI release job fixed in
+#     v1.5.0). The stage script also bundles the msys64 FFmpeg runtime with
+#     its full dependency closure (Demo Mode on machines without msys64).
+# ---------------------------------------------------------------------------
+echo "-- staging Rust engine + FFmpeg dependency closure ..."
+if ! bash scripts/stage_windows_release.sh; then
+  echo "ERROR: staging failed — build the Rust DLL first:" >&2
+  echo "  (cd native_engine_rust && cargo build --release --features ffmpeg,gpu,sqlite,parallel)" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # 2. Optional: engine smoke test (catches Demo-Mode regressions before the
 #    installer is made). Requires ffmpeg CLI for full media checks; the
 #    engine-only path still runs without it.
@@ -121,6 +136,16 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Compile the Inno Setup installer
 # ---------------------------------------------------------------------------
+# v1.5.5-demo: pre-release suffix from kVersionSuffix in version.dart ('' on
+# final). Threaded into the .iss so installer files and the Control Panel
+# entry carry it (GhitaEdit-1.5.5-demo-Setup.exe) while the CI numeric
+# consistency gates stay untouched.
+SUFFIX="$(sed -n "s/.*kVersionSuffix = '\([^']*\)'.*/\1/p" lib/src/core/version.dart 2>/dev/null | head -1 || true)"
+ISCC_DEFINES=""
+if [ -n "$SUFFIX" ]; then
+  echo "-- pre-release suffix: $SUFFIX"
+  ISCC_DEFINES="-DPreReleaseSuffix=$SUFFIX"
+fi
 echo "-- compiling installer: $ISS ..."
 mkdir -p "$INSTALLER_OUT"
 # Drop stale installers from previous builds/versions so the glob below can
@@ -129,7 +154,7 @@ mkdir -p "$INSTALLER_OUT"
 rm -f "$INSTALLER_OUT"/*.exe 2>/dev/null || true
 ISCC_LOG="$(mktemp)"
 # ISCC emits CRLF paths in its log; just pass the Windows-style path.
-if ! "$ISCC" "$(cygpath -w "$ISS")" >"$ISCC_LOG" 2>&1; then
+if ! "$ISCC" $ISCC_DEFINES "$(cygpath -w "$ISS")" >"$ISCC_LOG" 2>&1; then
   echo "ERROR: ISCC failed — log:" >&2
   tail -30 "$ISCC_LOG" >&2
   rm -f "$ISCC_LOG"
