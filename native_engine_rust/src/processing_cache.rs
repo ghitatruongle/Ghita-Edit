@@ -9,10 +9,21 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
-/// Maximum cached frames (LRU eviction).
-/// v1.5.0-T5 (P2): wired into the PAUSED render path only; 48 entries ×
-/// ~0.9 MB (640×360×4) ≈ 42 MB worst-case.
-const MAX_CACHE_ENTRIES: usize = 48;
+/// v1.5.5-beta1 (T4.P1): the paused-scrub cache is budgeted in BYTES, not in
+/// entries. A fixed 48 entries looked generous but is only ~1.6 s of timeline
+/// at 30 fps; the measured back-and-forth scrub over 3 s (90 positions,
+/// forward → backward → forward) hit just 36% because the sweep thrashed the
+/// whole cache twice. A ~96 MB budget holds ~109 preview frames
+/// (640×360×4 = 0.88 MB) ≈ 3.6 s of timeline, and a huge frame self-limits to
+/// a handful of entries instead of pinning hundreds of MB.
+const CACHE_BYTE_BUDGET: usize = 96 * 1024 * 1024;
+const MIN_CACHE_ENTRIES: usize = 4;
+const MAX_CACHE_ENTRIES: usize = 160;
+
+/// Entry cap for a frame of `frame_bytes` bytes, inside the byte budget.
+fn max_entries_for(frame_bytes: usize) -> usize {
+    (CACHE_BYTE_BUDGET / frame_bytes.max(1)).clamp(MIN_CACHE_ENTRIES, MAX_CACHE_ENTRIES)
+}
 
 /// If playhead jumps more than this many ms, skip cache population.
 const CACHE_SKIP_THRESHOLD_MS: i64 = 500;
@@ -93,8 +104,10 @@ impl ProcessingCache {
         let key = self.compute_key(position_ms, width, height);
         self.access_counter += 1;
 
-        // LRU eviction if at capacity.
-        if self.entries.len() >= MAX_CACHE_ENTRIES && !self.entries.contains_key(&key) {
+        // LRU eviction if at capacity (v1.5.5-beta1: capacity is derived
+        // from this frame's byte size so big frames self-limit).
+        let cap = max_entries_for(data.len());
+        if self.entries.len() >= cap && !self.entries.contains_key(&key) {
             if let Some(lru_key) = self.entries
                 .iter()
                 .min_by_key(|(_, v)| v.last_access)
@@ -169,11 +182,23 @@ mod tests {
     #[test]
     fn lru_eviction() {
         let mut cache = ProcessingCache::new();
-        // Fill beyond capacity.
-        for i in 0..(MAX_CACHE_ENTRIES + 10) {
-            cache.put(i as i64, 64, 36, vec![i as u8; 64 * 36 * 4]);
+        let frame = 64 * 36 * 4;
+        let cap = max_entries_for(frame);
+        // Fill beyond the capacity derived from this frame size.
+        for i in 0..(cap + 10) {
+            cache.put(i as i64, 64, 36, vec![i as u8; frame]);
         }
-        assert!(cache.len() <= MAX_CACHE_ENTRIES);
+        assert!(cache.len() <= cap, "cache must evict past its capacity");
+    }
+
+    #[test]
+    fn big_frames_self_limit_entry_count() {
+        // v1.5.5-beta1 (T4.P1): a 4K frame is ~33 MB — the byte budget must
+        // keep the cache at a handful of entries instead of MAX.
+        let frame_bytes = 3840 * 2160 * 4;
+        assert!(max_entries_for(frame_bytes) < 8, "4K frames must self-limit");
+        // Tiny frames get the hard cap.
+        assert_eq!(max_entries_for(16 * 16 * 4), MAX_CACHE_ENTRIES);
     }
 
     #[test]

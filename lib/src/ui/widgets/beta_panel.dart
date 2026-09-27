@@ -1,15 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../../controllers/editor_controller.dart';
 import '../../models/clip.dart';
 import '../theme/app_theme.dart';
 
-/// v1.5.5-demo: Beta tools.
-///  - B1: GPU compositor runtime toggle (wgpu dispatch, default OFF).
-///  - B3: adjustment-graph node chain (Brightness/Contrast/Saturation) for
-///       the selected clip — edits go through [EditorController.setClipGraph]
-///       so they are UNDOABLE and persist in the project file; the deferred
-///       fingerprint resync mirrors the chain into the engine (preview +
-///       export share the render path).
+/// v1.5.5-beta1: Beta tools.
+///  - B1: GPU compositor runtime toggle (wgpu dispatch, default OFF) —
+///    the choice is remembered across sessions, and the panel shows REAL
+///    evidence (gpu_frames delta) that the GPU path actually ran.
+///  - B3: adjustment-graph node chain (Brightness/Contrast/Saturation/
+///    Exposure/Vibrance) for the selected clip — edits go through
+///    [EditorController.setClipGraph] so they are UNDOABLE, persist in the
+///    project file, and are mirrored into the engine by the fingerprint
+///    resync (preview + export share the render path).
 class BetaPanel extends StatefulWidget {
   final EditorController controller;
 
@@ -23,30 +27,76 @@ class _BetaPanelState extends State<BetaPanel> {
   int _newNodeType = 0;
   double _newNodeValue = 0.2;
   Map<String, dynamic> _gpuStats = {};
+  int _gpuFramesAtOpen = 0;
+  bool _gpuToggleRestored = false;
 
   /// v1.5.0-T6 coalescing: one slider drag = ONE undo entry.
   int? _dragGestureId;
 
+  static const String _prefsGpuKey = 'beta.gpuEnabled';
   static const List<(int, String)> _nodeKinds = [
     (0, 'Brightness'),
     (1, 'Contrast'),
     (2, 'Saturation'),
+    // v1.5.5-beta1 (T1.P3): Exposure + Vibrance join the chain.
+    (3, 'Exposure'),
+    (4, 'Vibrance'),
   ];
 
   @override
   void initState() {
     super.initState();
     _refreshGpuStats();
+    // Baseline for the "GPU ACTIVE +N" badge: only frames dispatched while
+    // THIS sheet is open count as evidence.
+    _gpuFramesAtOpen = _gpuFrames;
+    _restoreGpuPreference();
   }
 
   void _refreshGpuStats() {
     setState(() => _gpuStats = widget.controller.engineService.getGpuStats());
   }
 
-  bool get _gpuAvailable {
-    final v = _gpuStats['available'];
-    return v is bool && v;
+  /// v1.5.5-beta1 (T3.P1): remember the GPU choice between sessions. The
+  /// engine defaults to CPU, so a stored "on" is re-applied only when this
+  /// build actually reports a GPU — never force-enable on a machine without
+  /// an adapter.
+  Future<void> _restoreGpuPreference() async {
+    if (_gpuToggleRestored) return;
+    _gpuToggleRestored = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getBool(_prefsGpuKey) ?? false;
+      final engine = widget.controller.engineService;
+      final available = _gpuStats['available'] == true;
+      if (stored && available && !engine.gpuEnabled) {
+        engine.setGpuEnabled(true);
+        if (mounted) setState(() {});
+      }
+    } catch (_) {
+      // Prefs unavailable (first run / locked profile) — stay on default.
+    }
   }
+
+  Future<void> _persistGpuPreference(bool on) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefsGpuKey, on);
+    } catch (_) {
+      // Non-fatal: the toggle still works for this session.
+    }
+  }
+
+  bool get _gpuAvailable => _gpuStats['available'] == true;
+
+  int get _gpuFrames {
+    final v = _gpuStats['gpu_frames'];
+    return v is num ? v.toInt() : 0;
+  }
+
+  /// v1.5.5-beta1 (T3.P2): proof the GPU path ran while this sheet was
+  /// open, not just "the switch is on".
+  int get _gpuFramesDelta => (_gpuFrames - _gpuFramesAtOpen).clamp(0, 1 << 30);
 
   /// The selected clip, restricted to kinds the graph render path covers
   /// (video/image/overlay go through the decode branch; text/sticker/audio
@@ -67,6 +117,41 @@ class _BetaPanelState extends State<BetaPanel> {
     if (clip == null) return;
     widget.controller.setClipGraph(clip.id, nodes,
         gestureId: drag ? _dragGestureId : null);
+  }
+
+  void _addNode() {
+    final clip = _selectedRenderableClip;
+    if (clip == null) return;
+    _commitGraph([
+      ...clip.graphNodes,
+      GraphNodeData(type: _newNodeType, value: _newNodeValue),
+    ]);
+  }
+
+  void _removeLast() {
+    final clip = _selectedRenderableClip;
+    if (clip == null || clip.graphNodes.isEmpty) return;
+    _commitGraph(clip.graphNodes.sublist(0, clip.graphNodes.length - 1));
+  }
+
+  void _clearAll() {
+    final clip = _selectedRenderableClip;
+    if (clip == null || clip.graphNodes.isEmpty) return;
+    _commitGraph(const []);
+  }
+
+  /// v1.5.5-beta1 (T3.P4): drag-reorder. Node ORDER changes the result
+  /// (contrast→saturation ≠ saturation→contrast), so reordering is a real
+  /// edit and goes through the same undoable path.
+  void _reorder(int oldIndex, int newIndex) {
+    final clip = _selectedRenderableClip;
+    if (clip == null || clip.graphNodes.isEmpty) return;
+    final list = List.of(clip.graphNodes);
+    // onReorderItem already reports the destination index AFTER the moved
+    // item is removed (the framework does the old onReorder's "-1" fixup).
+    final moved = list.removeAt(oldIndex);
+    list.insert(newIndex.clamp(0, list.length), moved);
+    _commitGraph(list);
   }
 
   @override
@@ -97,7 +182,7 @@ class _BetaPanelState extends State<BetaPanel> {
                       color: AppTheme.primaryLight.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text('v1.5.5-demo', style: TextStyle(fontSize: 11, color: AppTheme.primaryLight)),
+                    child: Text('v1.5.5-beta1', style: TextStyle(fontSize: 11, color: AppTheme.primaryLight)),
                   ),
                 ],
               ),
@@ -116,9 +201,7 @@ class _BetaPanelState extends State<BetaPanel> {
                     onChanged: _gpuAvailable
                         ? (v) {
                             engine.setGpuEnabled(v);
-                            // Repaint immediately — the engine-side timeline
-                            // hash folds in the GPU state, so the next render
-                            // is guaranteed fresh.
+                            _persistGpuPreference(v);
                             widget.controller.seek(widget.controller.positionMs);
                             _refreshGpuStats();
                           }
@@ -133,10 +216,23 @@ class _BetaPanelState extends State<BetaPanel> {
                       style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                     ),
                   ),
+                  if (engine.gpuEnabled && _gpuFramesDelta > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text('GPU ACTIVE +$_gpuFramesDelta',
+                          style: const TextStyle(fontSize: 10, color: Colors.green)),
+                    ),
                   IconButton(
                     tooltip: 'Refresh stats',
                     icon: const Icon(Icons.refresh, size: 18),
-                    onPressed: _refreshGpuStats,
+                    onPressed: () {
+                      _gpuFramesAtOpen = _gpuFrames;
+                      _refreshGpuStats();
+                    },
                   ),
                 ],
               ),
@@ -167,56 +263,91 @@ class _BetaPanelState extends State<BetaPanel> {
                       style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                     ),
                   ),
+                  IconButton(
+                    tooltip: 'Copy chain',
+                    icon: const Icon(Icons.copy_all_outlined, size: 18),
+                    onPressed: clip == null || nodes.isEmpty
+                        ? null
+                        : () => widget.controller.copySelectedGraph(),
+                  ),
+                  IconButton(
+                    tooltip: 'Paste chain',
+                    icon: const Icon(Icons.content_paste_go, size: 18),
+                    onPressed: clip == null || !widget.controller.hasGraphClipboard
+                        ? null
+                        : () => widget.controller.pasteGraphToSelectedClip(),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
               if (nodes.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text('Chưa có node — thêm Brightness/Contrast/Saturation vào chain.',
+                  child: Text('Chưa có node — thêm Brightness/Contrast/Saturation/Exposure/Vibrance vào chain.',
                       style: TextStyle(fontSize: 12, color: AppTheme.textMuted)),
                 ),
-              for (var i = 0; i < nodes.length; i++) ...[
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppTheme.surface,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AppTheme.divider),
-                      ),
-                      child: Text('${i + 1}. ${_nodeLabel(nodes[i].type)}',
-                          style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Slider(
-                        value: nodes[i].value.clamp(-1.0, 1.0),
-                        min: -1.0,
-                        max: 1.0,
-                        onChangeStart: (_) =>
-                            _dragGestureId = DateTime.now().microsecondsSinceEpoch,
-                        onChanged: (v) => _commitGraph(
-                          [
-                            for (var j = 0; j < nodes.length; j++)
-                              if (j == i) GraphNodeData(type: nodes[j].type, value: v) else nodes[j],
-                          ],
-                          drag: true,
+              // v1.5.5-beta1 (T3.P4): drag handle per row (ReorderableListView
+              // inside the sheet's scroll view → shrinkWrap + no own scroll).
+              ReorderableListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                buildDefaultDragHandles: false,
+                itemCount: nodes.length,
+                onReorderItem: _reorder,
+                itemBuilder: (context, i) {
+                  final node = nodes[i];
+                  return Container(
+                    key: ValueKey('graph_node_$i'),
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        ReorderableDragStartListener(
+                          index: i,
+                          child: const Icon(Icons.drag_handle, size: 18),
                         ),
-                        onChangeEnd: (_) => _dragGestureId = null,
-                      ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppTheme.surface,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppTheme.divider),
+                          ),
+                          child: Text('${i + 1}. ${_nodeLabel(node.type)}',
+                              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Slider(
+                            value: node.value.clamp(-1.0, 1.0),
+                            min: -1.0,
+                            max: 1.0,
+                            onChangeStart: (_) =>
+                                _dragGestureId = DateTime.now().microsecondsSinceEpoch,
+                            onChanged: (v) => _commitGraph(
+                              [
+                                for (var j = 0; j < nodes.length; j++)
+                                  if (j == i)
+                                    GraphNodeData(type: nodes[j].type, value: v)
+                                  else
+                                    nodes[j],
+                              ],
+                              drag: true,
+                            ),
+                            onChangeEnd: (_) => _dragGestureId = null,
+                          ),
+                        ),
+                        Text(node.value.toStringAsFixed(2),
+                            style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                        IconButton(
+                          tooltip: 'Remove last node',
+                          icon: const Icon(Icons.remove_circle_outline, size: 18),
+                          onPressed: nodes.isEmpty ? null : _removeLast,
+                        ),
+                      ],
                     ),
-                    Text(nodes[i].value.toStringAsFixed(2),
-                        style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-                    IconButton(
-                      tooltip: 'Remove last node',
-                      icon: const Icon(Icons.remove_circle_outline, size: 18),
-                      onPressed: nodes.isEmpty ? null : _removeLast,
-                    ),
-                  ],
-                ),
-              ],
+                  );
+                },
+              ),
               const SizedBox(height: 4),
               Row(
                 children: [
@@ -255,13 +386,13 @@ class _BetaPanelState extends State<BetaPanel> {
                   IconButton(
                     tooltip: 'Clear all nodes',
                     icon: const Icon(Icons.delete_sweep_outlined, size: 22),
-                    onPressed: nodes.isEmpty ? _clearAll : null,
+                    onPressed: nodes.isEmpty ? null : _clearAll,
                   ),
                 ],
               ),
               const SizedBox(height: 4),
               Text(
-                'Nodes chain IN ORDER sau color correction — preview và export dùng cùng pipeline. Undo/redo được, lưu cùng project file.',
+                'Thứ tự node CÓ ảnh hưởng (kéo handle để đổi) • Undo/redo được • lưu cùng project file • Ctrl+Shift+B mở panel này.',
                 style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
               ),
             ],
@@ -269,27 +400,6 @@ class _BetaPanelState extends State<BetaPanel> {
         ),
       ),
     );
-  }
-
-  void _addNode() {
-    final clip = _selectedRenderableClip;
-    if (clip == null) return;
-    _commitGraph([
-      ...clip.graphNodes,
-      GraphNodeData(type: _newNodeType, value: _newNodeValue),
-    ]);
-  }
-
-  void _removeLast() {
-    final clip = _selectedRenderableClip;
-    if (clip == null || clip.graphNodes.isEmpty) return;
-    _commitGraph(clip.graphNodes.sublist(0, clip.graphNodes.length - 1));
-  }
-
-  void _clearAll() {
-    final clip = _selectedRenderableClip;
-    if (clip == null || clip.graphNodes.isEmpty) return;
-    _commitGraph(const []);
   }
 
   String _nodeLabel(int type) {

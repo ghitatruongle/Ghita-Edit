@@ -2219,7 +2219,11 @@ impl GhitaEngine {
             encoder = ffi::avcodec_find_encoder(ffi::AVCodecID::AV_CODEC_ID_GIF);
         } else if codec == "mp3" {
             encoder = std::ptr::null();
-        } else if codec == "prores" {
+        } else if codec.starts_with("prores") {
+            // v1.5.5-beta1 (T3.P3): "prores" (422 HQ, yuv422p10le) and
+            // "prores4444" (alpha-capable, yuv444p10le). prores_ks derives
+            // the profile from the pixel format, so the format choice is the
+            // whole switch.
             encoder = ffi::avcodec_find_encoder_by_name(Self::cstr("prores_ks").as_ptr());
             if encoder.is_null() {
                 encoder = ffi::avcodec_find_encoder_by_name(Self::cstr("prores").as_ptr());
@@ -2291,10 +2295,18 @@ impl GhitaEngine {
                     (*enc_ctx).height = height as c_int;
                     (*enc_ctx).time_base = ffi::AVRational { num: 1, den: fps };
                     (*enc_ctx).framerate = ffi::AVRational { num: fps, den: 1 };
+                    // v1.5.5-beta1 (T2): the libavcodec GIF encoder ONLY
+                    // accepts PAL8. The old BGRA here made avcodec_open2
+                    // fail, so every GIF export wrote a 0-byte file.
                     (*enc_ctx).pix_fmt = if codec == "gif" {
-                        AV_PIX_FMT_BGRA
-                    } else if codec == "prores" {
-                        AV_PIX_FMT_YUV422P10LE
+                        AV_PIX_FMT_PAL8
+                    } else if codec.starts_with("prores") {
+                        // v1.5.5-beta1 (T3.P3): 4444 keeps alpha (yuv444p10le).
+                        if codec == "prores4444" {
+                            AV_PIX_FMT_YUV444P10LE
+                        } else {
+                            AV_PIX_FMT_YUV422P10LE
+                        }
                     } else {
                         AV_PIX_FMT_YUV420P
                     };
@@ -2321,6 +2333,21 @@ impl GhitaEngine {
                 }
             }
 
+            // v1.5.5-beta1 (T2): GIF — loop the animation forever (NETSCAPE
+            // application extension). FFmpeg ≥ 5.1 keeps muxer options on
+            // the format context's priv_data (oformat.priv_data is gone in
+            // FFmpeg 8). Best-effort: a build without the option still
+            // writes a valid GIF.
+            if codec == "gif" && !(*fmt_ctx).priv_data.is_null() {
+                let name = b"loop\0";
+                ffi::av_opt_set_int(
+                    (*fmt_ctx).priv_data,
+                    name.as_ptr() as *const std::ffi::c_char,
+                    0,
+                    0,
+                );
+            }
+
             if ffi::avformat_write_header(fmt_ctx, std::ptr::null_mut()) < 0 {
                 failed = true;
                 break 'export;
@@ -2332,34 +2359,110 @@ impl GhitaEngine {
                 (*enc_frame).width = width as c_int;
                 (*enc_frame).height = height as c_int;
                 (*enc_frame).format = if codec == "gif" {
-                    AV_PIX_FMT_BGRA as c_int
+                    AV_PIX_FMT_PAL8 as c_int
+                } else if codec == "prores4444" {
+                    AV_PIX_FMT_YUV444P10LE as c_int
                 } else if codec == "prores" {
                     AV_PIX_FMT_YUV422P10LE as c_int
                 } else {
                     AV_PIX_FMT_YUV420P as c_int
                 };
                 ffi::av_frame_get_buffer(enc_frame, 0);
+                // v1.5.5-beta1 (T2): PAL8 allocates a second plane for the
+                // 4×256-byte palette; make the linesize explicit.
+                if codec == "gif" && !(*enc_frame).data[1].is_null() {
+                    (*enc_frame).linesize[1] = 1024;
+                }
                 enc_pkt = ffi::av_packet_alloc();
 
-                let sws_dst = if codec == "gif" {
-                    AV_PIX_FMT_BGRA
-                } else if codec == "prores" {
-                    AV_PIX_FMT_YUV422P10LE
-                } else {
-                    AV_PIX_FMT_YUV420P
-                };
-                sws = ffi::sws_getContext(
-                    width as c_int,
-                    height as c_int,
-                    AV_PIX_FMT_RGBA,
-                    width as c_int,
-                    height as c_int,
-                    sws_dst,
-                    ffi::SwsFlags::SWS_BILINEAR as c_int,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                );
+                // v1.5.5-beta1 (T2): GIF skips swscale entirely — the RGBA
+                // frame is quantized to palette indices in Rust instead.
+                if codec != "gif" {
+                    let sws_dst = if codec == "prores4444" {
+                        AV_PIX_FMT_YUV444P10LE
+                    } else if codec == "prores" {
+                        AV_PIX_FMT_YUV422P10LE
+                    } else {
+                        AV_PIX_FMT_YUV420P
+                    };
+                    sws = ffi::sws_getContext(
+                        width as c_int,
+                        height as c_int,
+                        AV_PIX_FMT_RGBA,
+                        width as c_int,
+                        height as c_int,
+                        sws_dst,
+                        ffi::SwsFlags::SWS_BILINEAR as c_int,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    );
+                }
+            }
+
+            // v1.5.5-beta1 (T2): build the GIF palette BEFORE the first
+            // encode. Sample probe frames spread across the timeline (not
+            // just frame 0) so a clip that changes palette still maps well.
+            let mut gif_palette: Option<crate::gif_quant::GifPalette> = None;
+            if codec == "gif" {
+                const MAX_SAMPLES: usize = 240_000;
+                let mut samples: Vec<u8> = Vec::with_capacity(MAX_SAMPLES * 4);
+                let mut probe_buf = vec![0u8; width.max(1) * height.max(1) * 4];
+                {
+                    let state = self.state.read().unwrap();
+                    let mut rstate = self.render.lock().unwrap();
+                    let n_probes = 5.min(total_frames.max(1));
+                    for i in 0..n_probes {
+                        let step = ((i as i64 + 1) * total_frames as i64
+                            * 1000)
+                            / ((n_probes as i64 + 1) * fps.max(1) as i64).max(1);
+                        let pos_ms = step;
+                        let ok = if !state.clips.is_empty() {
+                            render_timeline_frame(
+                                &state,
+                                &mut rstate,
+                                &mut probe_buf,
+                                width,
+                                height,
+                                pos_ms,
+                                true,
+                                self.active_filter_type.load(Ordering::Relaxed),
+                                self.filter_intensity.load(),
+                                false,
+                            )
+                        } else {
+                            let mut dec = state.decoder.borrow_mut();
+                            dec.decode_frame(
+                                &mut probe_buf,
+                                width,
+                                height,
+                                pos_ms,
+                                self.active_filter_type.load(Ordering::Relaxed),
+                                self.filter_intensity.load(),
+                            )
+                        };
+                        if !ok {
+                            continue;
+                        }
+                        // Every 7th pixel is plenty for a 256-color palette.
+                        let px = width.max(1) * height.max(1);
+                        let mut p = 0usize;
+                        while p < px && samples.len() < MAX_SAMPLES * 4 {
+                            let o = p * 4;
+                            samples.extend_from_slice(&probe_buf[o..o + 4]);
+                            p += 7;
+                        }
+                        if samples.len() >= MAX_SAMPLES * 4 {
+                            break;
+                        }
+                    }
+                }
+                let pal = crate::gif_quant::GifPalette::build(&samples);
+                if !enc_frame.is_null() && !(*enc_frame).data[1].is_null() {
+                    let pal_bytes = pal.av_palette_bytes();
+                    std::ptr::copy_nonoverlapping(pal_bytes.as_ptr(), (*enc_frame).data[1], 1024);
+                }
+                gif_palette = Some(pal);
             }
 
             // Audio encode resources (shared by video-with-audio and mp3 paths).
@@ -2461,6 +2564,25 @@ impl GhitaEngine {
                             (*enc_frame).data.as_ptr(),
                             (*enc_frame).linesize.as_ptr(),
                         );
+                    } else if codec == "gif" {
+                        // v1.5.5-beta1 (T2): RGBA → PAL8 palette indices.
+                        // Dithering is enabled once the frame is big enough
+                        // for banding to be visible; tiny GIFs stay fast.
+                        if let Some(pal) = &gif_palette {
+                            if !enc_frame.is_null() && !(*enc_frame).data[0].is_null() {
+                                let stride = (*enc_frame).linesize[0] as usize;
+                                if stride >= width {
+                                    let dst = std::slice::from_raw_parts_mut(
+                                        (*enc_frame).data[0],
+                                        stride * height.max(1),
+                                    );
+                                    let dither = width * height >= 64 * 64;
+                                    pal.quantize_frame(
+                                        frame_buffer, width, height, dst, stride, dither,
+                                    );
+                                }
+                            }
+                        }
                     }
 
                     // Mix + encode this frame's audio window.

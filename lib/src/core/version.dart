@@ -10,7 +10,7 @@ const kBuildNumber = 0;
 /// Pre-release suffix shown in the UI / commit naming only ('' | 'demo' |
 /// 'beta1' | 'beta2' | 'beta3'). NEVER numeric — the CI consistency gates
 /// read only the numeric constants above.
-const kVersionSuffix = 'demo';
+const kVersionSuffix = 'beta1';
 
 /// Flutter/Dart app version string (e.g., '1.5.5+0' or '1.5.5-demo+0').
 /// The suffix is display-only: pubspec.yaml and the CI gates stay numeric.

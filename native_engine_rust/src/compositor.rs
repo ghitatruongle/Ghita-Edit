@@ -438,6 +438,36 @@ pub fn apply_graph_nodes_to_buffer(buffer: &mut [u8], width: usize, height: usiz
                     buffer[d + 2] = clamp255(luma + (b - luma) * sat);
                 }
             }
+            // v1.5.5-beta1 (T1.P3): Exposure — multiplicative stop, same
+            // 2^p mapping as the color-correction exposure field.
+            3 => {
+                let mul = 2.0f32.powf(node.p0.clamp(-1.0, 1.0));
+                for i in 0..pixel_count {
+                    let d = i * 4;
+                    buffer[d] = clamp255(buffer[d] as f32 / 255.0 * mul);
+                    buffer[d + 1] = clamp255(buffer[d + 1] as f32 / 255.0 * mul);
+                    buffer[d + 2] = clamp255(buffer[d + 2] as f32 / 255.0 * mul);
+                }
+            }
+            // v1.5.5-beta1 (T1.P3): Vibrance — saturation weighted toward
+            // the LESS saturated pixels (skins/highlights move, deep colors
+            // barely do), mirroring cc.vibrance.
+            4 => {
+                let vib = node.p0.clamp(-1.0, 1.0);
+                for i in 0..pixel_count {
+                    let d = i * 4;
+                    let r = buffer[d] as f32 / 255.0;
+                    let g = buffer[d + 1] as f32 / 255.0;
+                    let b = buffer[d + 2] as f32 / 255.0;
+                    let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                    let max_c = r.max(g).max(b);
+                    let min_c = r.min(g).min(b);
+                    let scale = 1.0 + vib * (1.0 - (max_c - min_c));
+                    buffer[d] = clamp255(luma + (r - luma) * scale);
+                    buffer[d + 1] = clamp255(luma + (g - luma) * scale);
+                    buffer[d + 2] = clamp255(luma + (b - luma) * scale);
+                }
+            }
             _ => {}
         }
     }

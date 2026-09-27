@@ -23,6 +23,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dll)   DLL="$2"; shift 2 ;;
     --media) MEDIA="$2"; shift 2 ;;
+    # v1.5.5-beta1: CI has been passing --out since v1.5.0 but the parser
+    # rejected it (exit 2) — the smoke job swallowed the failure, so the
+    # matrix never actually ran there. Accept it now.
+    --out)   OUT="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -71,12 +75,11 @@ verify() {
     case "$name" in
       mp4_h265) enc_regex="libx265|hevc" ;;
       mp4_vp9)  enc_regex="libvpx-vp9|vp9" ;;
-      gif)      # v1.1.0 (PLAN 3.12): the gif encoder EXISTS in the build but
-                # only accepts pal8; the engine has no palette quantization
-                # yet, so export fails loudly. Documented, not hidden.
-                echo "  [SKIP] gif — engine has no pal8 palette quantization yet (encoder limitation, see PLAN_1.1.0 Phụ lục C)"
-                SKIPPED=$((SKIPPED + 1))
-                return ;;
+      # v1.5.5-beta1 (T2): the engine now quantizes to pal8 in Rust
+      # (gif_quant.rs), so a missing file means the FFmpeg build really
+      # lacks the gif encoder — report that honestly instead of a blanket
+      # SKIP that would hide a real export regression.
+      gif)      enc_regex="gif" ;;
     esac
     if [ -n "$enc_regex" ] && ! "$FFMPEG" -hide_banner -encoders 2>/dev/null | grep -qE "$enc_regex"; then
       echo "  [SKIP] $name — encoder ($enc_regex) not in this FFmpeg build"
@@ -138,6 +141,9 @@ verify mov_h264   mov video h264 0.8
 # v1.5.5-demo (B2): ProRes preset end-to-end — the engine must really encode
 # prores (yuv422p10le); SKIP honestly if the build lacks the encoder.
 verify prores_mov mov video prores 0.8
+# v1.5.5-beta1 (T3.P3): alpha-capable 4:4:4 profile (prores_ks maps
+# yuv444p10le → profile 4).
+verify prores4444_mov mov video prores 0.8
 # v1.5.0-T2 (P3): multichannel AAC — the engine channel layout (5.1/7.1)
 # must survive into the container: ffprobe channels = 6 / 8.
 verify aac_51     mp4 audio aac  0.8 6

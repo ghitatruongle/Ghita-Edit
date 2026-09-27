@@ -129,35 +129,38 @@ fn hash01(x: i32, y: i32) -> f32 {
     ((h ^ (h >> 16)) & 0xFFFFu32) as f32 / 65536.0f32
 }
 
+    /// v1.5.5-beta1 (T1.P1): the three hot per-pixel filters below are written
+/// as `chunks_exact_mut(4)` iterators so LLVM can auto-vectorize them.
+///
+/// **Byte-exactness:** Rust performs IEEE-754 f32 mul/add with no fast-math
+/// and no FMA contraction for these expressions, so a vectorized lane
+/// produces bit-identical results to the scalar loop — the A/B parity harness
+/// (`engine_compare`) still reports max_diff=0 against the C++ engine. The
+/// `*_match_scalar_reference` tests below pin that guarantee: they compare the
+/// vectorized filters against the ORIGINAL index-loop implementations.
 fn apply_grayscale(buf: &mut [u8]) {
-    let n = buf.len() / 4;
-    for i in 0..n {
-        let p = i * 4;
-        let y = (0.299f32 * buf[p] as f32 + 0.587f32 * buf[p + 1] as f32 + 0.114f32 * buf[p + 2] as f32) as u8;
-        buf[p] = y;
-        buf[p + 1] = y;
-        buf[p + 2] = y;
+    for px in buf.chunks_exact_mut(4) {
+        let y = (0.299f32 * px[0] as f32 + 0.587f32 * px[1] as f32 + 0.114f32 * px[2] as f32) as u8;
+        px[0] = y;
+        px[1] = y;
+        px[2] = y;
     }
 }
 
 fn apply_sepia(buf: &mut [u8]) {
-    let n = buf.len() / 4;
-    for i in 0..n {
-        let p = i * 4;
-        let (r, g, b) = (buf[p] as f32, buf[p + 1] as f32, buf[p + 2] as f32);
-        buf[p] = (0.393f32 * r + 0.769f32 * g + 0.189f32 * b).min(255.0) as u8;
-        buf[p + 1] = (0.349f32 * r + 0.686f32 * g + 0.168f32 * b).min(255.0) as u8;
-        buf[p + 2] = (0.272f32 * r + 0.534f32 * g + 0.131f32 * b).min(255.0) as u8;
+    for px in buf.chunks_exact_mut(4) {
+        let (r, g, b) = (px[0] as f32, px[1] as f32, px[2] as f32);
+        px[0] = (0.393f32 * r + 0.769f32 * g + 0.189f32 * b).min(255.0) as u8;
+        px[1] = (0.349f32 * r + 0.686f32 * g + 0.168f32 * b).min(255.0) as u8;
+        px[2] = (0.272f32 * r + 0.534f32 * g + 0.131f32 * b).min(255.0) as u8;
     }
 }
 
 fn apply_invert(buf: &mut [u8]) {
-    let n = buf.len() / 4;
-    for i in 0..n {
-        let p = i * 4;
-        buf[p] = 255 - buf[p];
-        buf[p + 1] = 255 - buf[p + 1];
-        buf[p + 2] = 255 - buf[p + 2];
+    for px in buf.chunks_exact_mut(4) {
+        px[0] = 255 - px[0];
+        px[1] = 255 - px[1];
+        px[2] = 255 - px[2];
     }
 }
 
@@ -791,6 +794,20 @@ pub fn apply_filter_parallel(
         apply_filter_to_buffer(buf, width, height, filter_type, intensity);
         return;
     }
+    // v1.5.5-beta1 (T1.P2): MEASURED, then reverted. The hypothesis was
+    // "a fixed 32-row band dispatches 68 rayon jobs at 4K, so scale the band
+    // with the frame (48/96 rows) to cut dispatch overhead". A/B on this
+    // machine (12 threads, filter 8, 3840×2160, 3 runs each) says otherwise:
+    //
+    //   tile 32 (shipped)  → 2.79x / 2.98x
+    //   tile 96 (adaptive) → 2.55x
+    //
+    // Bigger bands LOSE — with 12 workers the 32-row tiles already give each
+    // worker several jobs, and larger bands coarsen the load balance (a
+    // 4K frame has 23×96 = 23 tiles, the tail tile alone becomes a straggler).
+    // The 1080p number is inside the ±15% run-to-run noise either way
+    // (2.20–2.59x). So the 32-row band stays; `parallel_filter_benchmark_4k`
+    // was added to keep this measurable instead of assumed.
     let tile_h = 32usize;
     let row_bytes = width * 4;
     let tiles: Vec<(usize, usize)> = (0..height.div_ceil(tile_h))
@@ -914,5 +931,182 @@ mod tests {
             rayon::current_num_threads()
         );
         assert!(speedup >= 1.5, "expected ≥1.5× speedup, got {speedup:.2}×");
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn parallel_filter_benchmark_4k() {
+        // v1.5.5-beta1 (T1.P2): 4K is where the adaptive tile height is
+        // supposed to pay off (a fixed 32-row band dispatches 68 jobs here).
+        const W: usize = 3840;
+        const H: usize = 2160;
+        const FILTER: i32 = 8;
+        let base = gradient_frame(W, H);
+        let mut serial = base.clone();
+        apply_filter_to_buffer(&mut serial, W, H, FILTER, 0.65);
+        let mut parallel = base.clone();
+        apply_filter_parallel(&mut parallel, W, H, FILTER, 0.65);
+        assert_eq!(serial, parallel, "parallel output must match serial at 4K");
+
+        let n = 3;
+        let t0 = std::time::Instant::now();
+        for _ in 0..n {
+            let mut b = base.clone();
+            apply_filter_to_buffer(&mut b, W, H, FILTER, 0.65);
+        }
+        let serial_time = t0.elapsed().as_secs_f64() / n as f64;
+        let t1 = std::time::Instant::now();
+        for _ in 0..n {
+            let mut b = base.clone();
+            apply_filter_parallel(&mut b, W, H, FILTER, 0.65);
+        }
+        let parallel_time = t1.elapsed().as_secs_f64() / n as f64;
+        println!(
+            "benchmark4k filter{FILTER} {W}x{H}: serial={serial_time:.4}s parallel={parallel_time:.4}s speedup={:.2}x",
+            serial_time / parallel_time.max(1e-9)
+        );
+        assert!(parallel_time > 0.0);
+    }
+
+    // ---- v1.5.5-beta1 (T1.P1): byte-exactness guard for the vectorized
+    // hot filters. Each reference below is the ORIGINAL index-loop body from
+    // v1.5.0, kept verbatim as the parity oracle.
+
+    fn ref_grayscale(buf: &mut [u8]) {
+        let n = buf.len() / 4;
+        for i in 0..n {
+            let p = i * 4;
+            let y = (0.299f32 * buf[p] as f32 + 0.587f32 * buf[p + 1] as f32 + 0.114f32 * buf[p + 2] as f32) as u8;
+            buf[p] = y;
+            buf[p + 1] = y;
+            buf[p + 2] = y;
+        }
+    }
+
+    fn ref_sepia(buf: &mut [u8]) {
+        let n = buf.len() / 4;
+        for i in 0..n {
+            let p = i * 4;
+            let (r, g, b) = (buf[p] as f32, buf[p + 1] as f32, buf[p + 2] as f32);
+            buf[p] = (0.393f32 * r + 0.769f32 * g + 0.189f32 * b).min(255.0) as u8;
+            buf[p + 1] = (0.349f32 * r + 0.686f32 * g + 0.168f32 * b).min(255.0) as u8;
+            buf[p + 2] = (0.272f32 * r + 0.534f32 * g + 0.131f32 * b).min(255.0) as u8;
+        }
+    }
+
+    fn ref_invert(buf: &mut [u8]) {
+        let n = buf.len() / 4;
+        for i in 0..n {
+            let p = i * 4;
+            buf[p] = 255 - buf[p];
+            buf[p + 1] = 255 - buf[p + 1];
+            buf[p + 2] = 255 - buf[p + 2];
+        }
+    }
+
+    fn gradient_frame(w: usize, h: usize) -> Vec<u8> {
+        let mut v = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                v[i] = ((x * 31 + y * 7) % 256) as u8;
+                v[i + 1] = ((x * 13 + y * 53) % 256) as u8;
+                v[i + 2] = ((x * 71 + y * 3) % 256) as u8;
+                v[i + 3] = 255;
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn hot_filters_match_scalar_reference_byte_for_byte() {
+        // Cover an awkward non-multiple-of-16 pixel count too, so the
+        // chunks_exact tail path is exercised.
+        for (w, h) in [(64usize, 48usize), (37, 5), (1, 1), (3, 3)] {
+            let base = gradient_frame(w, h);
+            for (id, fwd, refv) in [
+                (1, apply_grayscale as fn(&mut [u8]), ref_grayscale as fn(&mut [u8])),
+                (2, apply_sepia as fn(&mut [u8]), ref_sepia as fn(&mut [u8])),
+                (3, apply_invert as fn(&mut [u8]), ref_invert as fn(&mut [u8])),
+            ] {
+                let mut a = base.clone();
+                let mut b = base.clone();
+                fwd(&mut a);
+                refv(&mut b);
+                assert_eq!(
+                    a, b,
+                    "filter {id} at {w}x{h} diverged from the v1.5.0 scalar loop"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hot_filters_never_touch_alpha() {
+        let base = gradient_frame(16, 16);
+        for mut f in [apply_grayscale as fn(&mut [u8]), apply_sepia, apply_invert] {
+            let mut v = base.clone();
+            f(&mut v);
+            for (orig, new) in base.chunks_exact(4).zip(v.chunks_exact(4)) {
+                assert_eq!(orig[3], new[3], "alpha channel must be untouched");
+            }
+        }
+    }
+
+    #[test]
+    fn hot_filters_leave_trailing_partial_bytes_alone() {
+        // The v1.5.0 loops only touched floor(len/4) pixels; keep that.
+        let mut a = vec![7u8; 4 * 3 + 2];
+        let mut b = a.clone();
+        apply_grayscale(&mut a);
+        ref_grayscale(&mut b);
+        assert_eq!(a, b);
+        assert_eq!(a[12], 7);
+        assert_eq!(a[13], 7);
+    }
+
+    #[test]
+    fn hot_filter_throughput_is_printed_for_the_changelog() {
+        // Not a pass/fail gate — it PRINTS measured throughput (old scalar
+        // loop vs the vectorized version, same process, same data) so the
+        // v1.5.5-beta1 CHANGELOG quotes real numbers instead of guesses.
+        const W: usize = 1920;
+        const H: usize = 1080;
+        const N: usize = 5;
+        let base = gradient_frame(W, H);
+        for (id, name, fwd, refv) in [
+            (
+                1,
+                "grayscale",
+                apply_grayscale as fn(&mut [u8]),
+                ref_grayscale as fn(&mut [u8]),
+            ),
+            (2, "sepia", apply_sepia as fn(&mut [u8]), ref_sepia as fn(&mut [u8])),
+            (3, "invert", apply_invert as fn(&mut [u8]), ref_invert as fn(&mut [u8])),
+        ] {
+            let mut old_t = 0.0f64;
+            let mut new_t = 0.0f64;
+            for _ in 0..N {
+                let t0 = std::time::Instant::now();
+                let mut b = base.clone();
+                refv(&mut b);
+                old_t += t0.elapsed().as_secs_f64();
+
+                let t1 = std::time::Instant::now();
+                let mut b = base.clone();
+                fwd(&mut b);
+                new_t += t1.elapsed().as_secs_f64();
+            }
+            let old_t = old_t / N as f64;
+            let new_t = new_t / N as f64;
+            let mpix = (W * H) as f64 / 1e6;
+            println!(
+                "bench hot-filter {name} (id {id}) {W}x{H}: scalar {:.2} ms -> vectorized {:.2} ms ({:.2}x), {:.0} Mpix/s",
+                old_t * 1000.0,
+                new_t * 1000.0,
+                old_t / new_t.max(1e-9),
+                mpix / new_t.max(1e-9)
+            );
+        }
     }
 }

@@ -77,27 +77,46 @@ Kích thước: **M** — rủi ro thấp nhất trong 5 mốc.
 
 ## Mốc 2 — v1.5.5-beta1 (n = 5 track: T1, T2, T3, T4, T6)
 
-**Mục tiêu:** beta features hoàn thiện hơn + tăng tốc đo được bằng số.
+**Mục tiêu:** lấp capability engine cuối cùng còn thiếu (GIF export thật),
+polish B1–B3 theo phản hồi demo, tăng tốc **đo được bằng số**.
+
+> Bổ sung sau mốc demo (a4db596): B1–B3 đã có undo + persist + cache
+> invalidation đúng. GIF là khoản trống engine DUY NHẤT còn lại
+> (`verify_export_matrix` SKIP `gif` — encoder chỉ nhận pal8).
+
+**T2 — B4 GIF export thật (trọng tâm, L)**
+- T2.P1: palette quantization 256 màu (median-cut, cân nhắc neuquant) viết
+  trong Rust, tái dùng cho thumbnail.
+- T2.P2: dithering Floyd–Steinberg.
+- T2.P3: mux đúng: `.gif`, không audio, loop vô hạn, duration đúng fps.
+- T2.P4: **tiêu chí chốt mốc — case `gif` trong export matrix SKIP → PASS**
+  (ffprobe codec=gif, palette ≤256 màu, số khung hợp lý; A/B ffmpeg CLI).
 
 **T1 — Tối ưu thuật toán**
-- T1.P1: auto-vectorize/SIMD filter nóng (grayscale/sepia/invert/blur).
+- T1.P1: auto-vectorize/SIMD filter nóng (grayscale/sepia/invert/blur) —
+  byte-equal với scalar, `engine_compare` phải giữ xanh.
 - T1.P2: tile size rayon adaptive theo kích thước ảnh.
-
-**T2 — B4 GIF export thật**
-- T2.P1: palette quantization (median-cut hoặc neuquant) + dithering
-  Floyd–Steinberg trong Rust, triệt tiêu limitation pal8 cũ.
+- T1.P3: mở rộng graph B3 thêm node Exposure/Vibrance (chain rỗng vẫn no-op
+  → parity an toàn).
+- T1.P4: benchmark trước/sau (`engine_compare` + `tool/bench.dart`), số liệu
+  vào CHANGELOG (kiểu ghi 5.27x của T1 v1.5.0).
 
 **T3 — Polish B1–B3**
-- T3.P1: UX/hotkey/lưu preset/edge cases theo feedback demo.
+- T3.P1: nhớ trạng thái GPU toggle (shared_preferences) + hotkey mở panel.
+- T3.P2: B1 phản hồi thị giác thật — delta `gpu_frames` báo "GPU đang chạy".
+- T3.P3: B2 rà preset ProRes (422 HQ/4444 nếu `prores_ks` có trong build).
+- T3.P4: B3 drag-reorder node (thứ tự ảnh hưởng kết quả) + copy/paste chain.
 
 **T4 — Hiệu năng ứng dụng**
-- T4.P1: `processing_cache` LRU — đo hit-rate, chỉnh capacity + dirty propagation.
+- T4.P1: `processing_cache` LRU — đo hit-rate qua `cache_stats`, chỉnh capacity.
 - T4.P2: giảm cold-start (lazy init engine, defer panel phụ).
-- T4.P3: audit zero-copy FFI buffer (tránh copy Uint8List qua lại).
+- T4.P3: audit zero-copy FFI buffer (thumbnail, waveform).
 
-**T6 — Release cycle** (P1 bump → P2 build/stage → P3 commit/hỏi duyệt)
-- Kèm benchmark trước/sau bằng `tools/engine_compare`, ghi số liệu vào
-  CHANGELOG (kiểu ghi 5.27x của T1 v1.5.0).
+**T6 — Release cycle** (P1 bump `1.5.5-beta1` → P2 build/stage → P3 commit/hỏi duyệt)
+- Installer tự tên `GhitaEdit-1.5.5-beta1-Setup.exe` (cơ chế suffix có sẵn).
+- Gates: analyze, flutter test, cargo test, engine_compare, smoke, export matrix.
+- Tag `v1.5.5-beta1` + GitHub Release **chỉ sau khi user duyệt** (lần đầu CI
+  installer-suffix chạy thật theo tag — có `build_release.sh` local fallback).
 
 Kích thước: **M–L**.
 

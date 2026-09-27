@@ -1,5 +1,107 @@
 # Changelog — Ghita Edit
 
+## v1.5.5-beta1 (2026-10-27 — mốc 2, CHƯA commit/push)
+
+> **Trọng tâm mốc:** lấp khoản trống engine cuối cùng (GIF export thật),
+> polish B1–B3, tối ưu **đo được bằng số**. Mọi con số dưới đây là kết quả
+> đo trên máy, không phải ước lượng.
+
+### T2 — B4 GIF export thật (đã bị cắt ở v1.0.0 vì "GIF animated thật" không bao giờ chạy)
+- Module mới `gif_quant.rs`: median-cut trên histogram 5-bit/kênh + LUT
+  nearest-color 15-bit + dithering Floyd–Steinberg (7 unit test).
+- Engine: encoder `pix_fmt` đổi BGRA → **PAL8** (libavcodec GIF chỉ nhận PAL8 —
+  đây là lý do `avcodec_open2` fail và mọi file GIF từng ra 0 byte); bỏ
+  swscale, tự quantize RGBA→index; palette dựng từ 5 probe frame rải dọc
+  timeline (không chỉ frame 0); muxer option `loop=0` (chạy vô hạn).
+- **Bug thật tìm ra khi verify:** palette plane phải là **BGRA** — bản RGBA
+  làm hoán đổi R↔B mọi màu (so bằng cách decode GIF lấy màu thanh màu nguồn:
+  `f2 10 04` → sau fix `f2 10 03`, lệch đúng 1/255 do lượng tử hóa).
+- Export matrix: `gif` **SKIP → PASS**. GIF thật: 160×120, 12 khung, 5.2 KB.
+
+### T1 — Tối ưu thuật toán (đo trước/sau, byte-equal)
+- Grayscale/sepia/invert viết dạng `chunks_exact_mut(4)` để auto-vectorize:
+  **1.09× / 1.18× / 1.09×** (1920×1080, đo cùng process). Byte-equal được chứng
+  minh bằng 3 test so với thân vòng lặp index gốc của v1.5.0 (Rust không có
+  fast-math nên lane SIMD cho kết quả giống hệt) + `engine_compare` vẫn
+  max_diff=0 với C++.
+- **Tile rayon "adaptive" — đo rồi HOÀN NGUYÊN:** giả thuyết "4K với tile 32
+  hàng thì 68 job, tăng band sẽ giảm overhead" **sai** — A/B 3840×2160:
+  tile 32 → 2.79×/2.98×, tile 96 → 2.55×. Giữ tile 32, bổ sung test
+  benchmark 4K để giữ việc này đo được thay vì giả định.
+- Graph thêm node **Exposure (3)** và **Vibrance (4)** — chain rỗng vẫn no-op
+  nên parity không đổi (test `graph_exposure_and_vibrance_nodes_render`).
+
+### T3 — Polish B1–B3
+- GPU toggle nhớ qua phiên (shared_preferences) + hotkey **Ctrl+Shift+B** mở
+  panel Beta.
+- Badge **"GPU ACTIVE +N"** dựa trên delta `gpu_frames` thật (bằng chứng GPU
+  thực sự dispatch), không chỉ trạng thái bật/tắt.
+- **ProRes 4444** (alpha, yuv444p12le) — engine chọn pix format theo codec
+  string, `prores_ks` tự suy profile 4. ffprobe xác nhận `yuv444p12le`; 422 HQ
+  vẫn `yuv422p10le`.
+- Graph: **kéo handle để đổi thứ tự node** (thứ tự ảnh hưởng kết quả) +
+  copy/paste chain giữa các clip (clipboard trong controller, sống qua các
+  lần mở/đóng panel).
+
+### T4 — Hiệu năng (đo, không giả định)
+- Paused-scrub cache chuyển từ 48 entries → **budget 96 MB theo byte**:
+  scrub 3 s ngược–xuôi (90 vị trí × 3 lượt) đo **36% → 67%** hit rate.
+  Frame 4K tự giới hạn còn vài entries thay vì giữ hàng trăm MB.
+- **Cold-start: đo thì không cần sửa** — native `create`+`init` = **0.00 ms**
+  (trung bình 5 lần). Lazy-init/defer panel sẽ không mua được gì đo được, nên
+  KHÔNG thêm độ phức tạp vô ích.
+
+### Bugs cũ (pre-existing) tìm ra khi làm mốc này
+1. `verify_export_matrix.sh` **từ chối `--out`** — CI từ v1.5.0 truyền option
+   đó, script exit 2 và job nuốt lỗi ⇒ **matrix chưa từng thực sự chạy trong
+   CI**. Đã thêm option + smoke vẫn xanh.
+2. Check kênh AAC trong script verify hardcode sai thứ tự cột ffprobe
+   (`stream,<n>,<codec>,<type>`) trong khi bản này trả `stream,<codec>,<type>,<n>`
+   ⇒ aac_51/71 fail oan dù file đúng. Đã chấp nhận cả hai thứ tự.
+
+### Kết quả gates (local, 2026-10-27)
+- `flutter analyze` 0 lỗi · `flutter test` **161 pass, 1 skip**.
+- `cargo test`: **150** (ffmpeg,parallel,sqlite) · **152**
+  (ffmpeg,gpu,sqlite,parallel) · **121** (gpu) — 0 fail.
+- `run_engine_smoke_test.sh` **PASSED** (log clean) ·
+  `verify_export_matrix.sh` **10 PASS / 0 SKIP / 0 FAIL** (thêm gif +
+  prores4444).
+- `engine_compare`: parity pass, **nhưng phát hiện flake có sẵn** — xem mục
+  dưới.
+
+### Vòng review/debug sau khi build (2026-10-28)
+- **Bền vững GIF ở kích thước thật:** 640×480 / 20 fps → 116 khung, 5.8 s,
+  36.5 KB, 681 ms; soi khung giữa bằng ffmpeg: đủ 8 thanh màu đúng thứ tự +
+  vòng tròn + dải gradient (palette 256 màu giữ được cấu trúc màu).
+- **Test mới (giữ để chống hồi quy):**
+  `export_and_preview_render_concurrently_is_safe` (app render preview khi
+  export chạy nền — kịch bản thật của người dùng) và
+  `concurrent_render_stress_does_not_corrupt_later_frames` (4 luồng × 20
+  render như harness: engine sau stress vẫn render **giống hệt** engine sạch).
+- **Ba công cụ chẩn đoán thêm vào `tool/`:** `flake_repro.dart` (tái tạo
+  đúng kịch bản media của harness, có cờ `--stress/--no-export/--no-mix`),
+  `parity_flake_probe.dart` (solo vs xen kẽ), `gif_export_probe.dart`
+  (GIF kích thước lớn + đo thời gian).
+- `engine_compare` có bộ dò flake opt-in: `GHITA_PARITY_REPEAT=1` chạy media
+  scenario 2 lần và in `run1/run2` để biết mismatch có tái lập không (mặc
+  định 1 lần để không nhân đôi thời gian CI).
+
+### ⚠️ Flake có sẵn trong `engine_compare` (không phải do mốc này)
+- `real_timeline@*` đôi khi lệch `max_diff=255` (~50% pixel). Đo lại trên
+  **bản đã commit (v1.5.5-demo)**: fail **1/6 lần** ⇒ tồn tại từ trước.
+- Probe cô lập (`tool/parity_flake_probe.dart`): mỗi engine chạy riêng **tất
+  định 12/12 run**; hai engine xen kẽ trong cùng process **0/20 lệch**. Vậy
+  race chỉ nổi trong chuỗi kịch bản đầy đủ của harness (có export + mix).
+- **Loại trừ có bằng chứng:** mỗi engine tất định (20 vòng Dart không khác
+  biệt; test Rust chứng minh engine sau stress 4 luồng render y hệt engine
+  sạch); kịch bản media tái tạo trong Dart: **0/20 lệch**; có thêm bước
+  synthetic trước đó: 0/12; 4 harness chạy song song (tải cao): 4/4 PASS;
+  export+preview đồng thời: test Rust PASS. Không có decoder cache static ở
+  C++; thread audio chỉ start khi `play()` (harness không gọi).
+- Kết luận: cần đúng bối cảnh process của harness và phụ thuộc thời gian —
+  chưa localize được. Đưa vào hàng đợi mốc 3 (T5); **không nới tolerance
+  để làm xanh giả**, và CI hiện vẫn có bước dò opt-in ở trên.
+
 ## v1.5.5-demo (2026-09-02 — bản demo beta, CHƯA publish)
 
 > **Phạm vi:** 3 tính năng beta (B1 GPU toggle, B2 ProRes preset, B3

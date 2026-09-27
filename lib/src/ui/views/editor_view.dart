@@ -862,6 +862,12 @@ class _EditorViewState extends State<EditorView> {
         _showToast(_focusMode ? 'Focus mode on' : 'Focus mode off');
         return true;
       }
+      // v1.5.5-beta1 (T3.P1): open the Beta tools sheet (GPU toggle +
+      // adjustment graph) — Ctrl+Shift+B, distinct from Ctrl+B (media bin).
+      if (shift && key == LogicalKeyboardKey.keyB) {
+        _showBetaPanel();
+        return true;
+      }
       // v1.5.0 T3 (#18): action search palette (Ctrl+P).
       if (key == LogicalKeyboardKey.keyP) {
         _showActionSearch(context);

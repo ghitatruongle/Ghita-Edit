@@ -307,7 +307,7 @@ coverage ≥60% gate PASS.
 |---|---|
 | ghita_engine_set_gpu_enabled(enabled) | ctx-less; bật/tắt dispatch wgpu cho filter 1/2/3 frame ≥512×256. Default OFF (CPU = parity baseline). No-op khi build thiếu feature `gpu` |
 | ghita_engine_gpu_enabled() | ctx-less; 1/0 trạng thái switch hiện tại |
-| ghita_engine_graph_add_node(ctx, clip_id, node_type, p0, p1, p2) | Append node vào chain của clip (0=Brightness, 1=Contrast, 2=Saturation; p0 clamp −1..1, NaN→0). Trả index 0-based, −1 khi clip không tồn tại |
+| ghita_engine_graph_add_node(ctx, clip_id, node_type, p0, p1, p2) | Append node vào chain của clip. node_type 0=Brightness, 1=Contrast, 2=Saturation (v1.5.5-demo) · **3=Exposure, 4=Vibrance (v1.5.5-beta1)**; p0 clamp −1..1, NaN→0. Trả index 0-based, −1 khi clip không tồn tại |
 | ghita_engine_graph_remove_last(ctx, clip_id) | LIFO remove; 1 = có node bị gỡ |
 | ghita_engine_graph_clear(ctx, clip_id) | Xóa toàn bộ chain; 1 = clip tồn tại |
 | ghita_engine_graph_get_json(ctx, clip_id) | JSON `[{"type":t,"p0":v},...]` — nguồn sự thật cho UI mirror; `[]` khi chain rỗng/clip lạ |
@@ -315,5 +315,11 @@ coverage ≥60% gate PASS.
 
 Graph được áp SAU color correction trong `render_timeline_frame` (preview +
 export chung đường); `timeline_state_hash` trộn cả chain nên paused-frame
-cache tự invalidate. Chain KHÔNG được lưu vào project JSON/SQLite (demo
+cache tự invalidate.
+
+**v1.5.5-beta1 — không có symbol C ABI mới**, chỉ mở rộng hợp đồng hiện có:
+node type 3/4 (xem bảng trên), codec export `prores4444` (pix_fmt
+yuv444p10le → prores_ks profile 4, ffprobe báo `yuv444p12le`) và đường GIF
+đi qua `ghita_engine_start_export_ex` với codec `"gif"` (encoder PAL8 — engine
+tự quantize trong `gif_quant.rs`; palette plane ghi theo thứ tự byte **BGRA**). Chain KHÔNG được lưu vào project JSON/SQLite (demo
 limitation — beta2 sẽ wire undo + persistence).

@@ -21,6 +21,8 @@ pub mod engine;
 pub mod filters;
 pub mod fx;
 pub mod gdi;
+// v1.5.5-beta1 (T2): GIF palette quantization (median-cut + Floyd–Steinberg).
+pub mod gif_quant;
 pub mod model;
 pub mod synth;
 

@@ -491,3 +491,219 @@ fn graph_json_roundtrip_lifo_and_unknown() {
     assert_eq!(graph_json_of(&c, 999), "[]");
     assert_eq!(unsafe { ghita_engine_graph_clear(c.0, 999) }, 0);
 }
+
+#[test]
+fn graph_exposure_and_vibrance_nodes_render() {
+    // v1.5.5-beta1 (T1.P3): the two node types added in beta1 must reach the
+    // render path (not silently ignored by the engine's node match).
+    let c = Ctx::new();
+    let path = cstr("missing.mp4");
+    unsafe { ghita_engine_upsert_clip(c.0, 1, path.as_ptr(), 0, 5000, 0, 0, 0, 1.0, 1.0, 1.0) };
+    let mut base = frame(64, 36);
+    assert!(unsafe { ghita_engine_render_frame_at(c.0, base.as_mut_ptr(), 64, 36, 1000) });
+
+    // Exposure +1 stop: every channel must be >= base.
+    assert!(unsafe { ghita_engine_graph_add_node(c.0, 1, 3, 1.0, 0.0, 0.0) } >= 0);
+    let mut exposed = frame(64, 36);
+    assert!(unsafe { ghita_engine_render_frame_at(c.0, exposed.as_mut_ptr(), 64, 36, 1000) });
+    assert_ne!(base, exposed, "exposure node must change the frame");
+    for (i, (b, e)) in base.iter().zip(exposed.iter()).enumerate() {
+        if i % 4 == 3 {
+            assert_eq!(e, b, "alpha untouched");
+        } else {
+            assert!(*e >= *b, "exposure +1 stop must only lift channels");
+        }
+    }
+    assert!(unsafe { ghita_engine_graph_clear(c.0, 1) } != 0);
+
+    // Vibrance must also reach the render path.
+    assert!(unsafe { ghita_engine_graph_add_node(c.0, 1, 4, 0.8, 0.0, 0.0) } >= 0);
+    let mut vibed = frame(64, 36);
+    assert!(unsafe { ghita_engine_render_frame_at(c.0, vibed.as_mut_ptr(), 64, 36, 1000) });
+    assert_ne!(base, vibed, "vibrance node must change the frame");
+}
+
+#[test]
+fn paused_scrub_cache_hit_rate_is_measured() {
+    // v1.5.5-beta1 (T4.P1): measure the paused-scrub cache hit rate instead
+    // of assuming it. A user dragging the playhead sweeps positions, then
+    // comes back — that is the access pattern the paused cache exists for.
+    let p = unsafe { ghita_engine_create() };
+    assert!(!p.is_null());
+    assert_eq!(unsafe { ghita_engine_init(p) }, 0);
+    let path = cstr("missing.mp4");
+    assert_eq!(
+        unsafe { ghita_engine_upsert_clip(p, 1, path.as_ptr(), 0, 20000, 0, 0, 0, 1.0, 1.0, 1.0) },
+        1
+    );
+    unsafe { ghita_engine_seek(p, 0) };
+
+    let w = 640i32;
+    let h = 360i32;
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    // 3 seconds of timeline at 30 fps = 90 distinct positions, swept
+    // forward, backward, forward again — a realistic back-and-forth scrub.
+    let step_ms = 1000 / 30;
+    let mut render = |pos: i64| unsafe {
+        ghita_engine_render_frame_at(p, buf.as_mut_ptr(), w, h, pos)
+    };
+    for pos in (0..90).map(|i| i * step_ms) {
+        render(pos);
+    }
+    for pos in (0..90).rev().map(|i| i * step_ms) {
+        render(pos);
+    }
+    for pos in (0..90).map(|i| i * step_ms) {
+        render(pos);
+    }
+
+    let stats = unsafe { std::ffi::CStr::from_ptr(ghita_engine_cache_stats(p)) }
+        .to_str()
+        .unwrap()
+        .to_string();
+    let num = |key: &str| -> u64 {
+        let i = stats.find(&format!("\"{key}\":")).expect(key) + key.len() + 3;
+        let rest = &stats[i..];
+        let end = rest.find([',', '}']).unwrap();
+        rest[..end].parse().unwrap()
+    };
+    let (hits, misses) = (num("hits"), num("misses"));
+    let rate = hits as f64 / (hits + misses).max(1) as f64;
+    println!("scrub cache: {hits} hits / {misses} misses = {:.0}%", rate * 100.0);
+    unsafe { ghita_engine_destroy(p) };
+    // A 3s back-and-forth scrub MUST land real hits — if this drops, the
+    // paused cache stopped serving its purpose.
+    assert!(rate >= 0.4, "paused-scrub hit rate collapsed: {rate:.2}");
+}
+
+#[test]
+fn native_engine_init_cost_is_measured() {
+    // v1.5.5-beta1 (T4.P2): measure native startup so any cold-start claim
+    // is backed by a number. 5 fresh contexts (create+init+destroy).
+    let mut create_total = 0.0f64;
+    let mut init_total = 0.0f64;
+    for _ in 0..5 {
+        let t0 = std::time::Instant::now();
+        let p = unsafe { ghita_engine_create() };
+        create_total += t0.elapsed().as_secs_f64();
+        let t1 = std::time::Instant::now();
+        assert_eq!(unsafe { ghita_engine_init(p) }, 0);
+        init_total += t1.elapsed().as_secs_f64();
+        unsafe { ghita_engine_destroy(p) };
+    }
+    println!(
+        "cold-start native: create {:.2} ms, init {:.2} ms (avg of 5)",
+        create_total * 100.0,
+        init_total * 100.0
+    );
+    // Sanity ceiling: native init must stay well under a frame budget so
+    // startup regressions are loud.
+    assert!(init_total / 5.0 < 0.25, "native init regressed past 250 ms");
+}
+
+#[test]
+fn export_and_preview_render_concurrently_is_safe() {
+    // v1.5.5-beta1 (debug): the app DOES render preview frames while an
+    // export runs on its own thread (users export while the timeline keeps
+    // playing). Both paths call render_timeline_frame against the SAME
+    // engine state, so this must not panic or corrupt either side.
+    // This is also the shape the engine_compare flake needs: concurrent
+    // renders + a live export in one process.
+    let c = Ctx::new();
+    let path = cstr("missing.mp4");
+    assert_eq!(
+        unsafe { ghita_engine_upsert_clip(c.0, 1, path.as_ptr(), 0, 10000, 0, 0, 0, 1.0, 1.0, 1.0) },
+        1
+    );
+    let out = cstr("concurrency_probe.mp4");
+    let codec = cstr("h264");
+    assert_eq!(
+        unsafe { ghita_engine_start_export_ex(c.0, out.as_ptr(), 64, 36, 10, codec.as_ptr(), 500000, false) },
+        0
+    );
+    assert!(unsafe { ghita_engine_is_exporting(c.0) });
+
+    // Preview renders while the export thread is busy.
+    let mut buf = vec![0u8; 64 * 36 * 4];
+    let mut renders = 0u32;
+    for i in 0..200 {
+        if unsafe { ghita_engine_render_frame_at(c.0, buf.as_mut_ptr(), 64, 36, (i * 37) % 5000) } {
+            renders += 1;
+        }
+    }
+    assert!(renders > 0, "preview renders must keep working during export");
+
+    // Export must finish (cancel_export joins the thread; a panic inside it
+    // would surface as export_error).
+    for _ in 0..3000 {
+        if !unsafe { ghita_engine_is_exporting(c.0) } {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        !unsafe { ghita_engine_is_exporting(c.0) },
+        "export never finished while preview was rendering"
+    );
+    let _ = std::fs::remove_file("concurrency_probe.mp4");
+}
+
+#[test]
+fn concurrent_render_stress_does_not_corrupt_later_frames() {
+    // v1.5.5-beta1 (debug): the engine_compare harness runs a 4-thread ×
+    // 20-render stress BEFORE the real-media scenario, and the media frames
+    // then mismatch the C++ engine intermittently. This pins the cause: if a
+    // stressed engine still renders byte-identically to a pristine one, the
+    // stress is NOT the corruptor and the flake lives elsewhere.
+    let mk = || {
+        let c = Ctx::new();
+        let p = cstr("missing.mp4");
+        unsafe {
+            ghita_engine_upsert_clip(c.0, 1, p.as_ptr(), 0, 5000, 0, 0, 0, 1.0, 1.0, 1.0);
+        }
+        c
+    };
+
+    let render = |c: &Ctx, pos: i64| -> Vec<u8> {
+        let mut b = frame(64, 36);
+        assert!(unsafe { ghita_engine_render_frame_at(c.0, b.as_mut_ptr(), 64, 36, pos) });
+        b
+    };
+
+    // Control: never stressed.
+    let control = mk();
+    let control_frames: Vec<Vec<u8>> = [0, 300, 900, 1800].iter().map(|p| render(&control, *p)).collect();
+
+    // Stressed: 4 threads × 20 concurrent renders, exactly the harness shape.
+    let stressed = mk();
+    {
+        let raw = unsafe { std::sync::Arc::new(stressed.0 as usize) };
+        let mut handles = Vec::new();
+        for t in 0..4 {
+            let raw = std::sync::Arc::clone(&raw);
+            handles.push(std::thread::spawn(move || {
+                let addr = *raw as usize;
+                let ctx = addr as *mut GhitaEngineContext;
+                let mut local = vec![0u8; 64 * 36 * 4];
+                for k in 0..20 {
+                    let pos = ((t * 7 + k) * 11) % 4000;
+                    unsafe {
+                        ghita_engine_render_frame_at(ctx, local.as_mut_ptr(), 64, 36, pos);
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("stress thread must not panic");
+        }
+    }
+
+    for (i, pos) in [0, 300, 900, 1800].iter().enumerate() {
+        let after = render(&stressed, *pos);
+        assert_eq!(
+            after,
+            control_frames[i],
+            "frame@{pos} differs after concurrent-render stress (t={i})"
+        );
+    }
+}

@@ -1158,6 +1158,30 @@ class EditorController extends ChangeNotifier {
         gestureId: gestureId);
   }
 
+  // v1.5.5-beta1 (T3.P4): in-app clipboard for adjustment chains. Lives on
+  // the controller (not the panel) so it survives closing/reopening the Beta
+  // sheet; deliberately NOT the OS clipboard.
+  List<GraphNodeData>? _graphClipboard;
+
+  bool get hasGraphClipboard => _graphClipboard != null;
+
+  /// Copy the selected clip's chain. False when no clip is selected.
+  bool copySelectedGraph() {
+    final clip = selectedClip;
+    if (clip == null) return false;
+    _graphClipboard = List.of(clip.graphNodes);
+    notifyListeners();
+    return true;
+  }
+
+  /// Paste the clipboard chain onto the selected clip (undoable).
+  bool pasteGraphToSelectedClip() {
+    final clip = selectedClip;
+    if (clip == null || _graphClipboard == null) return false;
+    setClipGraph(clip.id, List.of(_graphClipboard!));
+    return true;
+  }
+
   /// T3 (#5): geometric mask (0 none … 6 cinematic bars) + feather/stroke.
   void setClipMask(String clipId,
       {int maskType = 0, double feather = 0.0, double stroke = 0.0}) {

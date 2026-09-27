@@ -114,6 +114,16 @@ class _ExportDialogState extends State<ExportDialog> {
       format: 'MOV', codec: 'ProRes', bitrateMbps: 200.0, includeAudio: true,
       description: 'ProRes • 10-bit • 200 Mbps • 30fps • MOV (beta)',
     ),
+    // v1.5.5-beta1 (T3.P3): ProRes 4444 — prores_ks derives profile 4 from
+    // yuv444p10le, which keeps alpha (the 422 HQ preset above cannot).
+    ExportPreset(
+      name: 'ProRes 4444 Beta',
+      label: 'ProRes 4444 (Beta)',
+      icon: Icons.gradient,
+      width: 1920, height: 1080, fps: 30,
+      format: 'MOV', codec: 'ProRes 4444', bitrateMbps: 400.0, includeAudio: true,
+      description: 'ProRes 4444 • 10-bit 4:4:4 • alpha • 400 Mbps • MOV (beta)',
+    ),
     // v1.1.0 (PLAN 3.12): GIF preset REMOVED — the engine cannot produce a
     // valid GIF: the libavcodec gif encoder only accepts pal8 (palette
     // quantization), and the v1.0.0 claim "GIF export animated thật" never
@@ -250,6 +260,8 @@ class _ExportDialogState extends State<ExportDialog> {
           case 'H.265': return 'h265';
           case 'VP9': return 'vp9';
           case 'ProRes': return 'prores';
+          // v1.5.5-beta1 (T3.P3): alpha-capable 4:4:4 profile.
+          case 'ProRes 4444': return 'prores4444';
           // v1.0.0: GIF/MP3 used to silently fall through to 'h264' —
           // sending H.264 bytes down a `.gif`/`.mp3` filename produced an
           // unusable file. Now they pass their intended codec through.
@@ -262,6 +274,7 @@ class _ExportDialogState extends State<ExportDialog> {
       case 'H.265': return 'h265';
       case 'VP9': return 'vp9';
       case 'ProRes': return 'prores';
+      case 'ProRes 4444': return 'prores4444';
       case 'MP3': return 'mp3';
       default: return 'h264';
     }
@@ -556,7 +569,8 @@ class _ExportDialogState extends State<ExportDialog> {
     switch (_selectedFormat) {
       // v1.5.5-demo (B2): ProRes re-enabled — the Rust engine looks up a real
       // ProRes encoder and fails loudly when the build lacks it.
-      case 'MOV': return ['H.264', 'ProRes'];
+      // v1.5.5-beta1 (T3.P3): + the alpha-capable 4444 profile.
+      case 'MOV': return ['H.264', 'ProRes', 'ProRes 4444'];
       // v1.1.0 (PLAN 3.12): 'GIF' case removed — no GIF container support.
       case 'MP3': return ['MP3'];
       default: return ['H.264', 'H.265', 'VP9'];

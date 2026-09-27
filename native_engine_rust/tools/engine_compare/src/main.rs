@@ -641,7 +641,27 @@ fn main() {
         let media_ok = if std::path::Path::new(MEDIA_MP4).exists() && std::path::Path::new(MEDIA_WAV).exists() {
             println!("
 == A/B real-media: Rust vs C++ (FFmpeg decode/encode) ==");
-            !run_media_scenario(&cpp, &RustEngine)
+            // v1.5.5-beta1 (debug): the real_timeline frames flaked
+            // intermittently (pre-existing — the committed v1.5.5-demo
+            // binary fails ~1/6 runs). Run the scenario TWICE and compare
+            // each engine against ITSELF before blaming the cross-engine
+            // diff: that localizes a nondeterministic engine without
+            // loosening any tolerance.
+            let ok1 = run_media_scenario(&cpp, &RustEngine);
+            // Opt-in repeat (doubles runtime because the scenario does real
+            // exports): catches the intermittent real_timeline mismatch by
+            // running the same scenario twice on the same engines.
+            //   GHITA_PARITY_REPEAT=1 cargo run --release
+            let mut ok = ok1;
+            if std::env::var("GHITA_PARITY_REPEAT").as_deref() == Ok("1") {
+                let ok2 = run_media_scenario(&cpp, &RustEngine);
+                println!(
+                    "FLAKE probe: run1 ok={ok1} run2 ok={ok2} (mismatch is {}reproducible)",
+                    if ok1 == ok2 { "" } else { "NOT " }
+                );
+                ok &= ok2;
+            }
+            !ok
         } else {
             println!("
 == real-media scenario SKIPPED (test_video.mp4 / test_sine.wav missing) ==");

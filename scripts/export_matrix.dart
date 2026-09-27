@@ -45,6 +45,8 @@ const cases = [
   // v1.5.5-demo (B2): real ProRes encoding — ffprobe codec must be "prores"
   // (the v1.1.0 bug exported h264 into a .mov while claiming ProRes).
   ExportCase('prores_mov', 'mov', 320, 240, 30, 'prores', 1500000),
+  // v1.5.5-beta1 (T3.P3): ProRes 4444 (alpha-capable 4:4:4 profile).
+  ExportCase('prores4444_mov', 'mov', 320, 240, 30, 'prores4444', 4000000),
   ExportCase('aac_51', 'mp4', 320, 240, 30, 'h264', 1500000,
       channelLayout: '5.1'),
   ExportCase('aac_71', 'mp4', 320, 240, 30, 'h264', 1500000,
