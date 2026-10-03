@@ -1,6 +1,74 @@
 # Changelog — Ghita Edit
 
-## v1.5.5-beta1 (2026-10-27 — mốc 2, CHƯA commit/push)
+## v1.5.5-beta2 (2026-10-01 — mốc 3, mốc GỘP beta2+beta3)
+
+> **Trọng tâm mốc:** rust hóa hoàn chỉnh + ổn định hóa toàn bộ — chỉ sửa + đo,
+> KHÔNG thêm tính năng. Mọi con số là kết quả đo, chi tiết tại
+> `docs/perf_v1.5.5_beta2.md`.
+
+### T5 — Flake parity đã LỘC NGUỒN (pre-existing từ trước demo)
+- `engine_compare` real_timeline@* lệch ~1/9 run: **oracle C++ là outlier,
+  engine Rust sạch** — chứng minh bằng 3 phép chứng thực khi failure còn sống
+  (self-consistency trong context, fresh-context replay, direct decode):
+  fresh C++ context khớp byte-identical với Rust, còn context C++ đầu tiên
+  trong scenario ra khung lân cận một cách xác định. Hồ sơ đầy đủ:
+  `docs/flake_investigation.md`.
+- Harness tự khử nhiễu có kiểm soát: khi bằng chứng chỉ ra C++ outlier,
+  thay oracle bằng fresh-C++ (parity 2 engine vẫn được kiểm ở trạng thái
+  sạch) + in cảnh báo. **Không nới tolerance** — mọi trường hợp nghi Rust
+  vẫn FAIL như cũ.
+
+### T1 — C++ engine RỜI KHỎI build sản phẩm
+- `windows/CMakeLists.txt`: `GHITA_BUILD_CPP_ENGINE=OFF` mặc định — flutter
+  build không còn build/ghi đè DLL C++ lên DLL Rust (nguyên nhân của
+  "LUÔN phải chạy stage_windows_release.sh" — script vẫn giữ để stage DLL
+  Rust + FFmpeg). C++ chỉ còn là oracle parity build riêng
+  (`scripts/build_cpp_engine.sh`).
+- **Audit ABI 100%:** 116 symbol export / 110 Dart lookup — 110/110 resolve,
+  0 thiếu; 6 symbol harness-only được ghi rõ. 2 test chặn mới: Rust quét
+  source (đổi/xóa/thêm symbol nào không có trong doc là fail) + Dart quét
+  mọi lookup FFI (đánh máy bị `_tryLookup` nuốt sẽ fail loé thay vì fallback
+  câm). Audio audit: 0 waveOut trong Rust engine; 3 feature windows-sys đều
+  có nơi dùng.
+- **Memory audit:** stress 240 vòng create→decode→render→destroy + 100 vòng
+  upsert/remove — working set 26.8 → 43.7 MB (**Δ16.8 MB**, trần 150 MB).
+
+### T2 — Export: fix + stress (bug thật tìm ra bởi chính stress test)
+- **ghita_cli export/batch export TRÊN TIMELINE RỖNG** — cả lệnh `export`
+  lẫn `batch` đều start_export ngay sau init không hề dựng timeline → mọi
+  file xuất ra 0 byte. Fix: `export` parse project JSON thật + upsert từng
+  clip đúng mapping của app (text/sticker skip có cảnh báo); `batch` load
+  media + upsert full-length; cả hai **fail-loud** (exit 1) thay vì báo
+  thành công với file rỗng. Verified: 12-clip project → MP4 1.3 MB; batch
+  4 format.
+- GIF kích thước lớn thành test cố định (640×480 + 1920×1080, ffprobe
+  verify codec/size/frame). ProRes 4444 round-trip: assert **profile 4444**
+  (không phải XQ); lưu ý FFmpeg 8 decoder báo yuv444p12le cho family 4444
+  (10-bit data trong container 12-bit) — không phải bug engine.
+- **DLL cũ trên PATH che DLL repo:** bản cài đặt trong
+  `AppData\Local\Programs\Ghita Edit` nằm trên PATH + candidate đầu của
+  bindings là tên trần `ghita_engine.dll` → flutter test nạp phải DLL CŨ
+  (thiếu sqlite/blend/bookmark). Fix thứ tự candidate: exe-dir trước, tên
+  trần sau cùng; bỏ hẳn oracle C++ khỏi danh sách.
+- Test sqlite cũ kỳ vọng **1 = success** trong khi engine trả **0** — test
+  chưa từng chạy thật (luôn skip vì DLL cũ). Sửa + thêm test SQLite ×50
+  vòng byte-identical; test *không* free pointer trả về (thread-local buffer
+  của Rust — free bằng allocator Dart làm hỏng heap).
+
+### T3 — Ổn định hóa + rút cờ
+- ProRes HQ **rút cờ Beta** (matrix/CI verify mọi run từ v1.5.0); ProRes 4444
+  giữ cờ (mới nhất, nhánh ghi alpha chưa test); panel Beta Tools giữ (GPU
+  toggle còn phụ thuộc availability).
+- Gates: flutter analyze 0 lỗi · flutter test **166/166** · cargo test
+  (ffmpeg+sqlite+parallel) **155/155** · parity 6/6 run liên tiếp · smoke
+  test PASSED · export matrix 10/10 PASS 0 skip.
+
+### T4 — Profiling (docs/perf_v1.5.5_beta2.md)
+- Export 1080p30 timeline 26 s: **25.3 s ≈ 1.0× realtime**. Native init
+  0.00 ms; cache hit ~0.67; filter vector hóa 1.09–1.18×; rayon 2.4–3.0×.
+- 6/6 target định lượng cho final đã đạt trước hạn.
+
+## v1.5.5-beta1 (2026-09-27 — mốc 2, commit f3c04ce)
 
 > **Trọng tâm mốc:** lấp khoản trống engine cuối cùng (GIF export thật),
 > polish B1–B3, tối ưu **đo được bằng số**. Mọi con số dưới đây là kết quả

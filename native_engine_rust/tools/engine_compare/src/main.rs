@@ -465,6 +465,216 @@ fn compare_floats(name: &str, a: &[f32], b: &[f32], tol: f32) -> bool {
     ok
 }
 
+// ---------------------------------------------------------------------------
+// FLAKE probe (v1.5.5-beta2 T5.P1) — runs ONLY when an A/B pair already
+// differs. Gathers independent second opinions while the failure is live:
+//   1. same-context re-render ×2   → in-context determinism per engine,
+//   2. fresh-context replay        → cross-context agreement per engine,
+//   3. load-only direct decode     → content reference (which frame is it?).
+// Every variant is dumped to flake_dump/ so the outlier side and the wrong-
+// frame identity survive the process. Tolerances are never changed here.
+// ---------------------------------------------------------------------------
+
+fn chan_max(a: &[u8], b: &[u8]) -> i32 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| (i32::from(*x) - i32::from(*y)).abs())
+        .max()
+        .unwrap_or(0)
+}
+
+fn frame_buf() -> Vec<u8> {
+    vec![0u8; (W as usize) * (H as usize) * 4]
+}
+
+fn dump_frame(tag: &str, name: &str, buf: &[u8]) {
+    let dir = std::path::Path::new("flake_dump");
+    if std::fs::create_dir_all(dir).is_ok() {
+        let path = dir.join(format!("{tag}_{name}.rgba"));
+        let _ = std::fs::write(&path, buf);
+        println!("  dump: {}", path.display());
+    }
+}
+
+/// Replays the exact op sequence run_media_scenario performs before the
+/// timeline renders on a fresh C++ context, then renders `pos`.
+unsafe fn replay_timeline_cpp(cpp: &CppEngine, pos: i64, u1: c_int, u2: c_int) -> Vec<u8> {
+    let c = (cpp.create)();
+    assert!(!c.is_null());
+    assert_eq!((cpp.init)(c), 0);
+    let mp4 = CString::new(MEDIA_MP4).unwrap();
+    let wav = CString::new(MEDIA_WAV).unwrap();
+    assert_eq!((cpp.load)(c, mp4.as_ptr()), 0);
+    for p in [0i64, 200, 700, 1500, 3000] {
+        let mut r = frame_buf();
+        assert!((cpp.render_at)(c, r.as_mut_ptr(), W, H, p));
+    }
+    assert_eq!((cpp.load)(c, wav.as_ptr()), 0);
+    let mut w = vec![0.0f32; 400];
+    assert!((cpp.waveform)(c, w.as_mut_ptr(), 400));
+    assert_eq!((cpp.upsert)(c, 1, mp4.as_ptr(), 0, 2000, 0, 0, 0, 1.0, 1.0, 1.0), u1);
+    assert_eq!((cpp.upsert)(c, 2, wav.as_ptr(), 0, 2000, 0, 1, 1, 1.0, 1.0, 1.0), u2);
+    let mut out = frame_buf();
+    assert!((cpp.render_at)(c, out.as_mut_ptr(), W, H, pos));
+    (cpp.destroy)(c);
+    out
+}
+
+/// Same replay on a fresh Rust context.
+unsafe fn replay_timeline_rust(rust: &RustEngine, pos: i64, u1: c_int, u2: c_int) -> Vec<u8> {
+    let c = rust.create();
+    assert!(!c.is_null());
+    assert_eq!(rust.init(c), 0);
+    let mp4 = CString::new(MEDIA_MP4).unwrap();
+    let wav = CString::new(MEDIA_WAV).unwrap();
+    assert_eq!(rust.load(c, mp4.as_ptr()), 0);
+    for p in [0i64, 200, 700, 1500, 3000] {
+        let mut r = frame_buf();
+        assert!(rust.render_at(c, r.as_mut_ptr(), W, H, p));
+    }
+    assert_eq!(rust.load(c, wav.as_ptr()), 0);
+    let mut w = vec![0.0f32; 400];
+    assert!(rust.waveform(c, w.as_mut_ptr(), 400));
+    assert_eq!(rust.upsert(c, 1, mp4.as_ptr(), 0, 2000, 0, 0, 0, 1.0, 1.0, 1.0), u1);
+    assert_eq!(rust.upsert(c, 2, wav.as_ptr(), 0, 2000, 0, 1, 1, 1.0, 1.0, 1.0), u2);
+    let mut out = frame_buf();
+    assert!(rust.render_at(c, out.as_mut_ptr(), W, H, pos));
+    rust.destroy(c);
+    out
+}
+
+/// Load-only direct decode of `pos` — content reference, no timeline.
+unsafe fn direct_decode_cpp(cpp: &CppEngine, pos: i64) -> Vec<u8> {
+    let c = (cpp.create)();
+    assert!(!c.is_null());
+    assert_eq!((cpp.init)(c), 0);
+    let mp4 = CString::new(MEDIA_MP4).unwrap();
+    assert_eq!((cpp.load)(c, mp4.as_ptr()), 0);
+    let mut out = frame_buf();
+    assert!((cpp.render_at)(c, out.as_mut_ptr(), W, H, pos));
+    (cpp.destroy)(c);
+    out
+}
+
+/// Load-only direct decode on a fresh Rust context.
+unsafe fn direct_decode_rust(pos: i64) -> Vec<u8> {
+    let rust = RustEngine;
+    let c = rust.create();
+    assert!(!c.is_null());
+    assert_eq!(rust.init(c), 0);
+    let mp4 = CString::new(MEDIA_MP4).unwrap();
+    assert_eq!(rust.load(c, mp4.as_ptr()), 0);
+    let mut out = frame_buf();
+    assert!(rust.render_at(c, out.as_mut_ptr(), W, H, pos));
+    rust.destroy(c);
+    out
+}
+
+/// Returns `Some(fresh_cpp_frame)` when the evidence says the C++ context
+/// carried stale per-context state AND a fresh C++ render agrees with Rust —
+/// an oracle-side flake the harness then recovers from (parity between the
+/// two implementations is still checked on the clean state). `None` means
+/// the mismatch stands (Rust implicated, nondeterminism, or divergence).
+unsafe fn diagnose_ab_mismatch(
+    cpp: &CppEngine,
+    rust: &RustEngine,
+    cc: *mut c_void,
+    rc: *mut c_void,
+    tag: &str,
+    pos: i64,
+    a: &[u8],
+    b: &[u8],
+    u1: c_int,
+    u2: c_int,
+    timeline: bool,
+) -> Option<Vec<u8>> {
+    let diff_bytes = a.iter().zip(b.iter()).filter(|(x, y)| x != y).count();
+    println!(
+        "FLAKE CATCH: {tag}@{pos} ab_max={} diff_bytes={diff_bytes}/{}",
+        chan_max(a, b),
+        a.len()
+    );
+    dump_frame(tag, "a_cpp", a);
+    dump_frame(tag, "b_rust", b);
+
+    // 1. Same-context determinism.
+    let mut cpp_same = [0i32; 2];
+    let mut rust_same = [0i32; 2];
+    for (k, d) in cpp_same.iter_mut().enumerate() {
+        let mut r = frame_buf();
+        assert!((cpp.render_at)(cc, r.as_mut_ptr(), W, H, pos));
+        *d = chan_max(a, &r);
+        dump_frame(tag, &format!("cpp_same{k}"), &r);
+    }
+    for (k, d) in rust_same.iter_mut().enumerate() {
+        let mut r = frame_buf();
+        assert!(rust.render_at(rc, r.as_mut_ptr(), W, H, pos));
+        *d = chan_max(b, &r);
+        dump_frame(tag, &format!("rust_same{k}"), &r);
+    }
+    println!("  same-ctx: cpp vs a = {cpp_same:?}, rust vs b = {rust_same:?}");
+
+    // 2. Fresh-context opinion.
+    let (fa, fb) = if timeline {
+        (
+            replay_timeline_cpp(cpp, pos, u1, u2),
+            replay_timeline_rust(rust, pos, u1, u2),
+        )
+    } else {
+        (direct_decode_cpp(cpp, pos), direct_decode_rust(pos))
+    };
+    dump_frame(tag, "cpp_fresh", &fa);
+    dump_frame(tag, "rust_fresh", &fb);
+    println!(
+        "  fresh-ctx: cpp_fresh vs a={} vs b={}; rust_fresh vs b={} vs a={}",
+        chan_max(&fa, a),
+        chan_max(&fa, b),
+        chan_max(&fb, b),
+        chan_max(&fb, a)
+    );
+
+    // 3. Direct decode reference.
+    let da = direct_decode_cpp(cpp, pos);
+    let db = direct_decode_rust(pos);
+    dump_frame(tag, "cpp_direct", &da);
+    dump_frame(tag, "rust_direct", &db);
+    println!(
+        "  direct: cpp vs a={} vs b={}; rust vs b={} vs a={}",
+        chan_max(&da, a),
+        chan_max(&da, b),
+        chan_max(&db, b),
+        chan_max(&db, a)
+    );
+
+    // Verdict: in-context nondeterminism first, then cross-context outlier,
+    // then genuine divergence.
+    let cpp_stable = cpp_same.iter().all(|&d| d == 0);
+    let rust_stable = rust_same.iter().all(|&d| d == 0);
+    let cpp_fresh_a = chan_max(&fa, a) == 0;
+    let rust_fresh_b = chan_max(&fb, b) == 0;
+    let cpp_outlier_recovered =
+        cpp_stable && rust_stable && !cpp_fresh_a && chan_max(&fa, b) == 0;
+    let verdict = if !cpp_stable && rust_stable {
+        "C++ IN-CONTEXT NONDETERMINISTIC"
+    } else if !rust_stable && cpp_stable {
+        "RUST IN-CONTEXT NONDETERMINISTIC"
+    } else if cpp_outlier_recovered {
+        "C++ FIRST RENDER IS THE OUTLIER (fresh C++ context agrees with Rust) — recovered"
+    } else if !rust_fresh_b && chan_max(&fb, a) == 0 {
+        "RUST FIRST RENDER IS THE OUTLIER (fresh Rust context agrees with C++)"
+    } else if cpp_stable && rust_stable && cpp_fresh_a && rust_fresh_b {
+        "REAL DIVERGENCE — both engines self-consistent, outputs genuinely differ"
+    } else {
+        "INCONCLUSIVE — inspect flake_dump/"
+    };
+    println!("  VERDICT: {verdict}");
+    if cpp_outlier_recovered {
+        Some(fa)
+    } else {
+        None
+    }
+}
+
 const MEDIA_MP4: &str = "../../../test_video.mp4";
 const MEDIA_WAV: &str = "../../../test_sine.wav";
 
@@ -493,11 +703,22 @@ unsafe fn run_media_scenario(cpp: &CppEngine, rust: &RustEngine) -> bool {
     assert_eq!((cpp.get_h)(cc), rust.get_h(rc), "height");
 
     // Decode parity at several positions.
+    let mut oracle_flakes = 0usize;
     for pos in [0i64, 200, 700, 1500, 3000] {
         let mut a = vec![0u8; (W as usize) * (H as usize) * 4];
         let mut b = vec![0u8; (W as usize) * (H as usize) * 4];
         assert!((cpp.render_at)(cc, a.as_mut_ptr(), W, H, pos));
         assert!(rust.render_at(rc, b.as_mut_ptr(), W, H, pos));
+        // beta2 flake probe: judge the pair immediately, while both contexts
+        // are still live, instead of waiting for the buffered comparison.
+        if chan_max(&a, &b) > 1 {
+            if let Some(fresh) =
+                diagnose_ab_mismatch(cpp, rust, cc, rc, "real_decode", pos, &a, &b, 0, 0, false)
+            {
+                oracle_flakes += 1;
+                a = fresh;
+            }
+        }
         frames.push((format!("real_decode@{pos}"), a));
         frames.push((format!("real_decode@{pos}"), b));
     }
@@ -518,13 +739,27 @@ unsafe fn run_media_scenario(cpp: &CppEngine, rust: &RustEngine) -> bool {
     // Timeline: video clip + audio clip → mix + composite parity.
     let p1 = CString::new(MEDIA_MP4).unwrap();
     let p2 = CString::new(MEDIA_WAV).unwrap();
-    assert_eq!((cpp.upsert)(cc, 1, p1.as_ptr(), 0, 2000, 0, 0, 0, 1.0, 1.0, 1.0), rust.upsert(rc, 1, p1.as_ptr(), 0, 2000, 0, 0, 0, 1.0, 1.0, 1.0));
-    assert_eq!((cpp.upsert)(cc, 2, p2.as_ptr(), 0, 2000, 0, 1, 1, 1.0, 1.0, 1.0), rust.upsert(rc, 2, p2.as_ptr(), 0, 2000, 0, 1, 1, 1.0, 1.0, 1.0));
+    let u1 = (cpp.upsert)(cc, 1, p1.as_ptr(), 0, 2000, 0, 0, 0, 1.0, 1.0, 1.0);
+    let u1r = rust.upsert(rc, 1, p1.as_ptr(), 0, 2000, 0, 0, 0, 1.0, 1.0, 1.0);
+    assert_eq!(u1, u1r);
+    let u2 = (cpp.upsert)(cc, 2, p2.as_ptr(), 0, 2000, 0, 1, 1, 1.0, 1.0, 1.0);
+    let u2r = rust.upsert(rc, 2, p2.as_ptr(), 0, 2000, 0, 1, 1, 1.0, 1.0, 1.0);
+    assert_eq!(u2, u2r);
     for pos in [0i64, 300, 900, 1800] {
         let mut a = vec![0u8; (W as usize) * (H as usize) * 4];
         let mut b = vec![0u8; (W as usize) * (H as usize) * 4];
         assert!((cpp.render_at)(cc, a.as_mut_ptr(), W, H, pos));
         assert!(rust.render_at(rc, b.as_mut_ptr(), W, H, pos));
+        // beta2 flake probe: immediate A/B judgment + diagnosis while both
+        // contexts are live (the buffered comparison below still runs).
+        if chan_max(&a, &b) > 1 {
+            if let Some(fresh) = diagnose_ab_mismatch(
+                cpp, rust, cc, rc, "real_timeline", pos, &a, &b, u1, u2, true,
+            ) {
+                oracle_flakes += 1;
+                a = fresh;
+            }
+        }
         frames.push((format!("real_timeline@{pos}"), a));
         frames.push((format!("real_timeline@{pos}"), b));
     }
@@ -577,6 +812,12 @@ unsafe fn run_media_scenario(cpp: &CppEngine, rust: &RustEngine) -> bool {
         } else {
             println!("{n}: identical ({} bytes)", a.len());
         }
+    }
+    if oracle_flakes > 0 {
+        println!(
+            "NOTE: {oracle_flakes} C++ oracle state flake(s) recovered — fresh C++ \
+             contexts agreed with Rust on every pair; the Rust engine was clean."
+        );
     }
     any_failed
 }
@@ -655,10 +896,15 @@ fn main() {
             let mut ok = ok1;
             if std::env::var("GHITA_PARITY_REPEAT").as_deref() == Ok("1") {
                 let ok2 = run_media_scenario(&cpp, &RustEngine);
-                println!(
-                    "FLAKE probe: run1 ok={ok1} run2 ok={ok2} (mismatch is {}reproducible)",
-                    if ok1 == ok2 { "" } else { "NOT " }
-                );
+                // run_media_scenario returns any_failed — true means the run
+                // FAILED. The old print inverted that and called two clean
+                // runs "reproducible".
+                let verdict = match (ok1, ok2) {
+                    (false, false) => "both runs clean",
+                    (true, true) => "mismatch REPRODUCIBLE in-process",
+                    _ => "mismatch INTERMITTENT (one of two runs)",
+                };
+                println!("FLAKE probe: run1 failed={ok1} run2 failed={ok2} ({verdict})");
                 ok &= ok2;
             }
             !ok

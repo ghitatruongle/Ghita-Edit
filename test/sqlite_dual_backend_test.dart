@@ -55,8 +55,11 @@ void main() {
     final j2 = cstr(p2);
 
     try {
-      expect(b.projectDbSave!(dbPtr, name1, j1), 1, reason: 'save Alpha');
-      expect(b.projectDbSave!(dbPtr, name2, j2), 1, reason: 'save Beta');
+      // v1.5.5-beta2 (T2.P2): the engine's 0/-1 family returns 0 on SUCCESS —
+      // this test expected 1 and could never catch drift because the stale
+      // installed DLL on PATH (missing sqlite) always skipped the suite.
+      expect(b.projectDbSave!(dbPtr, name1, j1), 0, reason: 'save Alpha');
+      expect(b.projectDbSave!(dbPtr, name2, j2), 0, reason: 'save Beta');
 
       // List returns a JSON array containing both names.
       final listPtr = b.projectDbList!(dbPtr);

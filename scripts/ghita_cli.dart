@@ -131,13 +131,71 @@ void _cmdExport(List<String> args) {
   }
   try {
     init(ctx);
-    // Load project JSON to set up timeline (simplified — just loads media).
+    // T2.P2 fix (v1.5.5-beta2): this used to "simplify" the timeline to
+    // NOTHING — start_export ran on an empty timeline and produced 0-byte
+    // files. Parse the real project JSON and mirror the app's sync mapping
+    // (editor_controller.dart): kind video/overlay-clip→0, audio→1, image→2,
+    // text→3, sticker→4; overlay CLIPS render as video on their track.
+    // Parsed manually — models import dart:ui, unavailable to plain dart run.
     final projFile = File(projectPath);
     if (!projFile.existsSync()) {
       stderr.writeln('ERROR: Project file not found: $projectPath');
       exit(1);
     }
     stderr.writeln('{"status":"loading","project":"$projectPath"}');
+    final upsertClip = lib.lookupFunction<CUpsertClip, DUpsertClip>('ghita_engine_upsert_clip');
+    final doc = jsonDecode(projFile.readAsStringSync()) as Map<String, dynamic>;
+    final tracks = (doc['tracks'] as List? ?? const []).cast<Map<String, dynamic>>();
+    // ClipType.index → engine kind, mirroring editor_controller.dart:
+    // video=0, audio=1, image=2, overlay→0 (renders as video on its track).
+    // text (3) / sticker (5) never reach this map (skipped above) — the old
+    // literal {4:4} upserted OVERLAY clips as Sticker kind (review beta2).
+    const clipKinds = {0: 0, 1: 1, 2: 2, 4: 0};
+    int clipId = 0;
+    for (var ti = 0; ti < tracks.length; ti++) {
+      final clips = (tracks[ti]['clips'] as List? ?? const []).cast<Map<String, dynamic>>();
+      for (final c in clips) {
+        final type = (c['type'] as num?)?.toInt() ?? 0;
+        if (type == 3 || type == 5) {
+          // text/sticker: rendering needs set_clip_text (not wired in CLI yet).
+          stderr.writeln('{"status":"clip_skipped","reason":"text/sticker clip needs set_clip_text (not in CLI yet)"}');
+          continue;
+        }
+        final source = c['sourceFilePath'] as String? ?? '';
+        if (source.isEmpty || !File(source).existsSync()) {
+          stderr.writeln('{"status":"clip_skipped","reason":"missing source","source":"$source"}');
+          continue;
+        }
+        final kind = clipKinds[type] ?? 0;
+        final p = source.toNativeUtf8();
+        try {
+          final r = upsertClip(
+            ctx,
+            ++clipId,
+            p,
+            (c['timelineStartMs'] as num?)?.toInt() ?? 0,
+            (c['durationMs'] as num?)?.toInt() ?? 0,
+            (c['sourceInMs'] as num?)?.toInt() ?? 0,
+            ti,
+            kind,
+            (c['volume'] as num?)?.toDouble() ?? 1.0,
+            (c['opacity'] as num?)?.toDouble() ?? 1.0,
+            (c['speed'] as num?)?.toDouble() ?? 1.0,
+          );
+          if (r != 1) {
+            stderr.writeln('{"status":"clip_skipped","reason":"upsert rejected ($r)","source":"$source"}');
+            clipId--;
+          }
+        } finally {
+          calloc.free(p);
+        }
+      }
+    }
+    if (clipId == 0) {
+      stderr.writeln('ERROR: Project has no exportable media clips');
+      exit(1);
+    }
+    stderr.writeln('{"status":"timeline","clips":$clipId}');
 
     final outPtr = output.toNativeUtf8();
     final codecPtr = codec.toNativeUtf8();
@@ -304,28 +362,82 @@ void _cmdBatch(List<String> args) {
 
 void _doExportJob(String input, String output, String codec, int width, int height, int fps) {
   final lib = _loadEngine();
-  if (lib == null) return;
+  if (lib == null) {
+    stderr.writeln('{"status":"job_failed","reason":"engine DLL not found"}');
+    exitCode = 1;
+    return;
+  }
 
   final create = lib.lookupFunction<CGhitaEngineCreate, DGhitaEngineCreate>('ghita_engine_create');
   final init = lib.lookupFunction<CGhitaEngineInit, DGhitaEngineInit>('ghita_engine_init');
   final destroy = lib.lookupFunction<CGhitaEngineDestroy, DGhitaEngineDestroy>('ghita_engine_destroy');
+  final loadMedia = lib.lookupFunction<CGhitaEngineLoadMedia, DGhitaEngineLoadMedia>('ghita_engine_load_media');
+  final getDuration = lib.lookupFunction<CGhitaEngineGetDurationMs, DGhitaEngineGetDurationMs>('ghita_engine_get_duration_ms');
+  final upsertClip = lib.lookupFunction<CUpsertClip, DUpsertClip>('ghita_engine_upsert_clip');
   final startExport = lib.lookupFunction<CGhitaEngineStartExportEx, DGhitaEngineStartExportEx>('ghita_engine_start_export_ex');
   final isExporting = lib.lookupFunction<CGhitaEngineIsExporting, DGhitaEngineIsExporting>('ghita_engine_is_exporting');
   final getFileSize = lib.lookupFunction<CGhitaEngineGetExportFileSize, DGhitaEngineGetExportFileSize>('ghita_engine_get_export_file_size');
 
+  // T2.P2 fix (v1.5.5-beta2): batch jobs used to start the export straight
+  // after init — an EMPTY timeline — so every job silently produced a 0-byte
+  // file. Load the input and lay it down as a full-length video clip first,
+  // exactly like the GUI export path, and fail loudly (exit 1) when the
+  // engine refuses instead of reporting a completed job.
+  if (!File(input).existsSync()) {
+    stderr.writeln('{"status":"job_failed","reason":"input missing","input":"$input"}');
+    exitCode = 1;
+    return;
+  }
+
   final ctx = create();
-  if (ctx == nullptr) return;
+  if (ctx == nullptr) {
+    stderr.writeln('{"status":"job_failed","reason":"engine create failed"}');
+    exitCode = 1;
+    return;
+  }
   try {
     init(ctx);
+    final inPtr = input.toNativeUtf8();
+    try {
+      loadMedia(ctx, inPtr);
+    } finally {
+      calloc.free(inPtr);
+    }
+    final duration = getDuration(ctx);
+    if (duration <= 0) {
+      stderr.writeln('{"status":"job_failed","reason":"zero duration","input":"$input"}');
+      exitCode = 1;
+      return;
+    }
+    final clipPtr = input.toNativeUtf8();
+    try {
+      final r = upsertClip(ctx, 1, clipPtr, 0, duration, 0, 0, 0, 1.0, 1.0, 1.0);
+      if (r != 1) {
+        stderr.writeln('{"status":"job_failed","reason":"upsert rejected ($r)","input":"$input"}');
+        exitCode = 1;
+        return;
+      }
+    } finally {
+      calloc.free(clipPtr);
+    }
     final outPtr = output.toNativeUtf8();
     final codecPtr = codec.toNativeUtf8();
     try {
-      startExport(ctx, outPtr, width, height, fps, codecPtr, 5000000, true);
+      final ret = startExport(ctx, outPtr, width, height, fps, codecPtr, 5000000, true);
+      if (ret != 0) {
+        stderr.writeln('{"status":"job_failed","reason":"start_export_ex returned $ret"}');
+        exitCode = 1;
+        return;
+      }
       while (isExporting(ctx)) {
         sleep(const Duration(milliseconds: 200));
       }
       final size = getFileSize(ctx);
       stderr.writeln('{"status":"export_result","output":"$output","size":$size}');
+      if (size <= 0) {
+        stderr.writeln('{"status":"job_failed","reason":"export produced no data"}');
+        exitCode = 1;
+      }
     } finally {
       calloc.free(outPtr);
       calloc.free(codecPtr);

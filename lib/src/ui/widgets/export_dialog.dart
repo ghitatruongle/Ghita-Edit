@@ -102,20 +102,24 @@ class _ExportDialogState extends State<ExportDialog> {
       format: 'MP4', codec: 'VP9', bitrateMbps: 8.0, includeAudio: true,
       description: 'VP9 • 8 Mbps • 30fps',
     ),
-    // v1.5.5-demo (B2): ProRes preset (beta). The v1.1.0 preset was removed
-    // because the engine hardcoded H.264 for it; the Rust engine now looks up
-    // a REAL ProRes encoder and picks yuv422p10le — and it still fails loudly
+    // v1.5.5-demo (B2): ProRes preset. The v1.1.0 preset was removed because
+    // the engine hardcoded H.264 for it; the Rust engine now looks up a REAL
+    // ProRes encoder and picks yuv422p10le — and it still fails loudly
     // (instead of silently substituting) when the encoder is absent.
+    // T3.P2 (beta2): the Beta flag came off — matrix/CI have verified this
+    // preset on every run since v1.5.0.
     ExportPreset(
-      name: 'ProRes HQ Beta',
-      label: 'ProRes HQ (Beta)',
+      name: 'ProRes HQ',
+      label: 'ProRes HQ',
       icon: Icons.movie_filter,
       width: 1920, height: 1080, fps: 30,
       format: 'MOV', codec: 'ProRes', bitrateMbps: 200.0, includeAudio: true,
-      description: 'ProRes • 10-bit • 200 Mbps • 30fps • MOV (beta)',
+      description: 'ProRes 422 HQ • 10-bit • 200 Mbps • 30fps • MOV',
     ),
     // v1.5.5-beta1 (T3.P3): ProRes 4444 — prores_ks derives profile 4 from
     // yuv444p10le, which keeps alpha (the 422 HQ preset above cannot).
+    // T3.P2 (beta2): keeps its Beta flag — newest preset and the alpha
+    // WRITE path (vs codec capability) is not exercised anywhere yet.
     ExportPreset(
       name: 'ProRes 4444 Beta',
       label: 'ProRes 4444 (Beta)',

@@ -1,6 +1,6 @@
-# Ghita Edit — v1.5.0 (Rust engine mặc định · ổn định hóa + hiệu năng)
+# Ghita Edit — v1.5.5-beta2 (Rust engine duy nhất trong build · mốc gộp beta2+beta3)
 
-A cross-platform multimedia editor suite built with **Flutter** and a native engine connected via Dart FFI (Rust là engine shipping; C++ đóng băng làm A/B oracle).
+A cross-platform multimedia editor suite built with **Flutter** and a native engine connected via Dart FFI (Rust là engine shipping; C++ chỉ còn là A/B oracle build riêng, đã rời khỏi build sản phẩm từ beta2).
 
 ## Platform Status
 
@@ -10,6 +10,28 @@ A cross-platform multimedia editor suite built with **Flutter** and a native eng
 | Android | ⚠️ Demo Mode — chưa có `.so` engine, xem [docs/android_status.md](docs/android_status.md) |
 
 ## Features
+
+### v1.5.5-beta2 — Rust hóa hoàn chỉnh + ổn định hóa (mốc gộp beta2+beta3)
+
+- 🛡 **Engine Rust là DUY NHẤT trong build** — C++ engine rời CMake sản phẩm (chỉ còn oracle parity); hết cảnh "flutter build ghi đè DLL"
+- 🧪 **Flake parity lộc nguồn** — lệch hiếm của A/B harness là oracle C++ (hồ sơ `docs/flake_investigation.md`); engine Rust sạch, harness tự khử nhiễu có kiểm soát
+- 🔍 **Audit ABI 100%** — 116 export / 110 lookup Dart, 0 thiếu; 2 test chặn chống drift + audit memory (stress 340 chu kỳ, Δ16.8 MB) + audit audio (0 waveOut)
+- 🎞 **GIF export kích thước thật** — quantize PAL8 + dither verified đến 1920×1080; ProRes 4444 verified đúng profile 4444
+- 🖥 **ghita_cli export/batch dùng được thật** — fix 2 bug "export timeline rỗng ra 0 byte"; batch nhiều format, project 12+ clip
+- 🗄 **SQLite project DB được test thật** — round-trip ×50 byte-identical; fix DLL cũ trên PATH che DLL repo (thứ tự candidate: exe-dir trước)
+- 🚩 **Rút cờ Beta** — ProRes HQ chính thức; giữ cờ: ProRes 4444 (alpha write chưa test), GPU toggle
+- ⚡ **Hiệu năng đo được** — export 1080p ≈ 1.0× realtime, native init 0.00 ms, cache hit ~0.67 (`docs/perf_v1.5.5_beta2.md`)
+
+### v1.5.5-beta1 — GIF thật + tối ưu đo được
+
+- 🎞 **GIF export thật** (từng 0 byte từ v1.0.0) — quantize median-cut + Floyd–Steinberg, màu đã verify không tráo kênh
+- ⚡ **Filter nóng vector hóa** 1.09–1.18×, rayon 2.4–3.0× @4K, cache byte-budget 96 MB (hit 36→67%)
+
+### v1.5.5-demo — Beta features (B1–B3)
+
+- ⚡ **GPU toggle runtime (B1)** — wgpu compositor, mặc định OFF, badge GPU ACTIVE
+- 🎬 **ProRes preset (B2)** — 422 HQ 10-bit + 4444 (alpha-capable) vào MOV
+- 🔗 **Adjustment graph (B3)** — chuỗi node Brightness/Contrast/Saturation/Exposure/Vibrance per-clip, preview + export chung render path, undo + persist
 
 ### v0.8.0 — Real Timeline Engine, Audio, & Feature Completeness
 

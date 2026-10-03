@@ -117,26 +117,30 @@ fn export_matrix_prores_mp3_gif() {
     assert!(v.starts_with("prores"), "got: {v}");
     assert!(v.contains("yuv422p10le"), "prores must be 4:2:2 10-bit: {v}");
 
+    // T5.P3 (beta2): ProRes 4444 round-trip — prores_ks must derive profile 4
+    // (4444, 10-bit, alpha-capable) from yuv444p10le. Assert the PROFILE, not
+    // the decoded pix_fmt: FFmpeg 8's prores decoder reports yuv444p12le for
+    // the 4444 family (10-bit data carried in a 12-bit container).
+    let f = format!("{OUT_DIR}/prores4444.mov");
+    assert_eq!(export(p, &f, "prores4444", 64, 36, 10), 0);
+    let v = probe(&f, &["-select_streams", "v:0", "-show_entries", "stream=codec_name,profile,pix_fmt", "-of", "csv=p=0"]);
+    assert!(v.starts_with("prores"), "got: {v}");
+    assert!(v.contains("4444") && !v.contains("XQ"), "prores4444 must be profile 4444 (not XQ): {v}");
+
     // MP3 (audio-only, 0×0×0 allowed by the ABI).
     let f = format!("{OUT_DIR}/audio.mp3");
     assert_eq!(export(p, &f, "mp3", 0, 0, 0), 0);
     let a = probe(&f, &["-show_entries", "stream=codec_name", "-of", "csv=p=0"]);
     assert!(a.starts_with("mp3"), "got: {a}");
 
-    // GIF (image container, no audio). The gif encoder exists but only accepts
-    // pal8; the engine has no palette quantization yet, so export fails loudly
-    // (0-byte output) — documented limitation, matching the reference C++ engine
-    // and verify_export_matrix.sh's honest SKIP for the gif preset.
+    // GIF (image container, no audio). beta1 implemented PAL8 quantization
+    // (median-cut palette + Floyd–Steinberg dithering) — export must produce
+    // a real, ffprobe-verifiable file now.
     let f = format!("{OUT_DIR}/anim.gif");
-    let gif_ret = export(p, &f, "gif", 64, 36, 10);
-    let gif_size = unsafe { ghita_engine_get_export_file_size(p) };
-    let _ = gif_ret;
-    if gif_size <= 0 {
-        eprintln!("SKIP: gif export empty — pal8 palette quantization not implemented");
-    } else {
-        let v = probe(&f, &["-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0"]);
-        assert!(v.starts_with("gif"), "got: {v}");
-    }
+    assert_eq!(export(p, &f, "gif", 64, 36, 10), 0);
+    assert!(unsafe { ghita_engine_get_export_file_size(p) } > 0);
+    let v = probe(&f, &["-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0"]);
+    assert!(v.starts_with("gif"), "got: {v}");
 
     unsafe { ghita_engine_destroy(p) };
     println!("export matrix prores/mp3/gif: PASS (ffprobe-verified)");
@@ -199,4 +203,33 @@ fn export_cancel_joins_cleanly() {
     unsafe { ghita_engine_cancel_export(p) };
     assert!(!unsafe { ghita_engine_is_exporting(p) }, "cancel must join the thread");
     unsafe { ghita_engine_destroy(p) };
+}
+
+#[test]
+fn gif_export_large_sizes_are_wellformed() {
+    // T2.P2 (v1.5.5-beta2): the GIF pipeline (PAL8 median-cut palette +
+    // Floyd–Steinberg dithering) was only pinned at 64×36; this pins it at
+    // real editing sizes — the 640×480 probe from beta1 plus a 1080p pass.
+    if !std::path::Path::new(MEDIA).exists() {
+        eprintln!("SKIP: test_video.mp4 missing");
+        return;
+    }
+    std::fs::create_dir_all(OUT_DIR).unwrap();
+    let p = ctx_new();
+    setup_timeline(p, MEDIA);
+    assert!(unsafe { ghita_engine_has_ffmpeg(p) }, "ffmpeg build expected");
+    for (w, h, name) in [(640i32, 480i32, "gif_640"), (1920, 1080, "gif_1080")] {
+        let f = format!("{OUT_DIR}/{name}.gif");
+        assert_eq!(export(p, &f, "gif", w, h, 10), 0, "{name}: start_export");
+        assert!(unsafe { ghita_engine_get_export_file_size(p) } > 0, "{name}: empty output");
+        let v = probe(&f, &["-select_streams", "v:0", "-show_entries", "stream=codec_name,width,height", "-of", "csv=p=0"]);
+        assert!(v.starts_with("gif"), "{name}: codec: {v}");
+        assert!(v.contains(&format!("{w},{h}")), "{name}: dimensions: {v}");
+        let n = probe(&f, &["-select_streams", "v:0", "-count_frames", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"]);
+        let frames: u32 = n.parse().unwrap_or(0);
+        assert!(frames > 0, "{name}: no decodable frames");
+        println!("{name}: {frames} frames, size {} bytes", unsafe { ghita_engine_get_export_file_size(p) });
+    }
+    unsafe { ghita_engine_destroy(p) };
+    println!("gif large-size wellformed: PASS (ffprobe-verified)");
 }

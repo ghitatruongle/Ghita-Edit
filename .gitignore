@@ -307,3 +307,9 @@ refer_project/
 _XEMAYDOI*
 /PLAN_*.md
 /PLAN_REVIEW_*.md
+
+# engine_compare flake diagnostics (dump on parity mismatch)
+native_engine_rust/tools/engine_compare/flake_dump/
+
+# mingw64 oracle build dir (scripts/build_cpp_engine.sh)
+native_engine/build-mingw64/

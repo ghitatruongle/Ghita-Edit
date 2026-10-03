@@ -707,3 +707,233 @@ fn concurrent_render_stress_does_not_corrupt_later_frames() {
         );
     }
 }
+
+#[test]
+fn abi_surface_audit_all_116_symbols_present() {
+    // T1.P1 (v1.5.5-beta2): every symbol the Flutter side looks up, plus the
+    // parity-harness-only exports, must exist in the C API source. A rename
+    // or accidental removal of any one breaks the drop-in ABI. Source-level
+    // scan keeps this in sync without loading any DLL.
+    let src = include_str!("../src/c_api.rs");
+    let mut exported: Vec<String> = Vec::new();
+    for line in src.lines() {
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("pub unsafe extern \"C\" fn ") {
+            if let Some(name) = rest.split(['(', '<']).next() {
+                let name = name.trim();
+                if name.starts_with("ghita_engine_") {
+                    exported.push(name.to_string());
+                }
+            }
+        }
+    }
+    exported.sort();
+    exported.dedup();
+    // The 110 symbols lib/src/ffi/native_bindings.dart actually looks up
+    // (audit 2026-09-28: 110/110 resolve — zero missing exports).
+    const PRODUCT: &[&str] = &[
+        "ghita_engine_add_audio_effect",
+        "ghita_engine_add_bookmark",
+        "ghita_engine_add_clip",
+        "ghita_engine_add_clip_keyframe",
+        "ghita_engine_add_keyframe_ex",
+        "ghita_engine_add_spectral_edit",
+        "ghita_engine_add_speed_ramp_point",
+        "ghita_engine_apply_color_correction",
+        "ghita_engine_apply_filter",
+        "ghita_engine_cache_stats",
+        "ghita_engine_cancel_export",
+        "ghita_engine_clear_audio_effects",
+        "ghita_engine_clear_clip_keyframes",
+        "ghita_engine_clear_clips",
+        "ghita_engine_clear_selection",
+        "ghita_engine_clear_spectral_edits",
+        "ghita_engine_clear_speed_curve",
+        "ghita_engine_copy_keyframes",
+        "ghita_engine_create",
+        "ghita_engine_destroy",
+        "ghita_engine_detect_tempo",
+        "ghita_engine_export_labels",
+        "ghita_engine_get_audio_waveform",
+        "ghita_engine_get_audio_waveform_peaks",
+        "ghita_engine_get_available_filters",
+        "ghita_engine_get_beat_times",
+        "ghita_engine_get_bookmark_count",
+        "ghita_engine_get_bookmarks_json",
+        "ghita_engine_get_clip_count",
+        "ghita_engine_get_clip_keyframe_count",
+        "ghita_engine_get_clip_keyframe_interpolation",
+        "ghita_engine_get_duration_ms",
+        "ghita_engine_get_export_file_size",
+        "ghita_engine_get_export_progress",
+        "ghita_engine_get_gain_reduction_db",
+        "ghita_engine_get_mask_buffer",
+        "ghita_engine_get_media_height",
+        "ghita_engine_get_media_info",
+        "ghita_engine_get_media_width",
+        "ghita_engine_get_playback_rate",
+        "ghita_engine_get_position_ms",
+        "ghita_engine_get_spectrogram",
+        "ghita_engine_get_thumbnail",
+        "ghita_engine_get_timeline_rms",
+        "ghita_engine_get_timeline_waveform",
+        "ghita_engine_get_version",
+        "ghita_engine_gpu_enabled",
+        "ghita_engine_gpu_stats",
+        "ghita_engine_graph_add_node",
+        "ghita_engine_graph_clear",
+        "ghita_engine_graph_get_json",
+        "ghita_engine_graph_remove_last",
+        "ghita_engine_has_clip",
+        "ghita_engine_has_ffmpeg",
+        "ghita_engine_import_transcript",
+        "ghita_engine_init",
+        "ghita_engine_is_exporting",
+        "ghita_engine_is_playing",
+        "ghita_engine_is_recording",
+        "ghita_engine_load_media",
+        "ghita_engine_modify_mask",
+        "ghita_engine_paint_brush_stroke",
+        "ghita_engine_paint_clone",
+        "ghita_engine_paint_heal",
+        "ghita_engine_pause",
+        "ghita_engine_play",
+        "ghita_engine_remove_audio_effect",
+        "ghita_engine_remove_bookmark",
+        "ghita_engine_remove_clip",
+        "ghita_engine_render_frame_at",
+        "ghita_engine_render_frame_at_ex",
+        "ghita_engine_render_frame_rgba",
+        "ghita_engine_render_pip",
+        "ghita_engine_render_text_overlay",
+        "ghita_engine_resample_waveform",
+        "ghita_engine_seek",
+        "ghita_engine_set_audio_effect_param",
+        "ghita_engine_set_canvas_background",
+        "ghita_engine_set_clip_blend_mode",
+        "ghita_engine_set_clip_color_correction",
+        "ghita_engine_set_clip_filter",
+        "ghita_engine_set_clip_font",
+        "ghita_engine_set_clip_keyframe_interpolation",
+        "ghita_engine_set_clip_maintain_pitch",
+        "ghita_engine_set_clip_mask",
+        "ghita_engine_set_clip_pip",
+        "ghita_engine_set_clip_pitch",
+        "ghita_engine_set_clip_position",
+        "ghita_engine_set_clip_sticker_transform",
+        "ghita_engine_set_clip_text",
+        "ghita_engine_set_clip_transition",
+        "ghita_engine_set_filter_preset",
+        "ghita_engine_set_gpu_enabled",
+        "ghita_engine_set_keyframe_bezier",
+        "ghita_engine_set_loop_region",
+        "ghita_engine_set_noise_suppress",
+        "ghita_engine_set_playback_rate",
+        "ghita_engine_set_preview_pitch_preserve",
+        "ghita_engine_set_selection_ellipse",
+        "ghita_engine_set_selection_lasso",
+        "ghita_engine_set_selection_magic_wand",
+        "ghita_engine_set_selection_rect",
+        "ghita_engine_set_time_signature",
+        "ghita_engine_set_track_state",
+        "ghita_engine_set_volume",
+        "ghita_engine_start_export",
+        "ghita_engine_start_export_ex",
+        "ghita_engine_start_recording",
+        "ghita_engine_stop_recording",
+        "ghita_engine_upsert_clip",
+    ];
+    // Exported for the A/B harness / parity completeness, unused by Flutter.
+    const HARNESS_ONLY: &[&str] = &[
+        "ghita_engine_get_direct_buffer",
+        "ghita_engine_get_snapping_fps",
+        "ghita_engine_mix_audio_window",
+        "ghita_engine_set_audio_preview_enabled",
+        "ghita_engine_set_export_channel_layout",
+        "ghita_engine_set_snapping_fps",
+    ];
+    for sym in PRODUCT.iter().chain(HARNESS_ONLY.iter()) {
+        assert!(
+            exported.iter().any(|e| e == sym),
+            "missing ABI symbol: {sym}"
+        );
+    }
+    assert_eq!(
+        exported.len(),
+        PRODUCT.len() + HARNESS_ONLY.len(),
+        "ABI surface changed — update docs/rust_engine_abi.md and this audit list"
+    );
+}
+
+#[cfg(windows)]
+fn working_set_mb() -> f64 {
+    use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    unsafe {
+        let mut pmc: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+        pmc.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        assert_ne!(GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc, pmc.cb), 0);
+        pmc.WorkingSetSize as f64 / 1024.0 / 1024.0
+    }
+}
+
+#[test]
+fn engine_lifecycle_stress_memory_is_bounded() {
+    // T1.P4 (v1.5.5-beta2): long-run leak probe. 240 full create→init→
+    // upsert→render→destroy cycles on real media plus 100 upsert/remove
+    // churn cycles on one context; the working set must stay bounded —
+    // decode buffers, caches and GDI handles must all die with the context
+    // or with remove_clip on the happy path.
+    const MEDIA: &str = "../test_video.mp4";
+    if !std::path::Path::new(MEDIA).exists() {
+        eprintln!("SKIP: test_video.mp4 missing");
+        return;
+    }
+    let path = cstr(MEDIA);
+    let (w, h) = (320i32, 180i32);
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    let cycle = |i: usize, buf: &mut [u8]| unsafe {
+        let p = ghita_engine_create();
+        assert!(!p.is_null());
+        assert_eq!(ghita_engine_init(p), 0);
+        assert_eq!(
+            ghita_engine_upsert_clip(p, 1, path.as_ptr(), 0, 20000, 0, 0, 0, 1.0, 1.0, 1.0),
+            1
+        );
+        ghita_engine_seek(p, 0);
+        assert!(ghita_engine_render_frame_at(p, buf.as_mut_ptr(), w, h, (i as i64 * 173) % 18000));
+        assert!(ghita_engine_render_frame_at(p, buf.as_mut_ptr(), w, h, (i as i64 * 431) % 18000));
+        assert!(ghita_engine_render_frame_at(p, buf.as_mut_ptr(), w, h, 0));
+        ghita_engine_destroy(p);
+    };
+    for i in 0..40 {
+        cycle(i, &mut buf); // warm-up: allocator reaches steady state
+    }
+    let before = working_set_mb();
+    for i in 40..240 {
+        cycle(i, &mut buf);
+    }
+    // Single-context churn: upsert/remove 100× — the app edit-loop pattern.
+    let p = unsafe { ghita_engine_create() };
+    assert_eq!(unsafe { ghita_engine_init(p) }, 0);
+    for i in 0..100 {
+        assert_eq!(
+            unsafe {
+                ghita_engine_upsert_clip(p, 1 + (i % 3) as i32, path.as_ptr(), 0, 20000, 0, 0, 0, 1.0, 1.0, 1.0)
+            },
+            1
+        );
+        assert!(unsafe {
+            ghita_engine_render_frame_at(p, buf.as_mut_ptr(), w, h, (i as i64 * 97) % 18000)
+        });
+        assert_eq!(unsafe { ghita_engine_remove_clip(p, 1 + (i % 3) as i32) }, 0);
+    }
+    unsafe { ghita_engine_destroy(p) };
+    let after = working_set_mb();
+    let growth = after - before;
+    println!("memory stress: working set {before:.1} → {after:.1} MB (Δ{growth:.1} MB)");
+    assert!(
+        growth < 150.0,
+        "working set grew {growth:.1} MB over 200 ctx cycles + 100 churn cycles — leak"
+    );
+}

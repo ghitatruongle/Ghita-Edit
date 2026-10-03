@@ -712,14 +712,23 @@ class GhitaNativeBindings {
 
   DynamicLibrary _resolveLibraryPath() {
     if (Platform.isWindows) {
+      // T2.P2 (v1.5.5-beta2) hardening: the exe dir wins (the installed app
+      // keeps its engine next to the executable), then explicit project
+      // paths, and BARE NAMES LAST. A bare name resolves through the Windows
+      // DLL search order (PATH) — an installed copy on PATH (e.g.
+      // AppData\Local\Programs\Ghita Edit) used to shadow the repo DLL with
+      // a stale version missing sqlite/bookmarks/blend. The legacy C++
+      // oracle (native_engine/build) is deliberately NOT a candidate since
+      // T1.P3: the product never loads it.
+      final exeDir = Directory(Platform.resolvedExecutable).parent.path;
       final candidates = <String>[
+        '$exeDir\\ghita_engine.dll',
+        '$exeDir\\libghita_engine.dll',
+        '${Directory.current.path}\\build\\windows\\x64\\runner\\Debug\\ghita_engine.dll',
+        '${Directory.current.path}\\native_engine_rust\\target\\release\\ghita_engine.dll',
+        '${Directory.current.path}\\build\\windows\\x64\\runner\\Release\\ghita_engine.dll',
         'ghita_engine.dll',
         'libghita_engine.dll',
-        '${Directory.current.path}\\native_engine\\build\\libghita_engine.dll',
-        '${Directory.current.path}\\build\\windows\\x64\\runner\\Debug\\ghita_engine.dll',
-        '${Directory.current.path}\\build\\windows\\x64\\runner\\Release\\ghita_engine.dll',
-        '${Directory(Platform.resolvedExecutable).parent.path}\\ghita_engine.dll',
-        '${Directory(Platform.resolvedExecutable).parent.path}\\libghita_engine.dll',
       ];
       for (final path in candidates) {
         try {

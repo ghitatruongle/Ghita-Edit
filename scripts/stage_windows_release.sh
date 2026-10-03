@@ -1,11 +1,13 @@
-# Stage the Windows Release bundle with the REAL native engine.
+# Stage the Windows Release bundle with the REAL (Rust) native engine.
 #
 # `flutter build windows --release` alone produces a REGRESSED bundle:
-#   1. CMake still builds the legacy C++ engine (native_engine/) and installs
-#      its ghita_engine.dll over the Rust one.
+#   1. (historical — fixed by T1.P3 in v1.5.5-beta2) CMake used to build the
+#      legacy C++ engine (native_engine/) and install its ghita_engine.dll
+#      over the Rust one. The C++ engine is now out of the app build; this
+#      script is what puts the Rust DLL into the Release dir at all.
 #   2. FFmpeg runtime DLLs come from vcpkg — an older set whose avformat
 #      lacks the PNG demuxer, so image imports fall back to synthetic.
-# This script re-stages the correct files after every flutter build.
+# This script stages the correct files after every flutter build.
 #
 # Usage: bash scripts/stage_windows_release.sh
 set -euo pipefail

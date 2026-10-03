@@ -323,3 +323,36 @@ yuv444p10le → prores_ks profile 4, ffprobe báo `yuv444p12le`) và đường G
 đi qua `ghita_engine_start_export_ex` với codec `"gif"` (encoder PAL8 — engine
 tự quantize trong `gif_quant.rs`; palette plane ghi theo thứ tự byte **BGRA**). Chain KHÔNG được lưu vào project JSON/SQLite (demo
 limitation — beta2 sẽ wire undo + persistence).
+
+## 10. T1.P1 surface audit — v1.5.5-beta2 (2026-10-01)
+
+Full symbol audit of the shipping surface (script diff + permanent tests):
+
+- **Rust exports:** 116 `#[no_mangle]` symbols (`src/c_api.rs`).
+- **Dart lookups:** 110 distinct `ghita_engine_*` symbols in
+  `lib/src/ffi/native_bindings.dart` — **110/110 resolve, zero missing**.
+- **Harness-only (6):** `get_direct_buffer`, `get_snapping_fps`,
+  `mix_audio_window`, `set_audio_preview_enabled`,
+  `set_export_channel_layout`, `set_snapping_fps` — kept for drop-in
+  parity with the C++ oracle; exercised by tests / `engine_compare`.
+- **Enforcement tests (new):**
+  - `abi_surface_audit_all_116_symbols_present` (Rust) — source scan,
+    fails on any rename/removal/undocumented addition.
+  - `test/ffi_surface_audit_test.dart` — fails on any FFI lookup outside
+    the audited list (`_tryLookup` fallbacks would otherwise hide typos).
+- Legacy C++ engine is **out of the app build** since beta2 (T1.P3,
+  `GHITA_BUILD_CPP_ENGINE=OFF` default); it remains the standalone parity
+  oracle (`scripts/build_cpp_engine.sh`).
+
+## 11. T1.P2 audio-path audit — v1.5.5-beta2 (2026-10-01)
+
+- **No waveOut/winmm anywhere in the Rust engine** (`grep` across
+  `native_engine_rust/src`: zero hits). Audio preview is cpal + rubato
+  resample + rustfft analysis (ffmpeg feature) — the C++ waveOut path is
+  not ported and not needed; the C++ engine keeps it only inside the
+  legacy oracle, which no longer ships (see §10 / T1.P3).
+- **windows-sys feature audit** (`Win32_Foundation`,
+  `Win32_Graphics_Gdi`, `Win32_Globalization`): all three are used —
+  Foundation (HANDLE/BOOL types), Gdi (gdi.rs DIB bitmap interop for
+  thumbnails/export), Globalization (MultiByteToWideChar UTF-8→UTF-16
+  for GDI text). No feature to trim.

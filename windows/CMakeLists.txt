@@ -49,11 +49,21 @@ endfunction()
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
-# Native Engine build
-# v0.8.0: The app build must not compile the native test runner — it needs
-# its own FFmpeg/winmm linkage and slows release builds.
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../native_engine" "${CMAKE_CURRENT_BINARY_DIR}/native_engine")
+# Native Engine build (legacy C++ — parity oracle only since v1.5.5-beta2).
+# T1.P3: the product renders exclusively through the Rust engine DLL, which
+# cargo builds separately; the C++ engine no longer participates in the app
+# build (its ghita_engine.dll used to overwrite the Rust one on every
+# `flutter build windows`). Enable only to reproduce the legacy bundled-C++
+# behavior:  cmake -B build -DGHITA_BUILD_CPP_ENGINE=ON
+# To rebuild the C++ oracle DLL for tools/engine_compare, build standalone:
+#   cmake -B native_engine/build -S native_engine -DCMAKE_BUILD_TYPE=Release
+option(GHITA_BUILD_CPP_ENGINE "Build legacy C++ engine into the app (oracle/legacy only)" OFF)
+if(GHITA_BUILD_CPP_ENGINE)
+  # v0.8.0: The app build must not compile the native test runner — it needs
+  # its own FFmpeg/winmm linkage and slows release builds.
+  set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../native_engine" "${CMAKE_CURRENT_BINARY_DIR}/native_engine")
+endif()
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
@@ -79,8 +89,13 @@ endif()
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
-install(TARGETS ${BINARY_NAME} ghita_engine RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
+# The legacy C++ engine target only exists with GHITA_BUILD_CPP_ENGINE=ON.
+if(GHITA_BUILD_CPP_ENGINE)
+  install(TARGETS ghita_engine RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    COMPONENT Runtime)
+endif()
 
 # v0.8.0: Bundle the FFmpeg runtime DLLs (avcodec/avformat/avutil/swscale/
 # swresample) next to the executable — the engine links them dynamically and

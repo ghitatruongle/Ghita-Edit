@@ -1,13 +1,14 @@
-# Kế hoạch v1.5.5 — 5 mốc × 6 track
+# Kế hoạch v1.5.5 — 4 mốc × 6 track
 
-> Trạng thái: DỰ THẢO chờ duyệt. Tạo 2026-08-28, tái cấu trúc mốc × track
-> 2026-08-30. Nền: v1.5.0 final (main = `a1e33e8`, Rust engine drop-in parity
-> 44/44, rayon 5.27x, wgpu/FFmpeg/SQLite feature-gated).
+> Trạng thái: beta2 (mốc gộp beta2+beta3) **ĐÃ THỰC THI XONG TOÀN BỘ 6 TRACK
+> 2026-10-01 — chờ duyệt commit/push**. Tạo 2026-08-28, tái cấu trúc mốc ×
+> track 2026-08-30, **gộp mốc 3+4 thành một mốc beta2 theo yêu cầu user
+> 2026-09-28**. Nền: beta1 đã commit `f3c04ce` (CI xanh).
 
 ## Định nghĩa — Mốc / Track / Phase
 
-- **Mốc (milestone)** = một bản phát hành có version riêng (5 mốc: demo →
-  beta1 → beta2 → beta3 → final). Mỗi mốc là 1 chu kỳ khép kín: code → gates
+- **Mốc (milestone)** = một bản phát hành có version riêng (4 mốc: demo →
+  beta1 → beta2 → final). Mỗi mốc là 1 chu kỳ khép kín: code → gates
   → build + stage DLL → commit local → **hỏi duyệt** → tag/release.
 - **Track (T1–T6)** = luồng công việc xuyên suốt, kế thừa convention
   T1–T6 của v1.5.0. Mỗi mốc kích hoạt **n track** (tùy trọng tâm giai đoạn);
@@ -21,9 +22,8 @@
 | Mốc | T1 Rust hóa | T2 Media/Export | T3 Beta UI | T4 Hiệu năng | T5 Chất lượng | T6 Release |
 |---|---|---|---|---|---|---|
 | **demo** | nhẹ: rayon + 1–2 Dart loop | – | B1–B3 | – | gates cơ bản | suffix + cycle |
-| **beta1** | SIMD filter nóng | B4 GIF export | polish B1–B3 | cache + startup | benchmark số liệu | cycle |
-| **beta2** | 100% symbol + audio | fix export bugs | fix B1–B4 | – | test debt | cycle |
-| **beta3** | fix leak FFI/Rust | stress export | ổn định hóa B1–B4 | profiling full | regression matrix | docs draft |
+| **beta1** | SIMD filter nóng | B4 GIF export + ProRes 4444 | polish + reorder/paste | cache 96 MB byte-budget | benchmark số liệu | cycle |
+| **beta2** (gộp) | 100% symbol + audio + C++ rời build + audit leak | fix + stress export | bug sweep + rút cờ Beta | profiling full | flake localize + CI matrix + regression matrix | cycle + docs |
 | **final** | ❄️ freeze | ❄️ freeze | ❄️ freeze | tuning cuối (nếu RC bắt được) | RC verify máy sạch | CHANGELOG + tag |
 
 Quy tắc freeze: ❄️ = chỉ sửa bug chặn release nếu phát hiện, không thêm gì.
@@ -71,7 +71,7 @@ tính năng ổn định.
   (PATH tước msys64, Demo Mode chạy được).
 - T6.P3: commit local → **hỏi duyệt** → tag + release.
 
-Kích thước: **M** — rủi ro thấp nhất trong 5 mốc.
+Kích thước: **M** — rủi ro thấp nhất trong các mốc.
 
 ---
 
@@ -122,63 +122,70 @@ Kích thước: **M–L**.
 
 ---
 
-## Mốc 3 — v1.5.5-beta2 (n = 5 track: T1, T2, T3, T5, T6)
+## Mốc 3 — v1.5.5-beta2 (n = 6 track: tất cả) — MỐC GỘP beta2+beta3
 
-**Mục tiêu:** sửa lỗi + rust hóa HOÀN CHỈNH các mục cần thiết.
+**Mục tiêu:** rust hóa HOÀN CHỈNH + ổn định hóa toàn bộ: "mọi tính năng đều
+có và dùng được, không lỗi không bug, mượt mà sạch sẽ". Chỉ sửa + đo, KHÔNG
+thêm tính năng mới.
 
-**T1 — Rust hóa hoàn chỉnh**
-- T1.P1: bảng đối chiếu C++ ↔ Rust đạt 100% symbol Flutter thực gọi
-  (cập nhật `docs/rust_engine_abi.md`).
-- T1.P2: audio path toàn cpal/Rust, bỏ hẳn waveOut cũ; port nốt
-  GDI/fallback còn thiếu; C++ engine chỉ còn là parity baseline trong repo.
+**T1 — Rust hóa hoàn chỉnh + sạch tài nguyên**
+- T1.P1: kiểm kê 100% symbol Flutter thực gọi ↔ DLL Rust export (nâng
+  `ffi_arity_contract_test` thành audit đầy đủ); cập nhật `rust_engine_abi.md`.
+- T1.P2: audio path audit — xác nhận không sót waveOut/thuộc tính C++, Cargo
+  feature `windows-sys` chỉ giữ những gì dùng.
+- T1.P3: **C++ engine rời khỏi build sản phẩm** — `windows/CMakeLists.txt`
+  ngừng build native_engine (DLL Rust là duy nhất); C++ chỉ còn là oracle cho
+  harness parity.
+- T1.P4: audit memory/资源 FFI: handle bitmap GDI, buffer wgpu, buffer decode
+  FFmpeg, scratch pool, buffer probe đường GIF — đo stress lặp dài rồi so RAM
+  trước/sau, mọi handle free đúng cả trên nhánh lỗi.
 
-**T2 — Fix export**
-- T2.P1: sửa bug export phát hiện từ demo/beta1 (GIF, ProRes, matrix).
+**T2 — Export: fix + stress**
+- T2.P1: sửa bug export từ phản hồi demo/beta1/beta2 (GIF, ProRes, matrix),
+  P0 trước.
+- T2.P2: stress export — batch qua `scripts/ghita_cli.dart` (nhiều file,
+  nhiều format liên tiếp), project lớn, undo 500 bước, SQLite round-trip lặp;
+  GIF regression ở kích thước lớn (probe 640×480 thành test cố định).
 
-**T3 — Fix B1–B4**
-- T3.P1: bug sweep theo telemetry/log/crash; P0 (crash, hỏng dữ liệu) trước.
-
-**T5 — Test debt**
-- T5.P1: dọn flaky test, thêm test cho từng beta feature (round-trip GIF,
-  ProRes, graph pipeline, SQLite round-trip giữ xanh).
-
-**T6 — Release cycle** (như mốc 1).
-
-Kích thước: **M**.
-
----
-
-## Mốc 4 — v1.5.5-beta3 (n = 6 track: tất cả)
-
-**Mục tiêu: "mọi tính năng đều có và dùng được, không lỗi không bug, mượt mà
-sạch sẽ". Chỉ sửa + đo, KHÔNG thêm tính năng.**
-
-**T1 — Sạch bug phần Rust**
-- T1.P1: audit memory leak FFI (bitmap handle GDI, wgpu buffer, decode buffer).
-
-**T2 — Stress export**
-- T2.P1: batch export qua `scripts/ghita_cli.dart`, project lớn, undo 500 bước.
-
-**T3 — Ổn định hóa beta**
-- T3.P1: rút cờ "Beta" cho feature đủ ổn định (giữ cờ với cái còn rủi ro).
+**T3 — Beta ổn định hóa + bug sweep**
+- T3.P1: bug sweep B1–B4 theo log/crash/phản hồi dùng thử; P0 trước, P1 sau;
+  mỗi fix kèm test chặn hồi quy.
+- T3.P2: rút cờ "Beta" cho feature đủ ổn định theo dữ liệu (giữ cờ + nêu lý
+  do với cái còn rủi ro).
 
 **T4 — Profiling Windows toàn bộ**
-- T4.P1: CPU/GPU/RAM theo từng tính năng; tuning cache eviction; đặt target
-  định lượng (startup ≤ Xs, RAM idle ≤ Y MB) ghi vào doc.
+- T4.P1: CPU/GPU/RAM theo từng tính năng; target định lượng ghi vào doc
+  (startup ≤ Xs, RAM idle ≤ Y MB, RAM scrub với cache 96 MB, export/qua khung);
+  tuning cache eviction nếu số liệu chỉ ra.
 
-**T5 — Regression matrix**
-- T5.P1: checklist manual toàn T1–T6 cũ + B1–B4; `engine_compare` parity
-  full-suite; SQLite save/load round-trip.
-- T5.P2: tiêu chí chốt: 0 crash phiên dài, 0 bug P0/P1.
+**T5 — Chất lượng & kiểm thử (cổng chốt mốc)**
+- T5.P1: **localize flake `engine_compare`** (real_timeline@*, max_diff=255,
+  ~1/6 lần, có sẵn từ trước) — nghi phạm cuối: bên C++ oracle trong bối cảnh
+  process harness; bộ dò `GHITA_PARITY_REPEAT=1` đã có sẵn để xác nhận.
+- T5.P2: **matrix trong CI lần đầu thực sự chạy** (bug `--out` đã sửa ở
+  beta1) — xác nhận 10 case xanh trên runner msys2.
+- T5.P3: dọn flaky test; round-trip test cho từng beta feature (GIF decode so
+  frame, ProRes 4444 pix_fmt, graph persist save/load, SQLite).
+- T5.P4: **regression matrix cuối:** checklist thủ công toàn bộ tính năng
+  (T1–T6 v1.5.0 + B1 GPU, B2 ProRes/4444, B3 graph, B4 GIF); parity nhiều lần
+  liên tiếp. Tiêu chí chốt: **0 crash phiên dài, 0 bug P0/P1 mở**.
 
-**T6 — Docs draft**
-- T6.P1: nháp CHANGELOG + cập nhật README nếu luồng dùng thay đổi.
+**T6 — Release cycle + docs**
+- T6.P1: bump `1.5.5-beta2` → gates đầy đủ → installer
+  `GhitaEdit-1.5.5-beta2-Setup.exe` ra Desktop → **hỏi duyệt** trước khi
+  commit/push/tag.
+- T6.P2: CHANGELOG beta2 + cập nhật README nếu luồng dùng thay đổi (GIF/
+  ProRes 4444/graph vào tài liệu người dùng).
 
-Kích thước: **M**.
+Kích thước: **L** (gộp hai mốc cũ).
+
+**Thứ tự thực hiện trong mốc:** sửa lỗi + rust hóa trước (T1–T3) → profiling
+(T4) → chất lượng + regression matrix cuối cùng (T5) → release (T6). Matrix
+chỉ chạy khi mọi thay đổi kỹ thuật đã ngừng.
 
 ---
 
-## Mốc 5 — v1.5.5 chính thức (n = 3 track: T4, T5, T6; T1–T3 freeze ❄️)
+## Mốc 4 — v1.5.5 chính thức (n = 3 track: T4, T5, T6; T1–T3 freeze ❄️)
 
 **T4** — tuning cuối chỉ nếu RC bắt được vấn đề.
 **T5** — RC verify: CI xanh toàn bộ (Windows + Rust job), installer + DLL
