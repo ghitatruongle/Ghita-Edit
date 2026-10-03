@@ -142,9 +142,55 @@ jobs:
       - name: Build Windows Release
         run: flutter build windows --release
 
+      # T1.P3 (v1.5.5-beta2): the legacy C++ engine no longer ships inside the
+      # flutter build, so nothing drops ghita_engine.dll into Release anymore.
+      # Stage exactly like the release job does — build the Rust engine and
+      # run stage_windows_release.sh. Bonus: the smoke now exercises the REAL
+      # shipping engine (ffmpeg feature) instead of the synthetic-only C++ DLL.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install MSYS2 MinGW FFmpeg + Clang
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          install: mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-clang mingw-w64-x86_64-gcc
+
+      - name: Export MSYS2 MinGW env
+        shell: bash
+        run: |
+          WINROOT='${{ steps.msys2.outputs.msys2-location }}'
+          ROOT="$(cygpath -u "$WINROOT")"
+          [ -f "$ROOT/mingw64/include/libavutil/avutil.h" ] || {
+            echo "FFmpeg headers missing under $ROOT/mingw64"; ls "$ROOT/mingw64/include" | head; exit 1; }
+          {
+            echo "FFMPEG_DIR=$WINROOT\mingw64"
+            echo "LIBCLANG_PATH=$WINROOT\mingw64\bin"
+            echo "MSYS_MINGW_BIN=$ROOT/mingw64/bin"
+          } >> "$GITHUB_ENV"
+
+      - name: Install GNU Rust Toolchain
+        shell: bash
+        run: rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+
+      - name: Build Rust Engine DLL (ffmpeg,gpu,sqlite,parallel)
+        working-directory: native_engine_rust
+        env:
+          RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-gnu
+        run: cargo build --release --features ffmpeg,gpu,sqlite,parallel -j 2
+
+      - name: Stage Rust Engine + FFmpeg Dependency Closure
+        shell: bash
+        run: bash scripts/stage_windows_release.sh
+
       - name: Run Engine Smoke Test
         shell: bash
-        run: bash scripts/run_engine_smoke_test.sh
+        run: |
+          # mingw64/bin provides the ffmpeg CLI so the full import/playback
+          # path runs; the smoke script strips PATH internally for its
+          # clean-machine load probe (same pattern as the release job).
+          export PATH="$MSYS_MINGW_BIN:$PATH"
+          bash scripts/run_engine_smoke_test.sh
 
       # v1.1.0 (PLAN 3.12): export matrix — MP4/H.264, MP4/H.265, MP4/VP9,
       # GIF (skip: pal8 encoder limitation), MP3, MOV/H.264 — each verified
